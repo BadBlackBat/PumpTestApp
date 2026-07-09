@@ -212,12 +212,22 @@ def get_all_pumps(filters=None, order_by='test_date DESC'):
             if filters.get('pump_number'):
                 query += ' AND p.pump_number LIKE ?'
                 params.append(f'%{filters["pump_number"]}%')
-            if filters.get('verdict') and filters['verdict'] != 'Все':
-                query += ' AND p.verdict = ?'
-                params.append(filters['verdict'])
-            if filters.get('test_type') and filters['test_type'] != 'Все':
-                query += ' AND p.test_type = ?'
-                params.append(filters['test_type'])
+            # if filters.get('verdict') and filters['verdict'] != 'Все':
+            #     query += ' AND p.verdict = ?'
+            #     params.append(filters['verdict'])
+            verdict = filters.get('verdict')
+            if verdict and verdict != 'Все':
+                query += ' AND LOWER(p.verdict) = ?'
+                params.append(verdict.lower())
+
+            # if filters.get('test_type') and filters['test_type'] != 'Все':
+            #     query += ' AND p.test_type = ?'
+            #     params.append(filters['test_type'])
+            test_type = filters.get('test_type')
+            if test_type and test_type != 'Все':
+                query += ' AND LOWER(p.test_type) = ?'
+                params.append(test_type.lower())
+                
             if filters.get('is_sealed') is not None and filters['is_sealed'] != -1:
                 query += ' AND p.is_sealed = ?'
                 params.append(filters['is_sealed'])

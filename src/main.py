@@ -1,12 +1,7 @@
 import sys
-import os
-
-# Добавляем папку src в sys.path, чтобы импорты работали
-sys.path.insert(0, os.path.dirname(__file__))
-
 from PyQt5.QtWidgets import QApplication
-from gui import MainWindow
-import database as db
+from .gui import MainWindow
+from . import database as db
 
 def main():
     db.init_db()

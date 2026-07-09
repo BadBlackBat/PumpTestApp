@@ -20,7 +20,7 @@ class PasswordDialog(QDialog):
         btn_layout.addWidget(cancel_btn)
         layout.addLayout(btn_layout)
         self.password = ""
-    
+
     def accept(self):
         self.password = self.password_input.text()
         super().accept()
