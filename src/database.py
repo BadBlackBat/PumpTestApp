@@ -63,7 +63,12 @@ def init_db():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_pump_number ON pumps(pump_number)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_test_date ON pumps(test_date)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_modification ON pumps(modification_id)')
-        
+
+        cursor.execute("PRAGMA table_info(pumps)")
+        columns = [col[1] for col in cursor.fetchall()]
+        if 'edit_history' not in columns:
+            cursor.execute('ALTER TABLE pumps ADD COLUMN edit_history TEXT')
+                
         conn.commit()
         print("База данных инициализирована.")
 
@@ -153,11 +158,56 @@ def add_pump(pump_number, test_date, test_type, modification_id, order_id,
         conn.commit()
         return cursor.lastrowid
 
+# def get_pump_by_id(pump_id):
+#     with get_connection() as conn:
+#         cursor = conn.cursor()
+#         cursor.execute('''
+#             SELECT p.*, m.name as mod_name, o.order_number 
+#             FROM pumps p
+#             LEFT JOIN modifications m ON p.modification_id = m.id
+#             LEFT JOIN orders o ON p.order_id = o.id
+#             WHERE p.id = ?
+#         ''', (pump_id,))
+#         row = cursor.fetchone()
+#         if row:
+#             return {
+#                 'id': row[0],
+#                 'pump_number': row[1],
+#                 'test_date': row[2],
+#                 'test_type': row[3],
+#                 'modification_id': row[4],
+#                 'order_id': row[5],
+#                 'results_json': json.loads(row[6]) if row[6] else {},
+#                 'seal_results_json': json.loads(row[7]) if row[7] else {},
+#                 'verdict': row[8],
+#                 'is_sealed': row[9],
+#                 'note': row[10],
+#                 'created_at': row[11],
+#                 'mod_name': row[12],
+#                 'order_number': row[13]
+#             }
+#         return None
+
 def get_pump_by_id(pump_id):
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT p.*, m.name as mod_name, o.order_number 
+            SELECT 
+                p.id, 
+                p.pump_number, 
+                p.test_date, 
+                p.test_type, 
+                p.modification_id, 
+                p.order_id, 
+                p.results_json, 
+                p.seal_results_json, 
+                p.verdict, 
+                p.is_sealed, 
+                p.note, 
+                p.created_at, 
+                p.edit_history,
+                m.name as mod_name,
+                o.order_number
             FROM pumps p
             LEFT JOIN modifications m ON p.modification_id = m.id
             LEFT JOIN orders o ON p.order_id = o.id
@@ -175,19 +225,16 @@ def get_pump_by_id(pump_id):
                 'results_json': json.loads(row[6]) if row[6] else {},
                 'seal_results_json': json.loads(row[7]) if row[7] else {},
                 'verdict': row[8],
-                'is_sealed': row[9],
+                'is_sealed': bool(row[9]) if row[9] is not None else None,
                 'note': row[10],
                 'created_at': row[11],
-                'mod_name': row[12],
-                'order_number': row[13]
+                'edit_history': row[12],
+                'mod_name': row[13],
+                'order_number': row[14]
             }
         return None
 
-def get_all_pumps(filters=None, order_by='test_date DESC'):
-    """
-    Возвращает список насосов с дополнительным полем 'check_count' (количество проверок для этого номера).
-    filters: dict с ключами: 'pump_number', 'verdict', 'test_type', 'is_sealed', 'date_from', 'date_to', 'only_duplicates'
-    """
+def get_all_pumps(filters=None, order_by='test_date DESC', limit=None, offset=None):
     with get_connection() as conn:
         cursor = conn.cursor()
         query = '''
@@ -199,6 +246,7 @@ def get_all_pumps(filters=None, order_by='test_date DESC'):
                 p.verdict,
                 p.is_sealed,
                 p.note,
+                p.edit_history,
                 m.name as mod_name,
                 o.order_number,
                 (SELECT COUNT(*) FROM pumps p2 WHERE p2.pump_number = p.pump_number) as check_count
@@ -212,22 +260,12 @@ def get_all_pumps(filters=None, order_by='test_date DESC'):
             if filters.get('pump_number'):
                 query += ' AND p.pump_number LIKE ?'
                 params.append(f'%{filters["pump_number"]}%')
-            # if filters.get('verdict') and filters['verdict'] != 'Все':
-            #     query += ' AND p.verdict = ?'
-            #     params.append(filters['verdict'])
-            verdict = filters.get('verdict')
-            if verdict and verdict != 'Все':
-                query += ' AND LOWER(p.verdict) = ?'
-                params.append(verdict.lower())
-
-            # if filters.get('test_type') and filters['test_type'] != 'Все':
-            #     query += ' AND p.test_type = ?'
-            #     params.append(filters['test_type'])
-            test_type = filters.get('test_type')
-            if test_type and test_type != 'Все':
-                query += ' AND LOWER(p.test_type) = ?'
-                params.append(test_type.lower())
-                
+            if filters.get('verdict') and filters['verdict'] != 'Все':
+                query += ' AND p.verdict = ?'
+                params.append(filters['verdict'])
+            if filters.get('test_type') and filters['test_type'] != 'Все':
+                query += ' AND p.test_type = ?'
+                params.append(filters['test_type'])
             if filters.get('is_sealed') is not None and filters['is_sealed'] != -1:
                 query += ' AND p.is_sealed = ?'
                 params.append(filters['is_sealed'])
@@ -239,8 +277,23 @@ def get_all_pumps(filters=None, order_by='test_date DESC'):
                 params.append(filters['date_to'])
             if filters.get('only_duplicates'):
                 query += ' AND (SELECT COUNT(*) FROM pumps p2 WHERE p2.pump_number = p.pump_number) > 1'
-        
+            if filters.get('order_number'):
+                query += ' AND o.order_number = ?'
+                params.append(filters['order_number'])
+
         query += f' ORDER BY {order_by}'
+
+        if limit is not None:
+            query += ' LIMIT ?'
+            params.append(limit)
+        if offset is not None:
+            query += ' OFFSET ?'
+            params.append(offset)
+
+        # Отладочный вывод
+        print("SQL Query:", query)
+        print("Params:", params)
+
         cursor.execute(query, params)
         rows = cursor.fetchall()
         result = []
@@ -253,12 +306,13 @@ def get_all_pumps(filters=None, order_by='test_date DESC'):
                 'verdict': row[4],
                 'is_sealed': bool(row[5]) if row[5] is not None else None,
                 'note': row[6],
-                'mod_name': row[7],
-                'order_number': row[8],
-                'check_count': row[9]
+                'edit_history': row[7],
+                'mod_name': row[8],
+                'order_number': row[9],
+                'check_count': row[10]
             })
         return result
-
+    
 def delete_pump(pump_id):
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -266,13 +320,13 @@ def delete_pump(pump_id):
         conn.commit()
 
 def update_pump(pump_id, **kwargs):
-    """Обновляет поля записи (используется при редактировании)."""
+    """Обновляет поля записи, включая edit_history."""
     with get_connection() as conn:
         cursor = conn.cursor()
         set_clause = []
         params = []
         for key, value in kwargs.items():
-            if key in ['pump_number', 'test_date', 'test_type', 'verdict', 'is_sealed', 'note']:
+            if key in ['pump_number', 'test_date', 'test_type', 'verdict', 'is_sealed', 'note', 'edit_history']:
                 set_clause.append(f'{key} = ?')
                 params.append(value)
             elif key == 'results_json':
@@ -286,6 +340,50 @@ def update_pump(pump_id, **kwargs):
             cursor.execute(f'UPDATE pumps SET {", ".join(set_clause)} WHERE id = ?', params)
             conn.commit()
 
+# Функция получения всех заказов
+def get_all_orders():
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, order_number FROM orders ORDER BY order_number')
+        return cursor.fetchall()
+
+# Пагинация
+def count_pumps(filters=None):
+    """
+    Возвращает общее количество записей с учётом фильтров (без пагинации).
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        query = 'SELECT COUNT(*) FROM pumps p LEFT JOIN orders o ON p.order_id = o.id WHERE 1=1'
+        params = []
+        # Повторяем условия фильтров (копируем из get_all_pumps)
+        if filters:
+            if filters.get('pump_number'):
+                query += ' AND p.pump_number LIKE ?'
+                params.append(f'%{filters["pump_number"]}%')
+            if filters.get('verdict') and filters['verdict'] != 'Все':
+                query += ' AND p.verdict = ?'
+                params.append(filters['verdict'])
+            if filters.get('test_type') and filters['test_type'] != 'Все':
+                query += ' AND p.test_type = ?'
+                params.append(filters['test_type'])
+            if filters.get('is_sealed') is not None and filters['is_sealed'] != -1:
+                query += ' AND p.is_sealed = ?'
+                params.append(filters['is_sealed'])
+            if filters.get('order_number'):
+                query += ' AND o.order_number = ?'
+                params.append(filters['order_number'])
+            if filters.get('date_from'):
+                query += ' AND p.test_date >= ?'
+                params.append(filters['date_from'])
+            if filters.get('date_to'):
+                query += ' AND p.test_date <= ?'
+                params.append(filters['date_to'])
+            if filters.get('only_duplicates'):
+                query += ' AND (SELECT COUNT(*) FROM pumps p2 WHERE p2.pump_number = p.pump_number) > 1'
+        cursor.execute(query, params)
+        return cursor.fetchone()[0]
+    
 # ---------- Вспомогательные функции ----------
 def get_check_count_for_pump(pump_number):
     with get_connection() as conn:

@@ -53,30 +53,51 @@ class RightPanel(QWidget):
         layout.addWidget(scroll)
 
     def display_protocol(self, data):
-        print(f"DEBUG: Отображение протокола для {data['pump_number']}, дата {data['test_date']}")
         self.current_data = data
-        self.clear_protocol()
+        self.clear_protocol()  # полностью пересоздаём содержимое
+
+        # Обрезаем время
+        date_str = data['test_date']
+        if date_str and ' ' in date_str:
+            date_str = date_str.split(' ')[0]
 
         header_text = (f"Характеристики образца насоса ГУР\n"
-                       f"Протокол проверки насоса ГУР от: {data['test_date']}\n"
-                       f"Идентификационный №: {data['pump_number']}  Заказ: {data.get('order_number', '—')}\n"
-                       f"Проверка: {data['test_type']}\n"
-                       f"Модификация: {data.get('mod_name', '—')}\n"
-                       f"Герметичен: {'Да' if data['is_sealed'] else 'Нет'}\n"
-                       f"Вердикт: {data['verdict']}")
+                    f"Протокол проверки насоса ГУР от: {date_str}\n"
+                    f"Идентификационный №: {data['pump_number']}  Заказ №: {data.get('order_number', '—')}\n"
+                    f"Проверка: {data['test_type']}\n"
+                    f"Модификация: {data.get('mod_name', '—')}\n"
+                    f"Герметичен: {'Да' if data['is_sealed'] else 'Нет'}\n"
+                    f"Вердикт: {data['verdict']}")
         self.header_label.setText(header_text)
 
+        # Таблицы
         self.create_test_table("Тест 1: Зависимость расхода от оборотов (ECO выкл.)",
-                               list(range(5, 13)), data['results_json'], data.get('mod_name'))
+                            list(range(5, 13)), data['results_json'], data.get('mod_name'))
         self.create_test_table("Тест 2: Зависимость расхода от оборотов (ECO вкл.)",
-                               list(range(13, 21)), data['results_json'], data.get('mod_name'))
+                            list(range(13, 21)), data['results_json'], data.get('mod_name'))
         self.create_test_table("Тест 3: Зависимость расхода от силы тока ECO",
-                               list(range(21, 32)), data['results_json'], data.get('mod_name'))
+                            list(range(21, 32)), data['results_json'], data.get('mod_name'))
         self.create_pressure_table(data)
         self.create_seal_table(data)
         self.create_graphs(data)
 
+        # Легенда
         self.legend_label.setText("Красная подсветка – значение не соответствует техническим требованиям.")
+
+        # Примечание
+        note = data.get('note', '').strip()
+        if note:
+            header_text += f"\nПримечание: {note}"
+        # История редактирования
+        edit_history = data.get('edit_history')
+        if edit_history:
+            history_label = QLabel(f"История редактирования:\n{edit_history}")
+            history_label.setWordWrap(True)
+            history_label.setStyleSheet("background-color: #f0f0f0; padding: 5px; margin-top: 10px;")
+            self.content_layout.addWidget(history_label)
+
+
+
 
     def create_test_table(self, title, indices, results, mod_name):
         mod = None
@@ -278,12 +299,38 @@ class RightPanel(QWidget):
         self.graphs_layout.addWidget(canvas2)
 
     def clear_protocol(self):
-        while self.tables_layout.count():
-            child = self.tables_layout.takeAt(0)
+    # Удаляем все виджеты из content_layout
+        while self.content_layout.count():
+            child = self.content_layout.takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
-        while self.graphs_layout.count():
-            child = self.graphs_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-        self.legend_label.setText("")
+        # Заново создаём основные виджеты
+        self.header_label = QLabel()
+        self.header_label.setAlignment(Qt.AlignCenter)
+        self.header_label.setWordWrap(True)
+        self.header_label.setFont(QFont("Arial", 12, QFont.Bold))
+        self.content_layout.addWidget(self.header_label)
+        
+        self.tables_widget = QWidget()
+        self.tables_layout = QVBoxLayout(self.tables_widget)
+        self.content_layout.addWidget(self.tables_widget)
+        
+        self.graphs_widget = QWidget()
+        self.graphs_layout = QVBoxLayout(self.graphs_widget)
+        self.content_layout.addWidget(self.graphs_widget)
+        
+        self.legend_label = QLabel()
+        self.legend_label.setWordWrap(True)
+        self.legend_label.setStyleSheet("background-color: #f0f0f0; padding: 5px;")
+        self.content_layout.addWidget(self.legend_label)
+
+    # def clear_protocol(self):
+    #     while self.tables_layout.count():
+    #         child = self.tables_layout.takeAt(0)
+    #         if child.widget():
+    #             child.widget().deleteLater()
+    #     while self.graphs_layout.count():
+    #         child = self.graphs_layout.takeAt(0)
+    #         if child.widget():
+    #             child.widget().deleteLater()
+    #     self.legend_label.setText("")
