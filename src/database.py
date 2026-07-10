@@ -400,7 +400,72 @@ def count_pumps(filters=None):
                 query += ' AND (SELECT COUNT(*) FROM pumps p2 WHERE p2.pump_number = p.pump_number) > 1'
         cursor.execute(query, params)
         return cursor.fetchone()[0]
-    
+
+# Сбор данных для общей статистики
+def get_statistics():
+    """Возвращает словарь со статистикой по всем насосам и по заказам."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        # Общая статистика
+        cursor.execute('''
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN verdict = 'годен' THEN 1 ELSE 0 END) as good,
+                SUM(CASE WHEN verdict = 'годен' AND test_type = 'первичная' THEN 1 ELSE 0 END) as good_first,
+                SUM(CASE WHEN verdict = 'не годен' THEN 1 ELSE 0 END) as bad,
+                SUM(CASE WHEN is_sealed = 0 THEN 1 ELSE 0 END) as not_sealed
+            FROM pumps
+        ''')
+        row = cursor.fetchone()
+        total, good, good_first, bad, not_sealed = row
+        total = total or 0
+        good = good or 0
+        good_first = good_first or 0
+        bad = bad or 0
+        not_sealed = not_sealed or 0
+
+        stats = {
+            'total': total,
+            'good': good,
+            'good_first': good_first,
+            'bad': bad,
+            'not_sealed': not_sealed,
+            'good_percent': (good / total * 100) if total else 0,
+            'good_first_percent': (good_first / total * 100) if total else 0,
+            'bad_percent': (bad / total * 100) if total else 0,
+            'not_sealed_percent': (not_sealed / total * 100) if total else 0,
+            'orders': []
+        }
+
+        # Статистика по заказам
+        cursor.execute('''
+            SELECT 
+                o.order_number,
+                COUNT(p.id) as total,
+                SUM(CASE WHEN p.verdict = 'годен' THEN 1 ELSE 0 END) as good,
+                SUM(CASE WHEN p.verdict = 'годен' AND p.test_type = 'первичная' THEN 1 ELSE 0 END) as good_first,
+                SUM(CASE WHEN p.verdict = 'не годен' THEN 1 ELSE 0 END) as bad,
+                SUM(CASE WHEN p.is_sealed = 0 THEN 1 ELSE 0 END) as not_sealed
+            FROM pumps p
+            JOIN orders o ON p.order_id = o.id
+            GROUP BY o.order_number
+            ORDER BY o.order_number
+        ''')
+        rows = cursor.fetchall()
+        for row in rows:
+            order_number, total_o, good_o, good_first_o, bad_o, not_sealed_o = row
+            stats['orders'].append({
+                'order_number': order_number,
+                'total': total_o,
+                'good': good_o,
+                'good_first': good_first_o,
+                'bad': bad_o,
+                'not_sealed': not_sealed_o,
+            })
+
+        return stats
+
+
 # ---------- Вспомогательные функции ----------
 def get_check_count_for_pump(pump_number):
     with get_connection() as conn:

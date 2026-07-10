@@ -69,6 +69,43 @@ class RightPanel(QWidget):
         self.legend_label.hide()
         self.logo_label.show()
 
+    def display_statistics(self, stats_data):
+        """Отображает сводную статистику в правой панели."""
+        self.clear_protocol()  # очищаем динамическую область
+        self.logo_label.hide()
+        self.header_label.hide()  # скрываем заголовок протокола
+        self.clear_btn.hide()
+
+        # Строим HTML-отчёт
+        html = "<h2>Сводная статистика по базе данных</h2>"
+        html += f"<p><b>Всего проверено насосов:</b> {stats_data['total']} шт — 100%</p>"
+        html += f"<p><b>Из них годных:</b> {stats_data['good']} шт — {stats_data['good_percent']:.1f}%</p>"
+        html += f"<p><b>Годных с первого предъявления:</b> {stats_data['good_first']} шт — {stats_data['good_first_percent']:.1f}%</p>"
+        html += f"<p><b>Не годных:</b> {stats_data['bad']} шт — {stats_data['bad_percent']:.1f}%</p>"
+        html += f"<p><b>Из них не герметичны:</b> {stats_data['not_sealed']} шт — {stats_data['not_sealed_percent']:.1f}%</p>"
+
+        # Статистика по заказам
+        if stats_data['orders']:
+            html += "<h3>Статистика по заказам:</h3>"
+            for order in stats_data['orders']:
+                html += f"<p><b>Заказ №{order['order_number']}:</b></p>"
+                html += f"<ul>"
+                html += f"<li>Всего проверено: {order['total']} шт</li>"
+                html += f"<li>Годных: {order['good']} шт</li>"
+                html += f"<li>Годных с первого предъявления: {order['good_first']} шт</li>"
+                html += f"<li>Не годных: {order['bad']} шт</li>"
+                html += f"<li>Не герметичны: {order['not_sealed']} шт</li>"
+                html += "</ul>"
+        else:
+            html += "<p>Нет данных по заказам.</p>"
+
+        # Создаём QLabel с HTML и добавляем в dynamic_layout
+        label = QLabel(html)
+        label.setWordWrap(True)
+        label.setStyleSheet("background-color: white; padding: 10px;")
+        self.dynamic_layout.addWidget(label)
+        self.current_data = None  # сбрасываем текущий протокол, т.к. показываем статистику
+
     def display_protocol(self, data):
         self.current_data = data
         self.clear_protocol()  # очищаем dynamic_layout
@@ -132,6 +169,15 @@ class RightPanel(QWidget):
             x_label = ""
             x_vals = []
 
+        # Вспомогательная функция для форматирования чисел
+        def format_number(value):
+            if value is None or value == '':
+                return ''
+            try:
+                return f"{float(value):.2f}"
+            except:
+                return str(value)
+
         table = QTableWidget()
         table.setColumnCount(4)
         table.setHorizontalHeaderLabels([x_label, "Расход, л/мин", "Мин. треб.", "Макс. треб."])
@@ -143,7 +189,10 @@ class RightPanel(QWidget):
             x_val = x_vals[i] if i < len(x_vals) else ''
             table.setItem(i, 0, QTableWidgetItem(str(x_val)))
 
-            val_item = QTableWidgetItem(str(val) if val is not None else '')
+            # Значение расхода с форматированием
+            val_text = format_number(val)
+            val_item = QTableWidgetItem(val_text)
+            # Проверка диапазона (используем исходное значение val, не строку)
             if val is not None and i < len(norm_min) and i < len(norm_max):
                 if not is_value_in_range(val, norm_min[i], norm_max[i]):
                     val_item.setBackground(QColor(255, 200, 200))
@@ -151,11 +200,15 @@ class RightPanel(QWidget):
                 val_item.setBackground(QColor(255, 200, 200))
             table.setItem(i, 1, val_item)
 
-            min_val = norm_min[i] if i < len(norm_min) else ''
-            max_val = norm_max[i] if i < len(norm_max) else ''
-            table.setItem(i, 2, QTableWidgetItem(str(min_val) if min_val != '' else ''))
-            table.setItem(i, 3, QTableWidgetItem(str(max_val) if max_val != '' else ''))
+            # Минимальное и максимальное требования с форматированием
+            min_val = norm_min[i] if i < len(norm_min) else None
+            max_val = norm_max[i] if i < len(norm_max) else None
+            min_text = format_number(min_val)
+            max_text = format_number(max_val)
+            table.setItem(i, 2, QTableWidgetItem(min_text))
+            table.setItem(i, 3, QTableWidgetItem(max_text))
 
+        table.verticalHeader().setVisible(False)
         table.resizeColumnsToContents()
         table.setEditTriggers(QTableWidget.NoEditTriggers)
 
@@ -185,6 +238,7 @@ class RightPanel(QWidget):
             val_item.setBackground(QColor(255, 200, 200))
         table.setItem(0, 1, val_item)
         table.setItem(0, 2, QTableWidgetItem(f"{min_p} – {max_p}" if min_p is not None and max_p is not None else ''))
+        table.verticalHeader().setVisible(False)
         table.resizeColumnsToContents()
         table.setEditTriggers(QTableWidget.NoEditTriggers)
 
@@ -221,6 +275,8 @@ class RightPanel(QWidget):
                     elif text != 'отсутствуют':
                         val_item.setBackground(QColor(255, 200, 200))
             table.setItem(i, 1, val_item)
+        
+        table.verticalHeader().setVisible(False)
         table.resizeColumnsToContents()
         table.setEditTriggers(QTableWidget.NoEditTriggers)
 

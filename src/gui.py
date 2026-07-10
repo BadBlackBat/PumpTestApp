@@ -46,6 +46,11 @@ class MainWindow(QMainWindow):
         top_layout.addStretch()
 
         # Кнопки-заглушки
+        btn_stats = QPushButton("📊")
+        btn_stats.setToolTip("Статистика")
+        btn_stats.clicked.connect(self.toggle_statistics)
+        top_layout.addWidget(btn_stats)
+
         btn_theme = QPushButton("🌙")
         btn_settings = QPushButton("⚙️")
         btn_print = QPushButton("🖨️")
@@ -81,6 +86,8 @@ class MainWindow(QMainWindow):
         # Правая панель
         self.right_panel = RightPanel()
         self.splitter.addWidget(self.right_panel)
+
+        self.showing_stats = False
         
         # Пропорции
         self.splitter.setSizes([int(self.width() * 0.4), int(self.width() * 0.6)])
@@ -93,10 +100,30 @@ class MainWindow(QMainWindow):
         # Загрузка данных
         self.left_panel.load_data()
     
+    def toggle_statistics(self):
+        if self.showing_stats:
+            # Скрываем статистику, показываем логотип
+            self.right_panel.clear_protocol()  # это скроет всё и покажет логотип
+            self.showing_stats = False
+            # Также очищаем выделение в таблице, чтобы не было путаницы
+            self.left_panel.table.clearSelection()
+        else:
+            # Показываем статистику
+            stats_data = db.get_statistics()
+            self.right_panel.display_statistics(stats_data)
+            self.showing_stats = True
+
     def on_pump_selected(self, pump_data):
-        """Обработка выбора насоса."""
+        if self.showing_stats:
+            self.showing_stats = False
+            # кнопка статистики остаётся в нажатом состоянии? Можно просто сбросить состояние, если она была нажата.
+            # Но у нас нет состояния, мы просто показываем/скрываем.
         self.right_panel.display_protocol(pump_data)
-        self.update_status(selected_pump=pump_data['pump_number'])
+
+    # def on_pump_selected(self, pump_data):
+    #     """Обработка выбора насоса."""
+    #     self.right_panel.display_protocol(pump_data)
+    #     self.update_status(selected_pump=pump_data['pump_number'])
     
     def on_import_requested(self):
         """Импорт Excel."""
@@ -109,7 +136,8 @@ class MainWindow(QMainWindow):
             if count > 0:
                 self.left_panel.refresh()
                 self.update_status()
-    
+        if self.showing_stats: self.toggle_statistics()
+
     def on_add_requested(self):
         """Ручное добавление записи (пока заглушка)."""
         # Позже реализуем диалог добавления
@@ -127,6 +155,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(self, "Удаление", "Запись удалена.")
             else:
                 QMessageBox.warning(self, "Ошибка", "Неверный пароль.")
+        if self.showing_stats: self.toggle_statistics()
     
     def update_status(self, filters=None, selected_pump=None):
         all_pumps = db.get_all_pumps()

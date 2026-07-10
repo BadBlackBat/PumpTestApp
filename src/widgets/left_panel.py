@@ -130,10 +130,12 @@ class LeftPanel(QWidget):
         self.btn_next = QPushButton("Вперед ▶")
         self.btn_next.clicked.connect(self.next_page)
         self.page_label = QLabel("Страница 1 из 1")
+        self.count_label = QLabel("Всего: 0")
         pagination_layout.addWidget(self.btn_prev)
         pagination_layout.addWidget(self.page_label)
         pagination_layout.addWidget(self.btn_next)
         pagination_layout.addStretch()
+        pagination_layout.addWidget(self.count_label)
         layout.addLayout(pagination_layout)
 
         # Кнопки управления
@@ -189,79 +191,6 @@ class LeftPanel(QWidget):
         else:
             self.stats_label.hide()
 
-    # def apply_filters(self):
-    #     filters = {}
-    #     search_text = self.search_input.text().strip()
-    #     if search_text:
-    #         filters['pump_number'] = search_text
-
-    #     verdict = self.filter_verdict.currentText()
-    #     if verdict != 'Все':
-    #         filters['verdict'] = verdict.lower()
-
-    #     test_type = self.filter_test_type.currentText()
-    #     if test_type != 'Все':
-    #         filters['test_type'] = test_type.lower()
-
-    #     sealed = self.filter_sealed.currentText()
-    #     if sealed == 'Герметичен':
-    #         filters['is_sealed'] = 1
-    #     elif sealed == 'Не герметичен':
-    #         filters['is_sealed'] = 0
-
-    #     self.display_pumps(filtered)
-        
-    #     # Обновляем статистику по заказу
-    #     # order_text = self.filter_order.currentText() if hasattr(self, 'filter_order') else "Все заказы"
-    #     # if order_text != "Все заказы":
-    #     #     stats = db.get_order_stats(order_text)
-    #     #     if stats and stats['total'] > 0:
-    #     #         good_percent = (stats['good'] / stats['total']) * 100
-    #     #         not_sealed_percent = (stats['not_sealed'] / stats['total']) * 100
-    #     #         primary_percent = (stats['primary'] / stats['total']) * 100
-    #     #         stats_text = (
-    #     #             f"<b>Статистика для заказа № {order_text}:</b><br>"
-    #     #             f"Всего насосов: {stats['total']}<br>"
-    #     #             f"Годных: {stats['good']} шт. ({good_percent:.1f}%)<br>"
-    #     #             f"Негерметичных: {stats['not_sealed']} шт. ({not_sealed_percent:.1f}%)<br>"
-    #     #             f"С первого предъявления: {stats['primary']} шт. ({primary_percent:.1f}%)"
-    #     #         )
-    #     #         self.stats_label.setText(stats_text)
-    #     #         self.stats_label.show()
-    #     #     else:
-    #     #         self.stats_label.hide()
-    #     # else:
-    #     #     self.stats_label.hide()
-
-    #     # Дата
-    #     date_from = self.date_from.date().toString('yyyy-MM-dd')
-    #     date_to = self.date_to.date().toString('yyyy-MM-dd')
-    #     if date_from != '2000-01-01' or date_to != QDate.currentDate().toString('yyyy-MM-dd'):
-    #         filters['date_from'] = date_from
-    #         filters['date_to'] = date_to
-
-    #     if self.only_duplicates.isChecked():
-    #         filters['only_duplicates'] = True
-
-    #     self.current_filters = filters
-
-    #     # Подсчёт общего количества
-    #     self.total_records = db.count_pumps(filters)
-
-    #     # Пагинация
-    #     offset = self.current_page * self.page_size
-    #     filtered = db.get_all_pumps(filters, limit=self.page_size, offset=offset)
-    #     self.display_pumps(filtered)
-    #     self.update_pagination_label()
-
-    #     # Сигнал для статус-бара
-    #     self.filters_applied.emit(filters)
-
-    #     if hasattr(self, 'filters_applied'):
-    #         self.filters_applied.emit(filters)
-
-    #     self.update_stats(filtered)
-
     def apply_filters(self):
         filters = {}
         search_text = self.search_input.text().strip()
@@ -270,11 +199,11 @@ class LeftPanel(QWidget):
 
         verdict = self.filter_verdict.currentText()
         if verdict != 'Все':
-            filters['verdict'] = verdict
+            filters['verdict'] = verdict.lower()  # приводим к нижнему регистру для сравнения с БД
 
         test_type = self.filter_test_type.currentText()
         if test_type != 'Все':
-            filters['test_type'] = test_type
+            filters['test_type'] = test_type.lower()
 
         sealed = self.filter_sealed.currentText()
         if sealed == 'Герметичен':
@@ -282,11 +211,13 @@ class LeftPanel(QWidget):
         elif sealed == 'Не герметичен':
             filters['is_sealed'] = 0
 
+        # Фильтр по заказу
         if hasattr(self, 'filter_order'):
             order_text = self.filter_order.currentText()
             if order_text != "Все заказы":
                 filters['order_number'] = order_text
 
+        # Дата
         date_from = self.date_from.date().toString('yyyy-MM-dd')
         date_to = self.date_to.date().toString('yyyy-MM-dd')
         if date_from != '2000-01-01' or date_to != QDate.currentDate().toString('yyyy-MM-dd'):
@@ -304,36 +235,65 @@ class LeftPanel(QWidget):
         # Пагинация
         offset = self.current_page * self.page_size
         filtered = db.get_all_pumps(filters, limit=self.page_size, offset=offset)
-        self.display_pumps(filtered)
-        self.update_stats(filtered)   # <-- здесь переменная определена
+
+        # Определяем, нужно ли группировать по номеру (если включён фильтр "Только дубли")
+        group_by_number = self.only_duplicates.isChecked()
+
+        # Отображаем данные и статистику
+        self.display_pumps(filtered, group_by_number=group_by_number)
+        self.update_stats(filtered)
+
         self.update_pagination_label()
 
+        # Сигнал для статус-бара
         if hasattr(self, 'filters_applied'):
             self.filters_applied.emit(filters)
 
-
-    def display_pumps(self, pumps):
+    def display_pumps(self, pumps, group_by_number=False):
+        # Отключаем сортировку перед заполнением
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(pumps))
+
+        # Если включена группировка по номеру, сортируем данные по номеру насоса
+        if group_by_number:
+            # Сортируем по номеру насоса, затем по дате (чтобы внутри группы были по дате)
+            pumps = sorted(pumps, key=lambda x: (x['pump_number'], x['test_date']))
+            # Создаём карту цветов для уникальных номеров
+            colors = [QColor(212, 230, 241), QColor(253, 235, 208)]  # бледно-голубой и бледно-оранжевый
+            unique_numbers = {}
+            color_index = 0
+            for p in pumps:
+                num = p['pump_number']
+                if num not in unique_numbers:
+                    unique_numbers[num] = colors[color_index % len(colors)]
+                    color_index += 1
+        else:
+            unique_numbers = None
+
         for row, p in enumerate(pumps):
+            # Номер с ID
             item_num = QTableWidgetItem(p['pump_number'])
             item_num.setData(Qt.UserRole, p['id'])
             self.table.setItem(row, 0, item_num)
 
+            # Дата (обрезаем время)
             date_str = p['test_date']
             if date_str and ' ' in date_str:
                 date_str = date_str.split(' ')[0]
             self.table.setItem(row, 1, QTableWidgetItem(date_str))
 
+            # Вердикт
             verdict_item = QTableWidgetItem(p['verdict'] or '')
             if p['verdict'] == 'годен':
-                verdict_item.setBackground(QColor(200, 255, 200))
+                verdict_item.setBackground(QColor(200, 255, 200))  # светло-зелёный
             elif p['verdict'] == 'не годен':
-                verdict_item.setBackground(QColor(255, 200, 200))
+                verdict_item.setBackground(QColor(255, 200, 200))  # светло-красный
             self.table.setItem(row, 2, verdict_item)
 
+            # Тип
             self.table.setItem(row, 3, QTableWidgetItem(p['test_type'] or ''))
 
+            # Герметичность
             sealed_text = 'Да' if p['is_sealed'] else 'Нет'
             sealed_item = QTableWidgetItem(sealed_text)
             if p['is_sealed']:
@@ -342,12 +302,32 @@ class LeftPanel(QWidget):
                 sealed_item.setBackground(QColor(255, 200, 200))
             self.table.setItem(row, 4, sealed_item)
 
+            # Кол-во проверок
             count = p.get('check_count', 0)
             self.table.setItem(row, 5, QTableWidgetItem(str(count)))
 
+            # Устанавливаем цвет группы для всей строки (если включена группировка)
+            if group_by_number and unique_numbers:
+                group_color = unique_numbers.get(p['pump_number'])
+                if group_color:
+                    for col in range(self.table.columnCount()):
+                        # Пропускаем столбцы 2 (вердикт) и 4 (герметичность) – у них свой фон
+                        if col in [2, 4]:
+                            continue
+                        item = self.table.item(row, col)
+                        if item:
+                            item.setBackground(group_color)
+
             print(f"display_pumps: row={row}, id={p['id']}, number={p['pump_number']}")
+
+        # Включаем сортировку обратно
         self.table.setSortingEnabled(True)
-        self.table.sortByColumn(1, Qt.DescendingOrder)
+        # Если группировка выключена, сортируем по дате по умолчанию
+        if not group_by_number:
+            self.table.sortByColumn(1, Qt.DescendingOrder)
+        else:
+            # Если группировка включена, сортируем по номеру насоса (по возрастанию)
+            self.table.sortByColumn(0, Qt.AscendingOrder)
 
     def on_selection_changed(self):
         selected = self.table.selectedItems()
@@ -435,3 +415,5 @@ class LeftPanel(QWidget):
         self.page_label.setText(f"Страница {self.current_page + 1} из {total_pages}")
         self.btn_prev.setEnabled(self.current_page > 0)
         self.btn_next.setEnabled((self.current_page + 1) * self.page_size < self.total_records)
+        self.count_label.setText(f"Всего записей: {self.total_records}")
+    
