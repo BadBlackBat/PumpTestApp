@@ -2,9 +2,11 @@ import sys
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QMessageBox, QInputDialog, QLineEdit,
-    QDialog, QPushButton
+    QDialog, QPushButton, QLabel
 )
 from PyQt5.QtCore import Qt
+
+from PyQt5.QtGui import QFont
 
 from .widgets.left_panel import LeftPanel
 from .widgets.right_panel import RightPanel
@@ -27,19 +29,35 @@ class MainWindow(QMainWindow):
         main_layout = QVBoxLayout(central)
         main_layout.setContentsMargins(5, 5, 5, 5)
 
-        # Верхняя панель с кнопками
+        # Верхняя панель с логотипом и кнопками
         top_layout = QHBoxLayout()
-        top_layout.addStretch()  # отодвигаем кнопки вправо
+
+        # Добавляем растяжение слева, чтобы центрировать логотип
+        top_layout.addStretch()
+
+        # Логотип (текст)
+        logo_label = QLabel("Лаборатория Рулевого Управления")
+        logo_label.setAlignment(Qt.AlignCenter)
+        logo_label.setFont(QFont("Arial", 14, QFont.Bold))
+        logo_label.setStyleSheet("color: #2c3e50;")
+        top_layout.addWidget(logo_label)
+
+        # Растяжение между логотипом и кнопками
+        top_layout.addStretch()
+
+        # Кнопки-заглушки
         btn_theme = QPushButton("🌙")
         btn_settings = QPushButton("⚙️")
         btn_print = QPushButton("🖨️")
         btn_theme.setToolTip("Смена темы")
         btn_settings.setToolTip("Настройки")
         btn_print.setToolTip("Печать")
-        # Пока кнопки ничего не делают
+
+        # Подключаем заглушки
         btn_theme.clicked.connect(lambda: QMessageBox.information(self, "Тема", "Функция будет реализована позже"))
         btn_settings.clicked.connect(lambda: QMessageBox.information(self, "Настройки", "Функция будет реализована позже"))
         btn_print.clicked.connect(lambda: QMessageBox.information(self, "Печать", "Функция будет реализована позже"))
+
         top_layout.addWidget(btn_theme)
         top_layout.addWidget(btn_settings)
         top_layout.addWidget(btn_print)
@@ -129,11 +147,6 @@ class MainWindow(QMainWindow):
             if filters.get('only_duplicates'):
                 parts.append("только дубли")
             filters_text = ", ".join(parts)
-        # Передаём дату обновления (можно текущую или из БД)
-        # from datetime import datetime
-        # last_update = datetime.now().strftime("%Y-%m-%d %H:%M")
-        # self.status_bar.set_status("Готово", count=count, filters=filters_text,
-        #                         last_update=last_update, selected_pump=selected_pump)
         last_update = db.get_last_update_date()
         self.status_bar.set_status("Готово", count=count, filters=filters_text, selected_pump=selected_pump, last_update=last_update)
         
@@ -141,30 +154,42 @@ class MainWindow(QMainWindow):
     def on_edit_requested(self, pump_id):
         pump_data = db.get_pump_by_id(pump_id)
         if not pump_data:
+            QMessageBox.warning(self, "Ошибка", "Запись не найдена.")
             return
+
         dialog = EditProtocolDialog(pump_data, self)
         if dialog.exec_() == QDialog.Accepted:
             data = dialog.get_data()
-            if data['password'] != "admin":  # временный пароль
-                QMessageBox.warning(self, "Ошибка", "Неверный пароль")
+            if data['password'] != "admin":
+                QMessageBox.warning(self, "Ошибка", "Неверный пароль.")
                 return
-            # Формируем запись истории
+
+            new_note = data['note']
+            old_note = pump_data.get('note', '')
+
+            # Формируем запись для истории
+            from datetime import datetime
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            reason = data['reason']
-            if not reason:
-                reason = "Без указания причины"
-            new_entry = f"{timestamp}: {reason}\n"
-            old_history = pump_data.get('edit_history', '')
-            if old_history:
-                edit_history = new_entry + old_history
+            if new_note.strip() == "" and old_note.strip() != "":
+                edit_entry = f"{timestamp}: Примечание удалено"
+            elif new_note.strip() != "" and old_note.strip() == "":
+                edit_entry = f"{timestamp}: Примечание добавлено"
+            elif new_note.strip() != "" and old_note.strip() != "":
+                edit_entry = f"{timestamp}: Примечание изменено"
             else:
-                edit_history = new_entry
-            
-            # Обновляем запись
-            db.update_pump(pump_id, note=data['note'], edit_history=edit_history)
+                edit_entry = f"{timestamp}: Примечание не изменено"  # на всякий случай
+
+            old_history = pump_data.get('edit_history', '')
+            new_history = edit_entry + "\n" + old_history if old_history else edit_entry
+
+            # Сохраняем
+            db.update_pump(pump_id, note=new_note, edit_history=new_history)
+
+            # Обновляем интерфейс
             self.left_panel.refresh()
-            # Если текущий открытый протокол относится к этому насосу, обновить правую панель
-            if self.right_panel.current_data and self.right_panel.current_data['id'] == pump_id:
+            current_selected = self.right_panel.current_data
+            if current_selected and current_selected['id'] == pump_id:
                 updated = db.get_pump_by_id(pump_id)
                 self.right_panel.display_protocol(updated)
-            QMessageBox.information(self, "Успех", "Протокол обновлён.")
+
+            QMessageBox.information(self, "Успех", "Примечание обновлено.")

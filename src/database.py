@@ -158,36 +158,6 @@ def add_pump(pump_number, test_date, test_type, modification_id, order_id,
         conn.commit()
         return cursor.lastrowid
 
-# def get_pump_by_id(pump_id):
-#     with get_connection() as conn:
-#         cursor = conn.cursor()
-#         cursor.execute('''
-#             SELECT p.*, m.name as mod_name, o.order_number 
-#             FROM pumps p
-#             LEFT JOIN modifications m ON p.modification_id = m.id
-#             LEFT JOIN orders o ON p.order_id = o.id
-#             WHERE p.id = ?
-#         ''', (pump_id,))
-#         row = cursor.fetchone()
-#         if row:
-#             return {
-#                 'id': row[0],
-#                 'pump_number': row[1],
-#                 'test_date': row[2],
-#                 'test_type': row[3],
-#                 'modification_id': row[4],
-#                 'order_id': row[5],
-#                 'results_json': json.loads(row[6]) if row[6] else {},
-#                 'seal_results_json': json.loads(row[7]) if row[7] else {},
-#                 'verdict': row[8],
-#                 'is_sealed': row[9],
-#                 'note': row[10],
-#                 'created_at': row[11],
-#                 'mod_name': row[12],
-#                 'order_number': row[13]
-#             }
-#         return None
-
 def get_pump_by_id(pump_id):
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -335,6 +305,9 @@ def update_pump(pump_id, **kwargs):
             elif key == 'seal_results_json':
                 set_clause.append('seal_results_json = ?')
                 params.append(json.dumps(value))
+            elif key == 'edit_history':
+                set_clause.append(f'{key} = ?')
+                params.append(value)
         if set_clause:
             params.append(pump_id)
             cursor.execute(f'UPDATE pumps SET {", ".join(set_clause)} WHERE id = ?', params)
@@ -346,6 +319,50 @@ def get_all_orders():
         cursor = conn.cursor()
         cursor.execute('SELECT id, order_number FROM orders ORDER BY order_number')
         return cursor.fetchall()
+    
+# Функция статистики по выбранному заказу
+def get_order_stats(order_number):
+    """Возвращает статистику по заказу: общее количество, годные, негерметичные, первичные."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        # Всего записей для заказа
+        cursor.execute('''
+            SELECT COUNT(*) FROM pumps p
+            LEFT JOIN orders o ON p.order_id = o.id
+            WHERE o.order_number = ?
+        ''', (order_number,))
+        total = cursor.fetchone()[0]
+
+        # Годные
+        cursor.execute('''
+            SELECT COUNT(*) FROM pumps p
+            LEFT JOIN orders o ON p.order_id = o.id
+            WHERE o.order_number = ? AND p.verdict = 'годен'
+        ''', (order_number,))
+        good = cursor.fetchone()[0]
+
+        # Негерметичные
+        cursor.execute('''
+            SELECT COUNT(*) FROM pumps p
+            LEFT JOIN orders o ON p.order_id = o.id
+            WHERE o.order_number = ? AND p.is_sealed = 0
+        ''', (order_number,))
+        not_sealed = cursor.fetchone()[0]
+
+        # Первичные
+        cursor.execute('''
+            SELECT COUNT(*) FROM pumps p
+            LEFT JOIN orders o ON p.order_id = o.id
+            WHERE o.order_number = ? AND p.test_type = 'первичная'
+        ''', (order_number,))
+        primary = cursor.fetchone()[0]
+
+        return {
+            'total': total,
+            'good': good,
+            'not_sealed': not_sealed,
+            'primary': primary
+        }
 
 # Пагинация
 def count_pumps(filters=None):
@@ -391,7 +408,6 @@ def get_check_count_for_pump(pump_number):
         cursor.execute('SELECT COUNT(*) FROM pumps WHERE pump_number = ?', (pump_number,))
         return cursor.fetchone()[0]
     
-
 # Дата последнего обновления в статус-баре
 def get_last_update_date():
     """Возвращает максимальную дату создания записи (created_at) или test_date."""
@@ -406,7 +422,6 @@ def get_last_update_date():
                 date_str = date_str.split(' ')[0]
             return date_str
         return "нет данных"
-
 
 # Инициализация при первом импорте
 if __name__ == '__main__':

@@ -98,6 +98,13 @@ class LeftPanel(QWidget):
 
         layout.addLayout(extra_layout)
 
+        # Статистика по заказу
+        self.stats_label = QLabel("")
+        self.stats_label.setWordWrap(True)
+        self.stats_label.setStyleSheet("background-color: #e8f4f8; border-radius: 5px; border: 1px solid #b0d4e3; padding: 5px;")
+        self.stats_label.hide()  # по умолчанию скрыт
+        layout.addWidget(self.stats_label)
+
         # Таблица
         self.table = QTableWidget()
         self.table.setColumnCount(6)
@@ -154,6 +161,107 @@ class LeftPanel(QWidget):
         self.filter_order.blockSignals(False)
         self.apply_filters()
 
+    def update_stats(self, filtered_pumps):
+        """Обновляет статистику по заказу, если выбран конкретный заказ."""
+        # Проверяем, выбран ли заказ в фильтрах
+        if 'order_number' in self.current_filters and self.current_filters['order_number']:
+            order_number = self.current_filters['order_number']
+            total = len(filtered_pumps)
+            if total == 0:
+                self.stats_label.setText(f"Для заказа №{order_number} нет данных с учётом текущих фильтров.")
+                self.stats_label.show()
+                return
+
+            good = sum(1 for p in filtered_pumps if p.get('verdict') == 'годен')
+            not_sealed = sum(1 for p in filtered_pumps if p.get('is_sealed') is False)
+            good_first = sum(1 for p in filtered_pumps if p.get('verdict') == 'годен' and p.get('test_type') == 'первичная')
+
+            good_percent = round(good / total * 100, 1)
+            not_sealed_percent = round(not_sealed / total * 100, 1)
+            good_first_percent = round(good_first / total * 100, 1)
+
+            text = (f"Для заказа <b>№{order_number}</b> проверено <b>{total}</b> насосов: <br>"
+                    f"годных — <b>{good}</b> ({good_percent}%), <br>"
+                    f"годных с первого предъявления — <b>{good_first}</b> ({good_first_percent}%), <br>"
+                    f"негерметичных — <b>{not_sealed}</b> ({not_sealed_percent}%), ")
+            self.stats_label.setText(text)
+            self.stats_label.show()
+        else:
+            self.stats_label.hide()
+
+    # def apply_filters(self):
+    #     filters = {}
+    #     search_text = self.search_input.text().strip()
+    #     if search_text:
+    #         filters['pump_number'] = search_text
+
+    #     verdict = self.filter_verdict.currentText()
+    #     if verdict != 'Все':
+    #         filters['verdict'] = verdict.lower()
+
+    #     test_type = self.filter_test_type.currentText()
+    #     if test_type != 'Все':
+    #         filters['test_type'] = test_type.lower()
+
+    #     sealed = self.filter_sealed.currentText()
+    #     if sealed == 'Герметичен':
+    #         filters['is_sealed'] = 1
+    #     elif sealed == 'Не герметичен':
+    #         filters['is_sealed'] = 0
+
+    #     self.display_pumps(filtered)
+        
+    #     # Обновляем статистику по заказу
+    #     # order_text = self.filter_order.currentText() if hasattr(self, 'filter_order') else "Все заказы"
+    #     # if order_text != "Все заказы":
+    #     #     stats = db.get_order_stats(order_text)
+    #     #     if stats and stats['total'] > 0:
+    #     #         good_percent = (stats['good'] / stats['total']) * 100
+    #     #         not_sealed_percent = (stats['not_sealed'] / stats['total']) * 100
+    #     #         primary_percent = (stats['primary'] / stats['total']) * 100
+    #     #         stats_text = (
+    #     #             f"<b>Статистика для заказа № {order_text}:</b><br>"
+    #     #             f"Всего насосов: {stats['total']}<br>"
+    #     #             f"Годных: {stats['good']} шт. ({good_percent:.1f}%)<br>"
+    #     #             f"Негерметичных: {stats['not_sealed']} шт. ({not_sealed_percent:.1f}%)<br>"
+    #     #             f"С первого предъявления: {stats['primary']} шт. ({primary_percent:.1f}%)"
+    #     #         )
+    #     #         self.stats_label.setText(stats_text)
+    #     #         self.stats_label.show()
+    #     #     else:
+    #     #         self.stats_label.hide()
+    #     # else:
+    #     #     self.stats_label.hide()
+
+    #     # Дата
+    #     date_from = self.date_from.date().toString('yyyy-MM-dd')
+    #     date_to = self.date_to.date().toString('yyyy-MM-dd')
+    #     if date_from != '2000-01-01' or date_to != QDate.currentDate().toString('yyyy-MM-dd'):
+    #         filters['date_from'] = date_from
+    #         filters['date_to'] = date_to
+
+    #     if self.only_duplicates.isChecked():
+    #         filters['only_duplicates'] = True
+
+    #     self.current_filters = filters
+
+    #     # Подсчёт общего количества
+    #     self.total_records = db.count_pumps(filters)
+
+    #     # Пагинация
+    #     offset = self.current_page * self.page_size
+    #     filtered = db.get_all_pumps(filters, limit=self.page_size, offset=offset)
+    #     self.display_pumps(filtered)
+    #     self.update_pagination_label()
+
+    #     # Сигнал для статус-бара
+    #     self.filters_applied.emit(filters)
+
+    #     if hasattr(self, 'filters_applied'):
+    #         self.filters_applied.emit(filters)
+
+    #     self.update_stats(filtered)
+
     def apply_filters(self):
         filters = {}
         search_text = self.search_input.text().strip()
@@ -162,11 +270,11 @@ class LeftPanel(QWidget):
 
         verdict = self.filter_verdict.currentText()
         if verdict != 'Все':
-            filters['verdict'] = verdict.lower()
+            filters['verdict'] = verdict
 
         test_type = self.filter_test_type.currentText()
         if test_type != 'Все':
-            filters['test_type'] = test_type.lower()
+            filters['test_type'] = test_type
 
         sealed = self.filter_sealed.currentText()
         if sealed == 'Герметичен':
@@ -174,12 +282,11 @@ class LeftPanel(QWidget):
         elif sealed == 'Не герметичен':
             filters['is_sealed'] = 0
 
-        # Заказ
-        order_text = self.filter_order.currentText()
-        if order_text != "Все заказы":
-            filters['order_number'] = order_text
+        if hasattr(self, 'filter_order'):
+            order_text = self.filter_order.currentText()
+            if order_text != "Все заказы":
+                filters['order_number'] = order_text
 
-        # Дата
         date_from = self.date_from.date().toString('yyyy-MM-dd')
         date_to = self.date_to.date().toString('yyyy-MM-dd')
         if date_from != '2000-01-01' or date_to != QDate.currentDate().toString('yyyy-MM-dd'):
@@ -198,10 +305,12 @@ class LeftPanel(QWidget):
         offset = self.current_page * self.page_size
         filtered = db.get_all_pumps(filters, limit=self.page_size, offset=offset)
         self.display_pumps(filtered)
+        self.update_stats(filtered)   # <-- здесь переменная определена
         self.update_pagination_label()
 
-        # Сигнал для статус-бара
-        self.filters_applied.emit(filters)
+        if hasattr(self, 'filters_applied'):
+            self.filters_applied.emit(filters)
+
 
     def display_pumps(self, pumps):
         self.table.setSortingEnabled(False)
@@ -269,16 +378,16 @@ class LeftPanel(QWidget):
             return
 
         menu = QMenu(self)
-        # action_view = menu.addAction("Показать протокол....")
+        action_view = menu.addAction("Показать протокол....")
         action_edit = menu.addAction("Вставить примечание")
         action_delete = menu.addAction("Удалить")
 
         action = menu.exec_(self.table.mapToGlobal(pos))
 
-        # if action == action_view:
-        #     self.table.selectRow(row)
-        #     self.on_selection_changed()
-        if action == action_edit:
+        if action == action_view:
+            self.table.selectRow(row)
+            self.on_selection_changed()
+        elif action == action_edit:
             self.request_edit.emit(pump_id)
         elif action == action_delete:
             self.request_delete.emit(pump_id)
