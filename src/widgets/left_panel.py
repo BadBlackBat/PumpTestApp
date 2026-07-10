@@ -162,11 +162,11 @@ class LeftPanel(QWidget):
 
         verdict = self.filter_verdict.currentText()
         if verdict != 'Все':
-            filters['verdict'] = verdict
+            filters['verdict'] = verdict.lower()
 
         test_type = self.filter_test_type.currentText()
         if test_type != 'Все':
-            filters['test_type'] = test_type
+            filters['test_type'] = test_type.lower()
 
         sealed = self.filter_sealed.currentText()
         if sealed == 'Герметичен':
@@ -269,16 +269,16 @@ class LeftPanel(QWidget):
             return
 
         menu = QMenu(self)
-        action_view = menu.addAction("Показать протокол")
-        action_edit = menu.addAction("Редактировать")
+        # action_view = menu.addAction("Показать протокол....")
+        action_edit = menu.addAction("Вставить примечание")
         action_delete = menu.addAction("Удалить")
 
         action = menu.exec_(self.table.mapToGlobal(pos))
 
-        if action == action_view:
-            self.table.selectRow(row)
-            self.on_selection_changed()
-        elif action == action_edit:
+        # if action == action_view:
+        #     self.table.selectRow(row)
+        #     self.on_selection_changed()
+        if action == action_edit:
             self.request_edit.emit(pump_id)
         elif action == action_delete:
             self.request_delete.emit(pump_id)

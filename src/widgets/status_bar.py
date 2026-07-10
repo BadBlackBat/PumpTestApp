@@ -1,30 +1,3 @@
-# from PyQt5.QtWidgets import QStatusBar, QLabel
-# from PyQt5.QtCore import Qt
-
-# class StatusBar(QStatusBar):
-#     def __init__(self, parent=None):
-#         super().__init__(parent)
-#         self.selected_pump_label = QLabel()
-#         self.count_label = QLabel()
-#         self.filter_label = QLabel()
-#         self.update_label = QLabel()
-        
-#         # Добавляем левые виджеты
-#         self.addWidget(self.selected_pump_label)
-#         self.addWidget(self.count_label)
-#         self.addWidget(self.filter_label)
-        
-#         # Добавляем растяжение, чтобы прижать update_label вправо
-#         self.addPermanentWidget(QLabel())  # пустой виджет для растяжения
-#         self.addPermanentWidget(self.update_label)  # будет справа
-        
-#         self.set_status("Готово")
-    
-#     def set_status(self, message, count=None, filters=None, last_update=None, selected_pump=None):
-#         self.count_label.setText(f"Всего записей: {count}" if count is not None else "")
-#         self.filter_label.setText(f"Фильтры: {filters}" if filters else "")
-#         self.update_label.setText(f"Последнее обновление: {last_update}" if last_update else "")
-#         self.selected_pump_label.setText(f"Выбран: {selected_pump}" if selected_pump else "")
 from PyQt5.QtWidgets import QStatusBar, QWidget, QHBoxLayout, QLabel
 from PyQt5.QtCore import Qt
 
@@ -67,4 +40,6 @@ class StatusBar(QStatusBar):
         
         # Правая часть
         self.count_label.setText(f"Всего записей: {count}" if count is not None else "")
-        self.update_label.setText(f"  |  Последнее обновление: {last_update}" if last_update else "")
+        # self.update_label.setText(f"  |  Последнее обновление: {last_update}" if last_update else "")
+        if last_update is not None:
+            self.update_label.setText(f"Последнее обновление: {last_update}")

@@ -14,6 +14,7 @@ import numpy as np
 from .. import database as db
 from ..utils import is_value_in_range
 
+
 class RightPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -30,74 +31,93 @@ class RightPanel(QWidget):
         content = QWidget()
         self.content_layout = QVBoxLayout(content)
 
+        # Логотип/заставка
+        self.logo_label = QLabel("Здесь будет логотип\nВыберите насос для просмотра протокола")
+        self.logo_label.setAlignment(Qt.AlignCenter)
+        self.logo_label.setFont(QFont("Arial", 14))
+        self.logo_label.setStyleSheet("background-color: #f0f0f0; border: 1px solid #ccc; padding: 20px;")
+        self.content_layout.addWidget(self.logo_label)
+
+        # Кнопка "Скрыть протокол"
+        self.clear_btn = QPushButton("Скрыть протокол")
+        self.clear_btn.clicked.connect(self.clear_protocol)
+        self.content_layout.addWidget(self.clear_btn)
+        
+        # Заголовок протокола
         self.header_label = QLabel("Выберите насос для просмотра протокола")
         self.header_label.setAlignment(Qt.AlignCenter)
         self.header_label.setWordWrap(True)
         self.header_label.setFont(QFont("Arial", 12, QFont.Bold))
         self.content_layout.addWidget(self.header_label)
 
-        self.tables_widget = QWidget()
-        self.tables_layout = QVBoxLayout(self.tables_widget)
-        self.content_layout.addWidget(self.tables_widget)
 
-        self.graphs_widget = QWidget()
-        self.graphs_layout = QVBoxLayout(self.graphs_widget)
-        self.content_layout.addWidget(self.graphs_widget)
+        # Динамический контейнер для таблиц, графиков и заметок
+        self.dynamic_container = QWidget()
+        self.dynamic_layout = QVBoxLayout(self.dynamic_container)
+        self.content_layout.addWidget(self.dynamic_container)
 
+        # Легенда
         self.legend_label = QLabel()
         self.legend_label.setWordWrap(True)
         self.legend_label.setStyleSheet("background-color: #f0f0f0; padding: 5px;")
         self.content_layout.addWidget(self.legend_label)
+
+        # По умолчанию показываем только логотип
+        self.header_label.hide()
+        self.clear_btn.hide()
+        self.dynamic_container.hide()
+        self.legend_label.hide()
+        self.logo_label.show()
 
         scroll.setWidget(content)
         layout.addWidget(scroll)
 
     def display_protocol(self, data):
         self.current_data = data
-        self.clear_protocol()  # полностью пересоздаём содержимое
+        # Показываем все элементы, скрываем логотип
+        self.logo_label.hide()
+        self.header_label.show()
+        self.clear_btn.show()
+        self.dynamic_container.show()
+        self.legend_label.show()
 
-        # Обрезаем время
+        # Обрезаем время у даты
         date_str = data['test_date']
         if date_str and ' ' in date_str:
             date_str = date_str.split(' ')[0]
 
         header_text = (f"Характеристики образца насоса ГУР\n"
-                    f"Протокол проверки насоса ГУР от: {date_str}\n"
-                    f"Идентификационный №: {data['pump_number']}  Заказ №: {data.get('order_number', '—')}\n"
-                    f"Проверка: {data['test_type']}\n"
-                    f"Модификация: {data.get('mod_name', '—')}\n"
-                    f"Герметичен: {'Да' if data['is_sealed'] else 'Нет'}\n"
-                    f"Вердикт: {data['verdict']}")
+                       f"Протокол проверки насоса ГУР от: {date_str}\n"
+                       f"Идентификационный №: {data['pump_number']}  Заказ: {data.get('order_number', '—')}\n"
+                       f"Проверка: {data['test_type']}\n"
+                       f"Модификация: {data.get('mod_name', '—')}\n"
+                       f"Герметичен: {'Да' if data['is_sealed'] else 'Нет'}\n"
+                       f"Вердикт: {data['verdict']}")
         self.header_label.setText(header_text)
 
-        # Таблицы
+        # Очищаем динамический контейнер
+        self.clear_dynamic_layout()
+
+        # Добавляем таблицы
         self.create_test_table("Тест 1: Зависимость расхода от оборотов (ECO выкл.)",
-                            list(range(5, 13)), data['results_json'], data.get('mod_name'))
+                               list(range(5, 13)), data['results_json'], data.get('mod_name'))
         self.create_test_table("Тест 2: Зависимость расхода от оборотов (ECO вкл.)",
-                            list(range(13, 21)), data['results_json'], data.get('mod_name'))
+                               list(range(13, 21)), data['results_json'], data.get('mod_name'))
         self.create_test_table("Тест 3: Зависимость расхода от силы тока ECO",
-                            list(range(21, 32)), data['results_json'], data.get('mod_name'))
+                               list(range(21, 32)), data['results_json'], data.get('mod_name'))
         self.create_pressure_table(data)
         self.create_seal_table(data)
         self.create_graphs(data)
+        self.create_notes_section(data)
 
-        # Легенда
         self.legend_label.setText("Красная подсветка – значение не соответствует техническим требованиям.")
 
-        # Примечание
-        note = data.get('note', '').strip()
-        if note:
-            header_text += f"\nПримечание: {note}"
-        # История редактирования
-        edit_history = data.get('edit_history')
-        if edit_history:
-            history_label = QLabel(f"История редактирования:\n{edit_history}")
-            history_label.setWordWrap(True)
-            history_label.setStyleSheet("background-color: #f0f0f0; padding: 5px; margin-top: 10px;")
-            self.content_layout.addWidget(history_label)
-
-
-
+    def clear_dynamic_layout(self):
+        """Удаляет все виджеты из dynamic_layout."""
+        while self.dynamic_layout.count():
+            child = self.dynamic_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
 
     def create_test_table(self, title, indices, results, mod_name):
         mod = None
@@ -136,16 +156,7 @@ class RightPanel(QWidget):
             x_val = x_vals[i] if i < len(x_vals) else ''
             table.setItem(i, 0, QTableWidgetItem(str(x_val)))
 
-            # val_item = QTableWidgetItem(str(val) if val is not None else '')
-            if val is not None:
-                try:
-                    val_text = f"{float(val):.2f}"
-                except:
-                    val_text = str(val)
-            else:
-                val_text = ''
-            val_item = QTableWidgetItem(val_text)
-            
+            val_item = QTableWidgetItem(f"{float(val):.2f}" if val is not None else '')
             if val is not None and i < len(norm_min) and i < len(norm_max):
                 if not is_value_in_range(val, norm_min[i], norm_max[i]):
                     val_item.setBackground(QColor(255, 200, 200))
@@ -155,16 +166,16 @@ class RightPanel(QWidget):
 
             min_val = norm_min[i] if i < len(norm_min) else ''
             max_val = norm_max[i] if i < len(norm_max) else ''
-            table.setItem(i, 2, QTableWidgetItem(str(min_val) if min_val != '' else ''))
-            table.setItem(i, 3, QTableWidgetItem(str(max_val) if max_val != '' else ''))
+            table.setItem(i, 2, QTableWidgetItem(f"{float(min_val):.2f}" if min_val != '' and min_val is not None else ''))
+            table.setItem(i, 3, QTableWidgetItem(f"{float(max_val):.2f}" if max_val != '' and max_val is not None else ''))
 
         table.resizeColumnsToContents()
         table.setEditTriggers(QTableWidget.NoEditTriggers)
 
         title_label = QLabel(title)
         title_label.setFont(QFont("Arial", 10, QFont.Bold))
-        self.tables_layout.addWidget(title_label)
-        self.tables_layout.addWidget(table)
+        self.dynamic_layout.addWidget(title_label)
+        self.dynamic_layout.addWidget(table)
 
     def create_pressure_table(self, data):
         mod = None
@@ -179,7 +190,7 @@ class RightPanel(QWidget):
         table.setHorizontalHeaderLabels(["Параметр", "Значение", "Допустимый диапазон"])
         table.setRowCount(1)
         table.setItem(0, 0, QTableWidgetItem("Макс. давление, бар"))
-        val_item = QTableWidgetItem(str(pressure_val) if pressure_val is not None else '')
+        val_item = QTableWidgetItem(f"{float(pressure_val):.2f}" if pressure_val is not None else '')
         if pressure_val is not None and min_p is not None and max_p is not None:
             if not is_value_in_range(pressure_val, min_p, max_p):
                 val_item.setBackground(QColor(255, 200, 200))
@@ -192,8 +203,8 @@ class RightPanel(QWidget):
 
         title_label = QLabel("Тест 4: Давление настройки предохранительного клапана")
         title_label.setFont(QFont("Arial", 10, QFont.Bold))
-        self.tables_layout.addWidget(title_label)
-        self.tables_layout.addWidget(table)
+        self.dynamic_layout.addWidget(title_label)
+        self.dynamic_layout.addWidget(table)
 
     def create_seal_table(self, data):
         seal = data['seal_results_json']
@@ -228,17 +239,16 @@ class RightPanel(QWidget):
 
         title_label = QLabel("Герметичность")
         title_label.setFont(QFont("Arial", 10, QFont.Bold))
-        self.tables_layout.addWidget(title_label)
-        self.tables_layout.addWidget(table)
+        self.dynamic_layout.addWidget(title_label)
+        self.dynamic_layout.addWidget(table)
 
     def create_graphs(self, data):
-        print(f"DEBUG: Построение графиков для {data['pump_number']}")
         mod = None
         if data.get('mod_name'):
             mod = db.get_modification_by_name(data['mod_name'])
         if not mod:
             label = QLabel("Нормативы не найдены для этой модификации")
-            self.graphs_layout.addWidget(label)
+            self.dynamic_layout.addWidget(label)
             return
 
         results = data['results_json']
@@ -273,7 +283,7 @@ class RightPanel(QWidget):
 
         canvas1 = FigureCanvas(fig1)
         canvas1.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.graphs_layout.addWidget(canvas1)
+        self.dynamic_layout.addWidget(canvas1)
 
         # График 2
         fig2 = Figure(figsize=(6, 3), dpi=100)
@@ -296,41 +306,32 @@ class RightPanel(QWidget):
 
         canvas2 = FigureCanvas(fig2)
         canvas2.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.graphs_layout.addWidget(canvas2)
+        self.dynamic_layout.addWidget(canvas2)
+
+    def create_notes_section(self, data):
+        # Примечание
+        note = data.get('note', '')
+        if note:
+            note_label = QLabel(f"<b>Примечание:</b> {note}")
+            note_label.setWordWrap(True)
+            self.dynamic_layout.addWidget(note_label)
+        
+        # История редактирования
+        edit_history = data.get('edit_history', '')
+        if edit_history:
+            history_label = QLabel("<b>История редактирования:</b>")
+            history_label.setWordWrap(True)
+            self.dynamic_layout.addWidget(history_label)
+            for line in edit_history.strip().split('\n'):
+                if line.strip():
+                    line_label = QLabel(f"  {line.strip()}")
+                    line_label.setWordWrap(True)
+                    self.dynamic_layout.addWidget(line_label)
 
     def clear_protocol(self):
-    # Удаляем все виджеты из content_layout
-        while self.content_layout.count():
-            child = self.content_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-        # Заново создаём основные виджеты
-        self.header_label = QLabel()
-        self.header_label.setAlignment(Qt.AlignCenter)
-        self.header_label.setWordWrap(True)
-        self.header_label.setFont(QFont("Arial", 12, QFont.Bold))
-        self.content_layout.addWidget(self.header_label)
-        
-        self.tables_widget = QWidget()
-        self.tables_layout = QVBoxLayout(self.tables_widget)
-        self.content_layout.addWidget(self.tables_widget)
-        
-        self.graphs_widget = QWidget()
-        self.graphs_layout = QVBoxLayout(self.graphs_widget)
-        self.content_layout.addWidget(self.graphs_widget)
-        
-        self.legend_label = QLabel()
-        self.legend_label.setWordWrap(True)
-        self.legend_label.setStyleSheet("background-color: #f0f0f0; padding: 5px;")
-        self.content_layout.addWidget(self.legend_label)
-
-    # def clear_protocol(self):
-    #     while self.tables_layout.count():
-    #         child = self.tables_layout.takeAt(0)
-    #         if child.widget():
-    #             child.widget().deleteLater()
-    #     while self.graphs_layout.count():
-    #         child = self.graphs_layout.takeAt(0)
-    #         if child.widget():
-    #             child.widget().deleteLater()
-    #     self.legend_label.setText("")
+        """Скрывает протокол и показывает логотип."""
+        self.header_label.hide()
+        self.clear_btn.hide()
+        self.dynamic_container.hide()
+        self.legend_label.hide()
+        self.logo_label.show()

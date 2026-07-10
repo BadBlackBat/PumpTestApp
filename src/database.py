@@ -390,6 +390,23 @@ def get_check_count_for_pump(pump_number):
         cursor = conn.cursor()
         cursor.execute('SELECT COUNT(*) FROM pumps WHERE pump_number = ?', (pump_number,))
         return cursor.fetchone()[0]
+    
+
+# Дата последнего обновления в статус-баре
+def get_last_update_date():
+    """Возвращает максимальную дату создания записи (created_at) или test_date."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT MAX(created_at) FROM pumps')
+        row = cursor.fetchone()
+        if row and row[0]:
+            # обрезаем время, оставляем только дату
+            date_str = row[0]
+            if ' ' in date_str:
+                date_str = date_str.split(' ')[0]
+            return date_str
+        return "нет данных"
+
 
 # Инициализация при первом импорте
 if __name__ == '__main__':

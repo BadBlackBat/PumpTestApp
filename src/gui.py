@@ -2,7 +2,7 @@ import sys
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QMessageBox, QInputDialog, QLineEdit,
-    QDialog
+    QDialog, QPushButton
 )
 from PyQt5.QtCore import Qt
 
@@ -26,6 +26,25 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
         main_layout.setContentsMargins(5, 5, 5, 5)
+
+        # Верхняя панель с кнопками
+        top_layout = QHBoxLayout()
+        top_layout.addStretch()  # отодвигаем кнопки вправо
+        btn_theme = QPushButton("🌙")
+        btn_settings = QPushButton("⚙️")
+        btn_print = QPushButton("🖨️")
+        btn_theme.setToolTip("Смена темы")
+        btn_settings.setToolTip("Настройки")
+        btn_print.setToolTip("Печать")
+        # Пока кнопки ничего не делают
+        btn_theme.clicked.connect(lambda: QMessageBox.information(self, "Тема", "Функция будет реализована позже"))
+        btn_settings.clicked.connect(lambda: QMessageBox.information(self, "Настройки", "Функция будет реализована позже"))
+        btn_print.clicked.connect(lambda: QMessageBox.information(self, "Печать", "Функция будет реализована позже"))
+        top_layout.addWidget(btn_theme)
+        top_layout.addWidget(btn_settings)
+        top_layout.addWidget(btn_print)
+
+        main_layout.insertLayout(0, top_layout)
         
         # Сплиттер
         self.splitter = QSplitter(Qt.Horizontal)
@@ -111,10 +130,13 @@ class MainWindow(QMainWindow):
                 parts.append("только дубли")
             filters_text = ", ".join(parts)
         # Передаём дату обновления (можно текущую или из БД)
-        from datetime import datetime
-        last_update = datetime.now().strftime("%Y-%m-%d %H:%M")
-        self.status_bar.set_status("Готово", count=count, filters=filters_text,
-                                last_update=last_update, selected_pump=selected_pump)
+        # from datetime import datetime
+        # last_update = datetime.now().strftime("%Y-%m-%d %H:%M")
+        # self.status_bar.set_status("Готово", count=count, filters=filters_text,
+        #                         last_update=last_update, selected_pump=selected_pump)
+        last_update = db.get_last_update_date()
+        self.status_bar.set_status("Готово", count=count, filters=filters_text, selected_pump=selected_pump, last_update=last_update)
+        
     
     def on_edit_requested(self, pump_id):
         pump_data = db.get_pump_by_id(pump_id)
