@@ -3,8 +3,8 @@ from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QPushButton, QLabel, QCheckBox,
     QDateEdit, QHeaderView, QAbstractItemView, QMenu
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QDate
-from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont
+from PyQt5.QtCore import Qt, pyqtSignal, QDate, QPoint
+from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QPolygon
 
 from .. import database as db
 from .. import utils
@@ -20,6 +20,7 @@ class LeftPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         # Инициализация атрибутов ДО вызова setup_ui и load_data
+        self.compact_mode = True   # по умолчанию компактный вид списка насосов
         self.current_page = 0
         self.page_size = 20
         self.total_records = 0
@@ -151,6 +152,342 @@ class LeftPanel(QWidget):
         btn_layout.addWidget(self.btn_import)
         layout.addLayout(btn_layout)
 
+        # Кнопка переключения вида
+        self.btn_view_toggle = QPushButton("Расширенный вид")
+        self.btn_view_toggle.setCheckable(True)
+        self.btn_view_toggle.toggled.connect(self.toggle_view)
+
+        btn_layout.addWidget(self.btn_add)
+        btn_layout.addWidget(self.btn_delete)
+        btn_layout.addWidget(self.btn_import)
+        btn_layout.addWidget(self.btn_view_toggle)
+        layout.addLayout(btn_layout)
+
+        # Легенда (показывается только в компактном режиме)
+        self.legend_label = QLabel()
+        self.legend_label.setWordWrap(True)
+        self.legend_label.setStyleSheet("background-color: #f9f9f9; border: 1px solid #ddd; padding: 5px;")
+        self.update_legend()
+        layout.addWidget(self.legend_label)
+
+    def update_legend(self):
+        # HTML-разметка с цветными кружками
+        legend_text = (
+            "Легенда: "
+            "<span style='color:green;'>●</span> годен  "
+            "<span style='color:red;'>●</span> не годен  "
+            "<span style='color:gray;'>●</span> герметичен  "
+            "<span style='color:blue;'>●</span> не герметичен  "
+            "I — первичная  II — повторная"
+        )
+        self.legend_label.setText(legend_text)
+
+    def toggle_view(self, checked):
+        parent = self.parent()
+        while parent and not hasattr(parent, 'splitter'):
+            parent = parent.parent()
+        if not parent or not hasattr(parent, 'splitter'):
+            return
+
+        if checked:
+            self.compact_mode = False
+            self.btn_view_toggle.setText("Свернуть список")
+            # Прячем правую панель
+            right_widget = parent.splitter.widget(1)
+            if right_widget:
+                right_widget.hide()
+            # Устанавливаем ширину левой панели на 100% (но сплиттер с одним виджетом)
+            parent.splitter.setSizes([parent.width(), 0])
+            self.legend_label.hide()
+        else:
+            self.compact_mode = True
+            self.btn_view_toggle.setText("Расширенный вид")
+            # Показываем правую панель
+            right_widget = parent.splitter.widget(1)
+            if right_widget:
+                right_widget.show()
+            # Возвращаем пропорции 20% / 80% (или 30/70, но вы просили 20%)
+            parent.splitter.setSizes([int(parent.width() * 0.2), int(parent.width() * 0.8)])
+            self.legend_label.show()
+        self.apply_filters()
+
+    # def toggle_view(self, checked):
+    #     """Переключает компактный/расширенный режим списка."""
+    #     parent = self.parent()
+    #     while parent and not hasattr(parent, 'splitter'):
+    #         parent = parent.parent()
+    #     if not parent or not hasattr(parent, 'splitter'):
+    #         return
+
+    #     if checked:
+    #         # Расширенный режим
+    #         self.compact_mode = False
+    #         self.btn_view_toggle.setText("Свернуть список")
+    #         # Устанавливаем ширину левой панели 70%, правой 30% (но скрываем правую)
+    #         parent.splitter.setSizes([int(parent.width() * 0.75), int(parent.width() * 0.25)])
+    #         # Скрываем легенду
+    #         self.legend_label.hide()
+    #         # Скрываем правую панель (устанавливаем размер 0)
+    #         # Для этого сохраняем текущие размеры, но чтобы скрыть, устанавливаем 0 для правой
+    #         # но лучше установить минимальную ширину правой в 0 и коллапс
+    #         parent.splitter.setSizes([int(parent.width() * 0.95), int(parent.width() * 0.05)])
+    #         # Также можно сделать правую панель невидимой
+    #         # Но проще просто сжать до минимума
+    #     else:
+    #         # Компактный режим
+    #         self.compact_mode = True
+    #         self.btn_view_toggle.setText("Расширенный вид")
+    #         # Возвращаем пропорции 30% / 70%
+    #         parent.splitter.setSizes([int(parent.width() * 0.3), int(parent.width() * 0.7)])
+    #         # Показываем легенду
+    #         self.legend_label.show()
+    #     # Перезаполняем таблицу с новым режимом
+    #     self.apply_filters()
+
+    def populate_table(self, pumps, compact=True):
+        self.table.setSortingEnabled(False)
+        self.table.setRowCount(len(pumps))
+
+        if compact:
+            self.table.setColumnCount(5)
+            self.table.setHorizontalHeaderLabels(["Номер", "Дата", "Вердикт", "Тип", "Герметичность"])
+            for col in range(5, self.table.columnCount()):
+                self.table.setColumnHidden(col, True)
+            self.table.verticalHeader().setVisible(False)
+            self.table.setColumnWidth(0, 100)
+            self.table.setColumnWidth(1, 100)
+            self.table.setColumnWidth(2, 50)
+            self.table.setColumnWidth(3, 50)
+            self.table.setColumnWidth(4, 50)
+        else:
+            self.table.setColumnCount(7)
+            self.table.setHorizontalHeaderLabels(
+                ["Номер", "Дата", "Модификация", "Герметичность", "Тип", "Заказ", "Вердикт"]
+            )
+            for col in range(self.table.columnCount()):
+                self.table.setColumnHidden(col, False)
+            self.table.verticalHeader().setVisible(False)
+            self.table.setColumnWidth(0, 100)
+            self.table.setColumnWidth(1, 100)
+            self.table.setColumnWidth(2, 150)
+            self.table.setColumnWidth(3, 100)
+            self.table.setColumnWidth(4, 100)
+            self.table.setColumnWidth(5, 100)
+            self.table.setColumnWidth(6, 100)
+
+        for row, p in enumerate(pumps):
+            item_num = QTableWidgetItem(p['pump_number'])
+            item_num.setData(Qt.UserRole, p['id'])
+            self.table.setItem(row, 0, item_num)
+
+            date_str = p['test_date']
+            if date_str and ' ' in date_str:
+                date_str = date_str.split(' ')[0]
+            self.table.setItem(row, 1, QTableWidgetItem(date_str))
+
+            if compact:
+                # Вердикт
+                verdict_icon = self.create_verdict_icon(p['verdict'] == 'годен')
+                item_verdict = QTableWidgetItem()
+                item_verdict.setIcon(verdict_icon)
+                item_verdict.setTextAlignment(Qt.AlignCenter)
+                self.table.setItem(row, 2, item_verdict)
+
+                # Тип
+                type_icon = self.create_type_icon(p['test_type'])
+                item_type = QTableWidgetItem()
+                item_type.setIcon(type_icon)
+                item_type.setTextAlignment(Qt.AlignCenter)
+                self.table.setItem(row, 3, item_type)
+
+                # Герметичность
+                sealed_icon = self.create_sealed_icon(p['is_sealed'])
+                item_sealed = QTableWidgetItem()
+                item_sealed.setIcon(sealed_icon)
+                item_sealed.setTextAlignment(Qt.AlignCenter)
+                self.table.setItem(row, 4, item_sealed)
+            else:
+                # Модификация
+                mod_name = p.get('mod_name', '—')
+                self.table.setItem(row, 2, QTableWidgetItem(mod_name if mod_name else '—'))
+                # Герметичность
+                sealed_text = 'Да' if p['is_sealed'] else 'Нет'
+                self.table.setItem(row, 3, QTableWidgetItem(sealed_text))
+                # Тип
+                test_type = p.get('test_type') or '—'
+                self.table.setItem(row, 4, QTableWidgetItem(test_type))
+                # Заказ
+                order_num = p.get('order_number', '—')
+                self.table.setItem(row, 5, QTableWidgetItem(str(order_num) if order_num else '—'))
+                # Вердикт
+                verdict_text = p['verdict'] or '—'
+                self.table.setItem(row, 6, QTableWidgetItem(verdict_text))
+
+                # Подсветка строки
+                if p['verdict'] == 'годен':
+                    bg_color = QColor(200, 255, 200, 200)
+                elif p['verdict'] == 'не годен':
+                    bg_color = QColor(255, 200, 200, 200)
+                else:
+                    bg_color = None
+                if bg_color:
+                    for col in range(self.table.columnCount()):
+                        item = self.table.item(row, col)
+                        if item:
+                            item.setBackground(bg_color)
+
+        self.table.setSortingEnabled(True)
+        if compact:
+            self.table.sortByColumn(1, Qt.DescendingOrder)
+        else:
+            self.table.sortByColumn(0, Qt.AscendingOrder)
+    # заполнение таблицы в зависимости от режима
+    # def populate_table(self, pumps, compact=True):
+    #     """Заполняет таблицу данными в компактном или расширенном виде."""
+    #     self.table.setSortingEnabled(False)
+    #     self.table.setRowCount(len(pumps))
+
+    #     if compact:
+    #         # Компактный режим: 5 столбцов (номер, дата, вердикт, тип, герметичность)
+    #         self.table.setColumnCount(5)
+    #         self.table.setHorizontalHeaderLabels(
+    #             ["Номер насоса", "Дата", "Вердикт", "Тип", "Герметичность"]
+    #         )
+    #         # Скрываем столбцы, которые не используются (если были)
+    #         for col in range(5, self.table.columnCount()):
+    #             self.table.setColumnHidden(col, True)
+    #         # Убираем нумерацию строк
+    #         self.table.verticalHeader().setVisible(False)
+    #     else:
+    #         # Расширенный режим: 7 столбцов (номер, дата, модификация, герметичность, тип, заказ, вердикт)
+    #         self.table.setColumnCount(7)
+    #         self.table.setHorizontalHeaderLabels(
+    #             ["Номер", "Дата", "Модификация", "Герметичность", "Тип", "Заказ", "Вердикт"]
+    #         )
+    #         # Показываем все столбцы
+    #         for col in range(self.table.columnCount()):
+    #             self.table.setColumnHidden(col, False)
+    #         self.table.verticalHeader().setVisible(False)
+
+    #     if not compact:
+    #         # Подсветка строки
+    #         if p['verdict'] == 'годен':
+    #             bg_color = QColor(200, 255, 200, 200)  # бледно-зелёный с прозрачностью
+    #         elif p['verdict'] == 'не годен':
+    #             bg_color = QColor(255, 200, 200, 200)  # бледно-красный с прозрачностью
+    #         else:
+    #             bg_color = None
+    #         if bg_color:
+    #             for col in range(self.table.columnCount()):
+    #                 item = self.table.item(row, col)
+    #                 if item:
+    #                     item.setBackground(bg_color)
+
+    #     # Заполняем строки
+    #     for row, p in enumerate(pumps):
+    #         # Номер с ID
+    #         item_num = QTableWidgetItem(p['pump_number'])
+    #         item_num.setData(Qt.UserRole, p['id'])
+    #         self.table.setItem(row, 0, item_num)
+
+    #         # Дата (обрезаем время)
+    #         date_str = p['test_date']
+    #         if date_str and ' ' in date_str:
+    #             date_str = date_str.split(' ')[0]
+    #         self.table.setItem(row, 1, QTableWidgetItem(date_str))
+
+    #         if compact:
+    #             # Компактный режим: иконки для вердикта, типа, герметичности
+    #             # Вердикт
+    #             verdict_icon = self.create_verdict_icon(p['verdict'] == 'годен')
+    #             item_verdict = QTableWidgetItem()
+    #             item_verdict.setIcon(verdict_icon)
+    #             item_verdict.setTextAlignment(Qt.AlignCenter)
+    #             self.table.setItem(row, 2, item_verdict)
+
+    #             # Тип проверки
+    #             type_icon = self.create_type_icon(p['test_type'])
+    #             item_type = QTableWidgetItem()
+    #             item_type.setIcon(type_icon)
+    #             item_type.setTextAlignment(Qt.AlignCenter)
+    #             self.table.setItem(row, 3, item_type)
+
+    #             # Герметичность
+    #             sealed_icon = self.create_sealed_icon(p['is_sealed'])
+    #             item_sealed = QTableWidgetItem()
+    #             item_sealed.setIcon(sealed_icon)
+    #             item_sealed.setTextAlignment(Qt.AlignCenter)
+    #             self.table.setItem(row, 4, item_sealed)
+
+    #         else:
+    #             # Расширенный режим: текстовые значения
+    #             # Модификация
+    #             self.table.setItem(row, 2, QTableWidgetItem(p.get('mod_name', '—')))
+    #             # Герметичность (текст)
+    #             sealed_text = 'Да' if p['is_sealed'] else 'Нет'
+    #             self.table.setItem(row, 3, QTableWidgetItem(sealed_text))
+    #             # Тип проверки
+    #             self.table.setItem(row, 4, QTableWidgetItem(p['test_type'] or '—'))
+    #             # Заказ
+    #             self.table.setItem(row, 5, QTableWidgetItem(p.get('order_number', '—')))
+    #             # Вердикт (текст)
+    #             verdict_text = p['verdict'] or '—'
+    #             self.table.setItem(row, 6, QTableWidgetItem(verdict_text))
+
+    #             # Подсветка строки в расширенном режиме
+    #             row_color = QColor(200, 255, 200) if p['verdict'] == 'годен' else QColor(255, 200, 200) if p['verdict'] == 'не годен' else None
+    #             if row_color:
+    #                 for col in range(self.table.columnCount()):
+    #                     item = self.table.item(row, col)
+    #                     if item:
+    #                         item.setBackground(row_color)
+
+    #         # Дополнительно: в компактном режиме можно не подсвечивать строки, оставить прозрачными.
+
+    #     # Включаем сортировку
+    #     self.table.setSortingEnabled(True)
+    #     # Сортировка по дате по умолчанию (только в компактном режиме)
+    #     if compact:
+    #         self.table.sortByColumn(1, Qt.DescendingOrder)
+    #     else:
+    #         self.table.sortByColumn(0, Qt.AscendingOrder)
+
+    def create_verdict_icon(self, is_good):
+        """Зелёный круг – годен, красный – не годен."""
+        pixmap = QPixmap(16, 16)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setBrush(QColor(0, 200, 0) if is_good else QColor(200, 0, 0))
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(2, 2, 12, 12)
+        painter.end()
+        return QIcon(pixmap)
+
+    def create_type_icon(self, type_str):
+        """Иконка: I – первичная, II – повторная."""
+        pixmap = QPixmap(16, 16)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setPen(QColor(0, 0, 200))
+        painter.setFont(QFont("Arial", 10, QFont.Bold))
+        painter.drawText(pixmap.rect(), Qt.AlignCenter, "I" if "первичная" in str(type_str).lower() else "II")
+        painter.end()
+        return QIcon(pixmap)
+
+    def create_sealed_icon(self, is_sealed):
+        """Капля: синяя – герметичен, серая – не герметичен."""
+        pixmap = QPixmap(16, 16)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setBrush(QColor(0, 100, 255) if is_sealed else QColor(180, 180, 180))
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(4, 8, 8, 6)
+        points = [QPoint(4, 8), QPoint(8, 2), QPoint(12, 8)]
+        polygon = QPolygon(points)
+        painter.drawPolygon(polygon)
+        painter.end()
+        return QIcon(pixmap)
+
     def load_data(self):
         self.all_pumps = db.get_all_pumps()
         # Обновляем список заказов
@@ -250,6 +587,8 @@ class LeftPanel(QWidget):
             self.filters_applied.emit(filters)
 
     def display_pumps(self, pumps, group_by_number=False):
+
+        self.populate_table(pumps, compact=self.compact_mode)
         # Отключаем сортировку перед заполнением
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(pumps))
@@ -330,6 +669,10 @@ class LeftPanel(QWidget):
             self.table.sortByColumn(0, Qt.AscendingOrder)
 
     def on_selection_changed(self):
+        """Обработка выбора строки (только в компактном режиме)."""
+        if not self.compact_mode:
+            # В расширенном режиме просто выделяем строку, ничего не делаем
+            return
         selected = self.table.selectedItems()
         if not selected:
             return
@@ -342,9 +685,8 @@ class LeftPanel(QWidget):
             return
         pump_data = db.get_pump_by_id(pump_id)
         if pump_data:
-            print(f"DEBUG: Отображение протокола для {pump_data['pump_number']}, дата {pump_data['test_date']}")
-            print(f"DEBUG on_selection_changed: mod_name={pump_data.get('mod_name')}, order={pump_data.get('order_number')}")
             self.pump_selected.emit(pump_data)
+    # в расширенном режиме ничего не делаем, только выделение
 
     def show_context_menu(self, pos):
         row = self.table.rowAt(pos.y())
@@ -365,6 +707,10 @@ class LeftPanel(QWidget):
         action = menu.exec_(self.table.mapToGlobal(pos))
 
         if action == action_view:
+            # Сворачиваем расширенный вид, если он включён
+            if not self.compact_mode:
+                self.btn_view_toggle.setChecked(False)  # переключаем в компактный
+            # Теперь выбираем строку и отправляем сигнал
             self.table.selectRow(row)
             self.on_selection_changed()
         elif action == action_edit:

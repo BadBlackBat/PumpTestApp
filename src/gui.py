@@ -72,6 +72,7 @@ class MainWindow(QMainWindow):
         # Сплиттер
         self.splitter = QSplitter(Qt.Horizontal)
         main_layout.addWidget(self.splitter)
+        self.splitter.setHandleWidth(0)
         
         # Левая панель
         self.left_panel = LeftPanel()
@@ -114,17 +115,13 @@ class MainWindow(QMainWindow):
             self.showing_stats = True
 
     def on_pump_selected(self, pump_data):
+        # Если список в расширенном режиме – сворачиваем
+        if not self.left_panel.compact_mode:
+            self.left_panel.btn_view_toggle.setChecked(False)  # вызовет toggle_view(False)
         if self.showing_stats:
             self.showing_stats = False
-            # кнопка статистики остаётся в нажатом состоянии? Можно просто сбросить состояние, если она была нажата.
-            # Но у нас нет состояния, мы просто показываем/скрываем.
         self.right_panel.display_protocol(pump_data)
 
-    # def on_pump_selected(self, pump_data):
-    #     """Обработка выбора насоса."""
-    #     self.right_panel.display_protocol(pump_data)
-    #     self.update_status(selected_pump=pump_data['pump_number'])
-    
     def on_import_requested(self):
         """Импорт Excel."""
         from PyQt5.QtWidgets import QFileDialog
@@ -179,7 +176,6 @@ class MainWindow(QMainWindow):
         last_update = db.get_last_update_date()
         self.status_bar.set_status("Готово", count=count, filters=filters_text, selected_pump=selected_pump, last_update=last_update)
         
-    
     def on_edit_requested(self, pump_id):
         pump_data = db.get_pump_by_id(pump_id)
         if not pump_data:
