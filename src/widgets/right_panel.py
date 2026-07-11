@@ -73,7 +73,7 @@ class RightPanel(QWidget):
 
     def display_statistics(self, stats_data):
         """Отображает сводную статистику в правой панели."""
-        self.clear_protocol()  # очищаем динамическую область
+        self._clear_dynamic_content()  # очищаем динамическую область
         self.logo_label.hide()
         self.header_label.hide()  # скрываем заголовок протокола
         self.clear_btn.hide()
@@ -112,7 +112,7 @@ class RightPanel(QWidget):
 
     def display_protocol(self, data):
         self.current_data = data
-        self.clear_protocol()  # очищаем dynamic_layout
+        self._clear_dynamic_content()  # очищаем dynamic_layout
 
         # Показываем постоянные виджеты
         self.logo_label.hide()
@@ -402,7 +402,15 @@ class RightPanel(QWidget):
                 self.display_protocol(updated)
 
     def clear_protocol(self):
-        # Очищаем только dynamic_layout
+        """Вызывается по кнопке 'Скрыть протокол' - явный сброс просмотра,
+        уведомляет наружу (MainWindow), чтобы сбросить фильтры/выделение."""
+        self._clear_dynamic_content()
+        self.clear_requested.emit()
+
+    def _clear_dynamic_content(self):
+        """Внутренняя очистка динамической области перед перерисовкой нового
+        протокола/статистики. НЕ эмитит сигнал наружу, чтобы не сбрасывать
+        фильтры при обычном выборе насоса из списка."""
         while self.dynamic_layout.count():
             child = self.dynamic_layout.takeAt(0)
             if child.widget():
@@ -412,4 +420,3 @@ class RightPanel(QWidget):
         self.clear_btn.hide()
         self.legend_label.hide()
         self.logo_label.show()
-        self.clear_requested.emit()

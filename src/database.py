@@ -301,7 +301,22 @@ def get_all_pumps(filters=None, order_by='test_date DESC', limit=None, offset=No
 def delete_pump(pump_id):
     with get_connection() as conn:
         cursor = conn.cursor()
+
+        # Узнаём, к какому заказу была привязана запись, ДО удаления
+        cursor.execute('SELECT order_id FROM pumps WHERE id = ?', (pump_id,))
+        row = cursor.fetchone()
+        order_id = row[0] if row else None
+
         cursor.execute('DELETE FROM pumps WHERE id = ?', (pump_id,))
+
+        # Если у заказа не осталось ни одной записи - удаляем и сам заказ,
+        # чтобы он не "оседал" в БД и не попадал в фильтр
+        if order_id is not None:
+            cursor.execute('SELECT COUNT(*) FROM pumps WHERE order_id = ?', (order_id,))
+            remaining = cursor.fetchone()[0]
+            if remaining == 0:
+                cursor.execute('DELETE FROM orders WHERE id = ?', (order_id,))
+
         conn.commit()
 
 def update_pump(pump_id, **kwargs):
@@ -328,13 +343,6 @@ def update_pump(pump_id, **kwargs):
             cursor.execute(f'UPDATE pumps SET {", ".join(set_clause)} WHERE id = ?', params)
             conn.commit()
 
-# Функция получения всех заказов
-def get_all_orders():
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT id, order_number FROM orders ORDER BY order_number')
-        return cursor.fetchall()
-    
 # Функция статистики по выбранному заказу
 def get_order_stats(order_number):
     """Возвращает статистику по заказу: общее количество, годные, негерметичные, первичные."""

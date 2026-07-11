@@ -114,6 +114,10 @@ class LeftPanel(QWidget):
           QTableWidget::item {
               text-align: center;
           }
+          QTableWidget::item:selected {
+              background-color: #3d8ec9;
+              color: white;
+          }
           QHeaderView::section {
               font-weight: bold;
           }
@@ -124,6 +128,7 @@ class LeftPanel(QWidget):
       self.table.horizontalHeader().setFont(font)
 
       self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+      self.table.setSelectionMode(QAbstractItemView.SingleSelection)
       self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
       self.table.verticalHeader().setVisible(False)
       self.table.setSortingEnabled(True)
@@ -257,9 +262,6 @@ class LeftPanel(QWidget):
             self.table.setColumnWidth(4, 100)
             self.table.setColumnWidth(5, 100)
             self.table.setColumnWidth(6, 250)
-
-        # Центрирование содержимого всех ячеек
-        self.table.setStyleSheet("QTableWidget::item { text-align: center; }")
 
         for row, p in enumerate(pumps):
             # ---- Номер ----
