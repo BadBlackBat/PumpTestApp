@@ -119,12 +119,25 @@ def get_all_modifications():
         return cursor.fetchall()
 
 # ---------- Работа с заказами ----------
+# def add_order(order_number):
+#     with get_connection() as conn:
+#         cursor = conn.cursor()
+#         cursor.execute('INSERT OR IGNORE INTO orders (order_number) VALUES (?)', (order_number,))
+#         conn.commit()
+#         return cursor.lastrowid
+
 def add_order(order_number):
+    if order_number is None:
+        return None
+    # Нормализация: убираем .0
+    order_number = str(order_number).replace('.0', '').strip()
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('INSERT OR IGNORE INTO orders (order_number) VALUES (?)', (order_number,))
         conn.commit()
-        return cursor.lastrowid
+        cursor.execute('SELECT id FROM orders WHERE order_number = ?', (order_number,))
+        row = cursor.fetchone()
+        return row[0] if row else None
 
 def get_order_by_number(order_number):
     with get_connection() as conn:
@@ -134,9 +147,15 @@ def get_order_by_number(order_number):
         return row[0] if row else None
 
 def get_all_orders():
+    """Возвращает список заказов, которые имеют хотя бы один связанный насос."""
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT id, order_number FROM orders ORDER BY order_number')
+        cursor.execute('''
+            SELECT DISTINCT o.id, o.order_number
+            FROM orders o
+            INNER JOIN pumps p ON p.order_id = o.id
+            ORDER BY o.order_number
+        ''')
         return cursor.fetchall()
 
 # ---------- Работа с насосами (протоколами) ----------
@@ -247,9 +266,9 @@ def get_all_pumps(filters=None, order_by='test_date DESC', limit=None, offset=No
                 params.append(filters['date_to'])
             if filters.get('only_duplicates'):
                 query += ' AND (SELECT COUNT(*) FROM pumps p2 WHERE p2.pump_number = p.pump_number) > 1'
-            if filters.get('order_number'):
-                query += ' AND o.order_number = ?'
-                params.append(filters['order_number'])
+            if filters.get('order_id'):
+                query += ' AND p.order_id = ?'
+                params.append(filters['order_id'])
 
         query += f' ORDER BY {order_by}'
 
@@ -259,10 +278,6 @@ def get_all_pumps(filters=None, order_by='test_date DESC', limit=None, offset=No
         if offset is not None:
             query += ' OFFSET ?'
             params.append(offset)
-
-        # Отладочный вывод
-        print("SQL Query:", query)
-        print("Params:", params)
 
         cursor.execute(query, params)
         rows = cursor.fetchall()
@@ -387,9 +402,9 @@ def count_pumps(filters=None):
             if filters.get('is_sealed') is not None and filters['is_sealed'] != -1:
                 query += ' AND p.is_sealed = ?'
                 params.append(filters['is_sealed'])
-            if filters.get('order_number'):
-                query += ' AND o.order_number = ?'
-                params.append(filters['order_number'])
+            if filters.get('order_id'):
+                query += ' AND p.order_id = ?'
+                params.append(filters['order_id'])
             if filters.get('date_from'):
                 query += ' AND p.test_date >= ?'
                 params.append(filters['date_from'])
@@ -465,6 +480,44 @@ def get_statistics():
 
         return stats
 
+# def get_order_by_id(order_id):
+#     with get_connection() as conn:
+#         cursor = conn.cursor()
+#         cursor.execute('SELECT order_number FROM orders WHERE id = ?', (order_id,))
+#         row = cursor.fetchone()
+#         if row:
+#             val = row[0]
+#             # Если это float, преобразуем в int (если целое) и потом в строку
+#             if isinstance(val, float):
+#                 if val.is_integer():
+#                     return str(int(val))
+#                 else:
+#                     return str(val).rstrip('0').rstrip('.')
+#             return str(val)
+#         return None
+
+def get_order_by_id(order_id):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT order_number FROM orders WHERE id = ?', (order_id,))
+        row = cursor.fetchone()
+        if row:
+            val = row[0]
+            print(f"[DEBUG get_order_by_id] Сырое значение из БД: {val}, тип: {type(val)}")
+            # Пробуем преобразовать
+            if isinstance(val, float):
+                if val.is_integer():
+                    result = str(int(val))
+                else:
+                    result = str(val).rstrip('0').rstrip('.')
+            elif isinstance(val, int):
+                result = str(val)
+            else:
+                result = str(val)
+            print(f"[DEBUG get_order_by_id] Результат: {result}")
+            return result
+        print("[DEBUG get_order_by_id] Заказ не найден")
+        return None
 
 # ---------- Вспомогательные функции ----------
 def get_check_count_for_pump(pump_number):

@@ -55,6 +55,8 @@ def extract_pump_data(df):
 
     test_type = get_val(1, 7)     # H2 -> row=1, col=7
     order_number = get_val(0, 10) # K1 -> row=0, col=10
+    if order_number is not None:
+        order_number = str(order_number).replace('.0', '').strip()
     modification_name = get_val(1, 1) # B2 -> row=1, col=1
 
     # Результаты тестов (G5-G32) -> строки 4..31, столбец 6

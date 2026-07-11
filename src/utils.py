@@ -98,3 +98,13 @@ def compute_verdict_and_sealed(results, seal_results, mod_data):
                 sealed = False
     
     return verdict, sealed
+
+def format_order_number(value):
+    """Приводит номер заказа к строке без .0."""
+    if value is None:
+        return '—'
+    s = str(value)
+    if '.' in s:
+        s = s.rstrip('0').rstrip('.')
+    s = s.replace('.0', '')
+    return s

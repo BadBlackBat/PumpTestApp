@@ -23,6 +23,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("База данных проверок насосов ГУР")
         self.setGeometry(100, 100, 1400, 900)
+
+        self.current_selected_pump = None
+        self.current_filters = None
         
         central = QWidget()
         self.setCentralWidget(central)
@@ -87,8 +90,9 @@ class MainWindow(QMainWindow):
         # Правая панель
         self.right_panel = RightPanel()
         self.splitter.addWidget(self.right_panel)
-
         self.showing_stats = False
+
+        self.right_panel.clear_requested.connect(self.on_clear_requested)
         
         # Пропорции
         self.splitter.setSizes([int(self.width() * 0.4), int(self.width() * 0.6)])
@@ -102,25 +106,30 @@ class MainWindow(QMainWindow):
         self.left_panel.load_data()
     
     def toggle_statistics(self):
+        if not self.left_panel.compact_mode:
+            self.left_panel.btn_view_toggle.setChecked(False)
+            
         if self.showing_stats:
-            # Скрываем статистику, показываем логотип
-            self.right_panel.clear_protocol()  # это скроет всё и покажет логотип
+            self.right_panel.clear_protocol()
             self.showing_stats = False
-            # Также очищаем выделение в таблице, чтобы не было путаницы
             self.left_panel.table.clearSelection()
+            self.current_selected_pump = None
+            self.update_status()
         else:
-            # Показываем статистику
             stats_data = db.get_statistics()
             self.right_panel.display_statistics(stats_data)
             self.showing_stats = True
+            self.current_selected_pump = None
+            self.update_status()
 
     def on_pump_selected(self, pump_data):
-        # Если список в расширенном режиме – сворачиваем
         if not self.left_panel.compact_mode:
-            self.left_panel.btn_view_toggle.setChecked(False)  # вызовет toggle_view(False)
+            self.left_panel.btn_view_toggle.setChecked(False)
         if self.showing_stats:
             self.showing_stats = False
         self.right_panel.display_protocol(pump_data)
+        self.current_selected_pump = pump_data['pump_number']
+        self.update_status()  # без параметров
 
     def on_import_requested(self):
         """Импорт Excel."""
@@ -153,8 +162,37 @@ class MainWindow(QMainWindow):
             else:
                 QMessageBox.warning(self, "Ошибка", "Неверный пароль.")
         if self.showing_stats: self.toggle_statistics()
-    
+
+    # def update_status(self, filters=None, selected_pump=None):
+    #     all_pumps = db.get_all_pumps()
+    #     count = len(all_pumps)
+    #     filters_text = ""
+    #     if filters:
+    #         parts = []
+    #         if filters.get('pump_number'):
+    #             parts.append(f"поиск: {filters['pump_number']}")
+    #         if filters.get('verdict'):
+    #             parts.append(f"вердикт: {filters['verdict']}")
+    #         if filters.get('test_type'):
+    #             parts.append(f"тип: {filters['test_type']}")
+    #         if filters.get('is_sealed') is not None:
+    #             parts.append(f"герметичность: {'Да' if filters['is_sealed'] else 'Нет'}")
+    #         if filters.get('date_from') or filters.get('date_to'):
+    #             parts.append(f"дата: {filters.get('date_from', '')} - {filters.get('date_to', '')}")
+    #         if filters.get('only_duplicates'):
+    #             parts.append("только дубли")
+    #         filters_text = ", ".join(parts)
+    #     last_update = db.get_last_update_date()
+    #     self.status_bar.set_status("Готово", count=count, filters=filters_text, selected_pump=selected_pump, last_update=last_update)
+
     def update_status(self, filters=None, selected_pump=None):
+        # Если фильтры не переданы, берём из левой панели
+        if filters is None:
+            filters = self.left_panel.current_filters
+        # Если выбранный насос не передан, берём сохранённый
+        if selected_pump is None:
+            selected_pump = self.current_selected_pump
+
         all_pumps = db.get_all_pumps()
         count = len(all_pumps)
         filters_text = ""
@@ -175,7 +213,7 @@ class MainWindow(QMainWindow):
             filters_text = ", ".join(parts)
         last_update = db.get_last_update_date()
         self.status_bar.set_status("Готово", count=count, filters=filters_text, selected_pump=selected_pump, last_update=last_update)
-        
+
     def on_edit_requested(self, pump_id):
         pump_data = db.get_pump_by_id(pump_id)
         if not pump_data:
@@ -218,3 +256,23 @@ class MainWindow(QMainWindow):
                 self.right_panel.display_protocol(updated)
 
             QMessageBox.information(self, "Успех", "Примечание обновлено.")
+    
+    def on_clear_requested(self):
+        # 1. Свернуть расширенный вид
+        if not self.left_panel.compact_mode:
+            self.left_panel.btn_view_toggle.setChecked(False)
+        
+        # 2. Сбросить фильтры (вызовет apply_filters и обновит таблицу)
+        self.left_panel.reset_filters()
+        
+        # 3. Снять выделение в таблице
+        self.left_panel.table.clearSelection()
+        
+        # 4. Сбросить выбранный насос в статус-баре
+        self.current_selected_pump = None
+        
+        # 5. Обновить статус-бар (без выбранного насоса, фильтры уже сброшены)
+        self.update_status(selected_pump=None)
+        
+        # 6. Если была статистика, закрыть её
+        self.showing_stats = False

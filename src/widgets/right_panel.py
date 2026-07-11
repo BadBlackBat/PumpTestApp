@@ -2,7 +2,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
     QTableWidgetItem, QPushButton, QScrollArea, QSizePolicy
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QColor, QFont
 
 import matplotlib
@@ -13,9 +13,11 @@ import numpy as np
 
 from .. import database as db
 from ..utils import is_value_in_range
-
+from ..utils import format_order_number
 
 class RightPanel(QWidget):
+    clear_requested = pyqtSignal()   # сигнал для запроса сброса
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_data = None
@@ -88,7 +90,9 @@ class RightPanel(QWidget):
         if stats_data['orders']:
             html += "<h3>Статистика по заказам:</h3>"
             for order in stats_data['orders']:
-                html += f"<p><b>Заказ №{order['order_number']}:</b></p>"
+                order_num = format_order_number(order['order_number'])
+                html += f"<p><b>Заказ №{order_num}:</b></p>"
+                # html += f"<p><b>Заказ №{order['order_number']}:</b></p>"
                 html += f"<ul>"
                 html += f"<li>Всего проверено: {order['total']} шт</li>"
                 html += f"<li>Годных: {order['good']} шт</li>"
@@ -120,9 +124,14 @@ class RightPanel(QWidget):
         date_str = data['test_date']
         if date_str and ' ' in date_str:
             date_str = date_str.split(' ')[0]
+            
+        order_num = data.get('order_number', '—')
+        if order_num != '—' and order_num is not None:
+            order_num = str(order_num).replace('.0', '')
+            
         header_text = (f"Характеристики образца насоса ГУР\n"
                        f"Протокол проверки насоса ГУР от: {date_str}\n"
-                       f"Идентификационный №: {data['pump_number']}  Заказ: {data.get('order_number', '—')}\n"
+                       f"Идентификационный №: {data['pump_number']}  Заказ: {order_num}\n"
                        f"Проверка: {data['test_type']}\n"
                        f"Модификация: {data.get('mod_name', '—')}\n"
                        f"Герметичен: {'Да' if data['is_sealed'] else 'Нет'}\n"
@@ -403,3 +412,4 @@ class RightPanel(QWidget):
         self.clear_btn.hide()
         self.legend_label.hide()
         self.logo_label.show()
+        self.clear_requested.emit()
