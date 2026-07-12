@@ -49,7 +49,7 @@ def compute_verdict_and_sealed(results, seal_results, mod_data):
     Вычисляет вердикт ('годен'/'не годен') и герметичность (True/False).
     results: dict g5..g32
     seal_results: dict g33..g37
-    mod_data: словарь с нормативами из БД
+    mod_data: словарь с нормативными требованиями из БД
     """
     # Проверка результатов тестов (G5-G32) на соответствие диапазонам
     # Данные для теста 1: g5-g12 (8 точек)
