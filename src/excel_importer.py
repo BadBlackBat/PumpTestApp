@@ -177,15 +177,36 @@ def import_excel_file(file_path, parent_widget=None):
                 data['seal_results'], 
                 mod
             )
-
-            verdict, is_sealed = utils.compute_verdict_and_sealed(
-                data['results'], data['seal_results'], mod
-            )
             # Если вердикт не определён, ставим "не годен" по умолчанию
             if not verdict:
                 verdict = "не годен"
             if is_sealed is None:
                 is_sealed = False
+
+            # ===== ПРОВЕРКА НА ДУБЛИКАТ (совпадение номера насоса И даты) =====
+            existing_id = db.get_pump_by_number_and_date(data['pump_number'], data['test_date'])
+            if existing_id:
+                reply1 = QMessageBox.warning(
+                    parent_widget,
+                    "Возможный дубликат",
+                    f"Лист {sheet}: протокол для насоса №{data['pump_number']} от "
+                    f"{data['test_date']} уже есть в базе.\n\n"
+                    "Импортировать его ещё раз?",
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                if reply1 != QMessageBox.Yes:
+                    errors.append(f"Лист {sheet}: пропущен пользователем (дубликат).")
+                    continue
+                reply2 = QMessageBox.warning(
+                    parent_widget,
+                    "Подтверждение",
+                    f"Вы уверены, что хотите добавить ещё одну запись для насоса "
+                    f"№{data['pump_number']} от {data['test_date']}?",
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                if reply2 != QMessageBox.Yes:
+                    errors.append(f"Лист {sheet}: пропущен пользователем (дубликат).")
+                    continue
 
             # Сохраняем запись
             pump_id = db.add_pump(

@@ -19,15 +19,18 @@ def init_db():
             CREATE TABLE IF NOT EXISTS modifications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT UNIQUE NOT NULL,
-                norm_graph1_min TEXT,   -- JSON массив 8 значений (мин)
-                norm_graph1_max TEXT,   -- JSON массив 8 значений (макс)
+                norm_graph1_min TEXT,   -- JSON массив значений (мин)
+                norm_graph1_max TEXT,   -- JSON массив значений (макс)
+                norm_graph1_x TEXT,     -- JSON массив точек оборотов (по умолчанию 8 точек)
                 norm_graph2_min TEXT,
                 norm_graph2_max TEXT,
-                norm_graph3_min TEXT,   -- 11 значений для теста 3
+                norm_graph2_x TEXT,
+                norm_graph3_min TEXT,   -- значения для теста 3
                 norm_graph3_max TEXT,
+                norm_graph3_x TEXT,     -- JSON массив точек силы тока (по умолчанию 11 точек)
                 pressure_min REAL,
                 pressure_max REAL,
-                seal_rules_json TEXT   -- дополнительные правила для герметичности (пока не обязательны)
+                seal_rules_json TEXT   -- JSON: {"g33": "отсутствуют", ...} требования по герметичности
             )
         ''')
         
@@ -68,49 +71,85 @@ def init_db():
         columns = [col[1] for col in cursor.fetchall()]
         if 'edit_history' not in columns:
             cursor.execute('ALTER TABLE pumps ADD COLUMN edit_history TEXT')
+
+        # Миграция: если БД создана до появления колонок с X-значениями - добавляем их
+        cursor.execute("PRAGMA table_info(modifications)")
+        mod_columns = [col[1] for col in cursor.fetchall()]
+        for col_name in ('norm_graph1_x', 'norm_graph2_x', 'norm_graph3_x'):
+            if col_name not in mod_columns:
+                cursor.execute(f'ALTER TABLE modifications ADD COLUMN {col_name} TEXT')
                 
         conn.commit()
         print("База данных инициализирована.")
 
 # ---------- Работа с модификациями ----------
-def add_modification(name, norm_graph1_min, norm_graph1_max, norm_graph2_min, norm_graph2_max,
-                     norm_graph3_min, norm_graph3_max, pressure_min, pressure_max, seal_rules=None):
+def add_modification(name, norm_graph1_min, norm_graph1_max, norm_graph1_x,
+                     norm_graph2_min, norm_graph2_max, norm_graph2_x,
+                     norm_graph3_min, norm_graph3_max, norm_graph3_x,
+                     pressure_min, pressure_max, seal_rules=None):
     """
-    Добавляет новую модификацию.
+    Добавляет новую модификацию (или заменяет существующую с тем же именем).
     Все norm_* - это строки JSON (массивы чисел).
     """
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             INSERT OR REPLACE INTO modifications 
-            (name, norm_graph1_min, norm_graph1_max, norm_graph2_min, norm_graph2_max,
-             norm_graph3_min, norm_graph3_max, pressure_min, pressure_max, seal_rules_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (name, norm_graph1_min, norm_graph1_max, norm_graph2_min, norm_graph2_max,
-              norm_graph3_min, norm_graph3_max, pressure_min, pressure_max, seal_rules))
+            (name, norm_graph1_min, norm_graph1_max, norm_graph1_x,
+             norm_graph2_min, norm_graph2_max, norm_graph2_x,
+             norm_graph3_min, norm_graph3_max, norm_graph3_x,
+             pressure_min, pressure_max, seal_rules_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (name, norm_graph1_min, norm_graph1_max, norm_graph1_x,
+              norm_graph2_min, norm_graph2_max, norm_graph2_x,
+              norm_graph3_min, norm_graph3_max, norm_graph3_x,
+              pressure_min, pressure_max, seal_rules))
         conn.commit()
         return cursor.lastrowid
+
+MOD_COLUMNS = '''
+    id, name, norm_graph1_min, norm_graph1_max, norm_graph1_x,
+    norm_graph2_min, norm_graph2_max, norm_graph2_x,
+    norm_graph3_min, norm_graph3_max, norm_graph3_x,
+    pressure_min, pressure_max, seal_rules_json
+'''
 
 def get_modification_by_name(name):
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT * FROM modifications WHERE name = ?', (name,))
+        cursor.execute(f'SELECT {MOD_COLUMNS} FROM modifications WHERE name = ?', (name,))
         row = cursor.fetchone()
         if row:
-            return {
-                'id': row[0],
-                'name': row[1],
-                'norm_graph1_min': json.loads(row[2]) if row[2] else [],
-                'norm_graph1_max': json.loads(row[3]) if row[3] else [],
-                'norm_graph2_min': json.loads(row[4]) if row[4] else [],
-                'norm_graph2_max': json.loads(row[5]) if row[5] else [],
-                'norm_graph3_min': json.loads(row[6]) if row[6] else [],
-                'norm_graph3_max': json.loads(row[7]) if row[7] else [],
-                'pressure_min': row[8],
-                'pressure_max': row[9],
-                'seal_rules': json.loads(row[10]) if row[10] else {}
-            }
+            return _row_to_modification_dict(row)
         return None
+
+def get_modification_by_id(mod_id):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f'SELECT {MOD_COLUMNS} FROM modifications WHERE id = ?', (mod_id,))
+        row = cursor.fetchone()
+        if row:
+            return _row_to_modification_dict(row)
+        return None
+
+def _row_to_modification_dict(row):
+    from . import utils
+    return {
+        'id': row[0],
+        'name': row[1],
+        'norm_graph1_min': json.loads(row[2]) if row[2] else [],
+        'norm_graph1_max': json.loads(row[3]) if row[3] else [],
+        'norm_graph1_x': json.loads(row[4]) if row[4] else list(utils.DEFAULT_GRAPH1_X),
+        'norm_graph2_min': json.loads(row[5]) if row[5] else [],
+        'norm_graph2_max': json.loads(row[6]) if row[6] else [],
+        'norm_graph2_x': json.loads(row[7]) if row[7] else list(utils.DEFAULT_GRAPH2_X),
+        'norm_graph3_min': json.loads(row[8]) if row[8] else [],
+        'norm_graph3_max': json.loads(row[9]) if row[9] else [],
+        'norm_graph3_x': json.loads(row[10]) if row[10] else list(utils.DEFAULT_GRAPH3_X),
+        'pressure_min': row[11],
+        'pressure_max': row[12],
+        'seal_rules': json.loads(row[13]) if row[13] else dict(utils.DEFAULT_SEAL_REQUIREMENTS)
+    }
 
 def get_all_modifications():
     with get_connection() as conn:
@@ -159,6 +198,19 @@ def get_all_orders():
         return cursor.fetchall()
 
 # ---------- Работа с насосами (протоколами) ----------
+def get_pump_by_number_and_date(pump_number, test_date):
+    """Возвращает существующую запись с тем же номером насоса и датой проверки,
+    либо None. Используется для предупреждения о повторном импорте/добавлении
+    одного и того же протокола."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT id FROM pumps WHERE pump_number = ? AND test_date = ?',
+            (pump_number, test_date)
+        )
+        row = cursor.fetchone()
+        return row[0] if row else None
+
 def add_pump(pump_number, test_date, test_type, modification_id, order_id,
              results_json, seal_results_json, verdict, is_sealed, note=''):
     """

@@ -12,6 +12,7 @@ from matplotlib.figure import Figure
 import numpy as np
 
 from .. import database as db
+from .. import utils
 from ..utils import is_value_in_range
 from ..utils import format_order_number
 
@@ -161,17 +162,17 @@ class RightPanel(QWidget):
             norm_min = mod['norm_graph1_min'] if mod else []
             norm_max = mod['norm_graph1_max'] if mod else []
             x_label = "Обороты, об/мин"
-            x_vals = [1000, 2000, 3000, 4000, 5000, 6000, 7000, 7500]
+            x_vals = mod['norm_graph1_x'] if mod else list(utils.DEFAULT_GRAPH1_X)
         elif indices[0] == 13:
             norm_min = mod['norm_graph2_min'] if mod else []
             norm_max = mod['norm_graph2_max'] if mod else []
             x_label = "Обороты, об/мин"
-            x_vals = [1000, 2000, 3000, 4000, 5000, 6000, 7000, 7500]
+            x_vals = mod['norm_graph2_x'] if mod else list(utils.DEFAULT_GRAPH2_X)
         elif indices[0] == 21:
             norm_min = mod['norm_graph3_min'] if mod else []
             norm_max = mod['norm_graph3_max'] if mod else []
             x_label = "Сила тока, А"
-            x_vals = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+            x_vals = mod['norm_graph3_x'] if mod else list(utils.DEFAULT_GRAPH3_X)
         else:
             norm_min = []
             norm_max = []
@@ -308,7 +309,7 @@ class RightPanel(QWidget):
         # График 1
         fig1 = Figure(figsize=(6, 4), dpi=100)
         ax1 = fig1.add_subplot(111)
-        x_vals = [1000, 2000, 3000, 4000, 5000, 6000, 7000, 7500]
+        x_vals = mod.get('norm_graph1_x') or list(utils.DEFAULT_GRAPH1_X)
         y1 = [results.get(f'g{i}') for i in range(5, 13)]
         y2 = [results.get(f'g{i}') for i in range(13, 21)]
         min1 = mod['norm_graph1_min']
@@ -316,17 +317,21 @@ class RightPanel(QWidget):
         min2 = mod['norm_graph2_min']
         max2 = mod['norm_graph2_max']
 
-        y1_plot = [v if v is not None else np.nan for v in y1]
-        y2_plot = [v if v is not None else np.nan for v in y2]
+        # На случай, если у модификации задано меньше точек, чем стандартные 8 -
+        # выравниваем длины, чтобы matplotlib не упал на несовпадении размеров
+        n1 = min(len(x_vals), len(y1))
+        x_vals_plot = x_vals[:n1]
+        y1_plot = [v if v is not None else np.nan for v in y1[:n1]]
+        y2_plot = [v if v is not None else np.nan for v in y2[:n1]]
 
-        ax1.plot(x_vals, y1_plot, 'b-o', label='ECO выкл.', linewidth=2)
-        ax1.plot(x_vals, y2_plot, 'r-o', label='ECO вкл.', linewidth=2)
-        if len(min1) == len(x_vals):
-            ax1.plot(x_vals, min1, 'b--', label='Мин. треб. ECO выкл.', alpha=0.7)
-            ax1.plot(x_vals, max1, 'b:', label='Макс. треб. ECO выкл.', alpha=0.7)
-        if len(min2) == len(x_vals):
-            ax1.plot(x_vals, min2, 'r--', label='Мин. треб. ECO вкл.', alpha=0.7)
-            ax1.plot(x_vals, max2, 'r:', label='Макс. треб. ECO вкл.', alpha=0.7)
+        ax1.plot(x_vals_plot, y1_plot, 'b-o', label='ECO выкл.', linewidth=2)
+        ax1.plot(x_vals_plot, y2_plot, 'r-o', label='ECO вкл.', linewidth=2)
+        if len(min1) == len(x_vals_plot):
+            ax1.plot(x_vals_plot, min1, 'b--', label='Мин. треб. ECO выкл.', alpha=0.7)
+            ax1.plot(x_vals_plot, max1, 'b:', label='Макс. треб. ECO выкл.', alpha=0.7)
+        if len(min2) == len(x_vals_plot):
+            ax1.plot(x_vals_plot, min2, 'r--', label='Мин. треб. ECO вкл.', alpha=0.7)
+            ax1.plot(x_vals_plot, max2, 'r:', label='Макс. треб. ECO вкл.', alpha=0.7)
         ax1.set_xlabel('Обороты, об/мин')
         ax1.set_ylabel('Расход, л/мин')
         ax1.grid(True, alpha=0.3)
@@ -340,16 +345,18 @@ class RightPanel(QWidget):
         # График 2
         fig2 = Figure(figsize=(6, 4), dpi=100)
         ax2 = fig2.add_subplot(111)
-        x_tok = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+        x_tok = mod.get('norm_graph3_x') or list(utils.DEFAULT_GRAPH3_X)
         y3 = [results.get(f'g{i}') for i in range(21, 32)]
-        y3_plot = [v if v is not None else np.nan for v in y3]
+        n3 = min(len(x_tok), len(y3))
+        x_tok_plot = x_tok[:n3]
+        y3_plot = [v if v is not None else np.nan for v in y3[:n3]]
 
-        ax2.plot(x_tok, y3_plot, 'g-o', label='Расход', linewidth=2)
+        ax2.plot(x_tok_plot, y3_plot, 'g-o', label='Расход', linewidth=2)
         min3 = mod['norm_graph3_min']
         max3 = mod['norm_graph3_max']
-        if len(min3) == len(x_tok):
-            ax2.plot(x_tok, min3, 'g--', label='Мин. треб.', alpha=0.7)
-            ax2.plot(x_tok, max3, 'g:', label='Макс. треб.', alpha=0.7)
+        if len(min3) == len(x_tok_plot):
+            ax2.plot(x_tok_plot, min3, 'g--', label='Мин. треб.', alpha=0.7)
+            ax2.plot(x_tok_plot, max3, 'g:', label='Макс. треб.', alpha=0.7)
         ax2.set_xlabel('Сила тока, А')
         ax2.set_ylabel('Расход, л/мин')
         ax2.grid(True, alpha=0.3)
