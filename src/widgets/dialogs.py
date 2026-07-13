@@ -7,6 +7,7 @@
 #     QTableWidget, QTableWidgetItem, QScrollArea, QWidget
 # )
 # from PyQt5.QtCore import Qt, QDate
+# from PyQt5.QtGui import QFont
 # import json
 
 # from .. import database as db
@@ -61,6 +62,7 @@
 #             self.table.setItem(i, 2, QTableWidgetItem(str(max_val)))
 #         self.table.resizeColumnsToContents()
 #         layout.addWidget(self.table)
+#         self._fit_table_height()
 
 #         btn_layout = QHBoxLayout()
 #         self.btn_add = QPushButton("Добавить точку")
@@ -71,6 +73,22 @@
 #         btn_layout.addWidget(self.btn_remove)
 #         layout.addLayout(btn_layout)
 #         self._update_buttons()
+
+#     def _fit_table_height(self):
+#         """Подгоняет высоту таблицы точно под содержимое - без внутренней
+#         прокрутки. Используется, чтобы диалог обходился без QScrollArea."""
+#         small_font = QFont()
+#         small_font.setPointSize(8)
+#         self.table.setFont(small_font)
+#         self.table.horizontalHeader().setFont(small_font)
+#         self.table.verticalHeader().setDefaultSectionSize(20)
+#         self.table.resizeRowsToContents()
+#         self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+#         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+#         total_height = self.table.horizontalHeader().height() + 4
+#         for row in range(self.table.rowCount()):
+#             total_height += self.table.rowHeight(row)
+#         self.table.setFixedHeight(total_height)
 
 #     def _update_buttons(self):
 #         self.btn_add.setEnabled(self.table.rowCount() < self.max_points)
@@ -84,12 +102,14 @@
 #         self.table.insertRow(row)
 #         for col in range(3):
 #             self.table.setItem(row, col, QTableWidgetItem(""))
+#         self._fit_table_height()
 #         self._update_buttons()
 
 #     def remove_row(self):
 #         if self.table.rowCount() <= 1:
 #             return
 #         self.table.removeRow(self.table.rowCount() - 1)
+#         self._fit_table_height()
 #         self._update_buttons()
 
 #     def validate(self):
@@ -129,14 +149,9 @@
 #         super().__init__(parent)
 #         self.setWindowTitle("Добавление модификации насоса ГУР")
 #         self.setModal(True)
-#         self.resize(680, 720)
+#         self.resize(1050, 620)
 
-#         outer_layout = QVBoxLayout(self)
-
-#         scroll = QScrollArea()
-#         scroll.setWidgetResizable(True)
-#         content = QWidget()
-#         layout = QVBoxLayout(content)
+#         layout = QVBoxLayout(self)
 
 #         layout.addWidget(QLabel("Номер (название) модификации насоса ГУР:"))
 #         self.name_input = QLineEdit()
@@ -144,75 +159,94 @@
 #             self.name_input.setText(existing_mod['name'])
 #         layout.addWidget(self.name_input)
 
-#         layout.addWidget(self._section_title(
-#             "Испытание 1: объёмная подача от оборотов (клапан ECO выкл.)"))
+#         # Три испытания - в один горизонтальный ряд, чтобы диалог оставался
+#         # компактным по высоте и не требовал прокрутки
+#         tests_layout = QHBoxLayout()
+
+#         test1_col = QVBoxLayout()
+#         test1_col.addWidget(self._section_title("Испытание 1: подача от оборотов (ECO выкл.)"))
 #         self.test1 = PointsEditorWidget(
 #             x_values=existing_mod['norm_graph1_x'] if existing_mod else list(utils.DEFAULT_GRAPH1_X),
 #             min_values=existing_mod['norm_graph1_min'] if existing_mod else [],
 #             max_values=existing_mod['norm_graph1_max'] if existing_mod else [],
 #             max_points=utils.MAX_GRAPH1_POINTS,
-#             x_label="Обороты, об/мин"
+#             x_label="Обороты"
 #         )
-#         layout.addWidget(self.test1)
+#         test1_col.addWidget(self.test1)
+#         tests_layout.addLayout(test1_col)
 
-#         layout.addWidget(self._section_title(
-#             "Испытание 2: объёмная подача от оборотов (клапан ECO вкл.)"))
+#         test2_col = QVBoxLayout()
+#         test2_col.addWidget(self._section_title("Испытание 2: подача от оборотов (ECO вкл.)"))
 #         self.test2 = PointsEditorWidget(
 #             x_values=existing_mod['norm_graph2_x'] if existing_mod else list(utils.DEFAULT_GRAPH2_X),
 #             min_values=existing_mod['norm_graph2_min'] if existing_mod else [],
 #             max_values=existing_mod['norm_graph2_max'] if existing_mod else [],
 #             max_points=utils.MAX_GRAPH2_POINTS,
-#             x_label="Обороты, об/мин"
+#             x_label="Обороты"
 #         )
-#         layout.addWidget(self.test2)
+#         test2_col.addWidget(self.test2)
+#         tests_layout.addLayout(test2_col)
 
-#         layout.addWidget(self._section_title(
-#             "Испытание 3: объёмная подача от силы тока на клапане ECO"))
+#         test3_col = QVBoxLayout()
+#         test3_col.addWidget(self._section_title("Испытание 3: подача от силы тока ECO"))
 #         self.test3 = PointsEditorWidget(
 #             x_values=existing_mod['norm_graph3_x'] if existing_mod else list(utils.DEFAULT_GRAPH3_X),
 #             min_values=existing_mod['norm_graph3_min'] if existing_mod else [],
 #             max_values=existing_mod['norm_graph3_max'] if existing_mod else [],
 #             max_points=utils.MAX_GRAPH3_POINTS,
-#             x_label="Сила тока, А"
+#             x_label="Ток, А"
 #         )
-#         layout.addWidget(self.test3)
+#         test3_col.addWidget(self.test3)
+#         tests_layout.addLayout(test3_col)
 
-#         layout.addWidget(self._section_title(
-#             "Испытание 4: давление срабатывания предохранительного клапана"))
-#         pressure_layout = QHBoxLayout()
-#         pressure_layout.addWidget(QLabel("Мин., бар:"))
+#         layout.addLayout(tests_layout)
+
+#         bottom_layout = QHBoxLayout()
+
+#         pressure_box = QVBoxLayout()
+#         pressure_box.addWidget(self._section_title("Испытание 4: давление предохранительного клапана"))
+#         pressure_row = QHBoxLayout()
+#         pressure_row.addWidget(QLabel("Мин., бар:"))
 #         self.pressure_min_input = QLineEdit(
 #             str(existing_mod['pressure_min']) if existing_mod and existing_mod['pressure_min'] is not None else "")
-#         pressure_layout.addWidget(self.pressure_min_input)
-#         pressure_layout.addWidget(QLabel("Макс., бар:"))
+#         pressure_row.addWidget(self.pressure_min_input)
+#         pressure_row.addWidget(QLabel("Макс., бар:"))
 #         self.pressure_max_input = QLineEdit(
 #             str(existing_mod['pressure_max']) if existing_mod and existing_mod['pressure_max'] is not None else "")
-#         pressure_layout.addWidget(self.pressure_max_input)
-#         layout.addLayout(pressure_layout)
+#         pressure_row.addWidget(self.pressure_max_input)
+#         pressure_box.addLayout(pressure_row)
+#         pressure_box.addStretch()
+#         bottom_layout.addLayout(pressure_box, 1)
 
-#         layout.addWidget(self._section_title("Проверка на герметичность"))
+#         seal_box = QVBoxLayout()
+#         seal_box.addWidget(self._section_title("Проверка на герметичность"))
 #         self.seal_inputs = {}
 #         seal_rules = existing_mod['seal_rules'] if existing_mod else dict(utils.DEFAULT_SEAL_REQUIREMENTS)
 #         for key in utils.SEAL_KEYS:
 #             row_layout = QHBoxLayout()
-#             row_layout.addWidget(QLabel(utils.SEAL_LABELS[key] + ":"))
+#             lbl = QLabel(utils.SEAL_LABELS[key] + ":")
+#             lbl.setWordWrap(True)
+#             lbl.setFixedWidth(200)
+#             row_layout.addWidget(lbl)
 #             edit = QLineEdit(seal_rules.get(key, utils.DEFAULT_SEAL_REQUIREMENTS[key]))
 #             row_layout.addWidget(edit)
 #             self.seal_inputs[key] = edit
-#             layout.addLayout(row_layout)
+#             seal_box.addLayout(row_layout)
+#         bottom_layout.addLayout(seal_box, 2)
 
-#         layout.addWidget(QLabel("Пароль для сохранения:"))
+#         layout.addLayout(bottom_layout)
+
+#         password_row = QHBoxLayout()
+#         password_row.addWidget(QLabel("Пароль для сохранения:"))
 #         self.password_input = QLineEdit()
 #         self.password_input.setEchoMode(QLineEdit.Password)
-#         layout.addWidget(self.password_input)
-
-#         scroll.setWidget(content)
-#         outer_layout.addWidget(scroll)
+#         password_row.addWidget(self.password_input)
+#         layout.addLayout(password_row)
 
 #         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
 #         button_box.accepted.connect(self.try_accept)
 #         button_box.rejected.connect(self.reject)
-#         outer_layout.addWidget(button_box)
+#         layout.addWidget(button_box)
 
 #     def _section_title(self, text):
 #         lbl = QLabel(text)
@@ -394,65 +428,56 @@
 #         super().__init__(parent)
 #         self.setWindowTitle("Добавление насоса вручную")
 #         self.setModal(True)
-#         self.resize(680, 780)
+#         self.resize(1100, 650)
 #         self.selected_mod = None
 #         self.value_tables = {}
 #         self.seal_inputs = {}
 
 #         outer_layout = QVBoxLayout(self)
-#         scroll = QScrollArea()
-#         scroll.setWidgetResizable(True)
-#         content = QWidget()
-#         self.content_layout = QVBoxLayout(content)
 
 #         self.mods = db.get_all_modifications()  # список (id, name)
 
-#         self.content_layout.addWidget(QLabel("Модификация:"))
+#         # Компактная строка с основными полями
+#         top_row = QHBoxLayout()
+#         top_row.addWidget(QLabel("Модификация:"))
 #         self.mod_combo = QComboBox()
 #         for mod_id, name in self.mods:
 #             self.mod_combo.addItem(name, mod_id)
 #         self.mod_combo.currentIndexChanged.connect(self.on_modification_changed)
-#         self.content_layout.addWidget(self.mod_combo)
+#         top_row.addWidget(self.mod_combo, 2)
 
-#         num_layout = QHBoxLayout()
-#         num_layout.addWidget(QLabel("Идентификационный № насоса:"))
+#         top_row.addWidget(QLabel("№ насоса:"))
 #         self.pump_number_input = QLineEdit()
-#         num_layout.addWidget(self.pump_number_input)
-#         self.content_layout.addLayout(num_layout)
+#         top_row.addWidget(self.pump_number_input, 1)
 
-#         date_layout = QHBoxLayout()
-#         date_layout.addWidget(QLabel("Дата проверки:"))
+#         top_row.addWidget(QLabel("Дата:"))
 #         self.date_input = QDateEdit()
 #         self.date_input.setCalendarPopup(True)
 #         self.date_input.setDate(QDate.currentDate())
-#         date_layout.addWidget(self.date_input)
-#         self.content_layout.addLayout(date_layout)
+#         top_row.addWidget(self.date_input, 1)
 
-#         type_layout = QHBoxLayout()
-#         type_layout.addWidget(QLabel("Тип проверки:"))
+#         top_row.addWidget(QLabel("Тип:"))
 #         self.type_combo = QComboBox()
 #         self.type_combo.addItems(["первичная", "повторная"])
-#         type_layout.addWidget(self.type_combo)
-#         self.content_layout.addLayout(type_layout)
+#         top_row.addWidget(self.type_combo, 1)
 
-#         order_layout = QHBoxLayout()
-#         order_layout.addWidget(QLabel("№ заказа (необязательно):"))
+#         top_row.addWidget(QLabel("№ заказа:"))
 #         self.order_input = QLineEdit()
-#         order_layout.addWidget(self.order_input)
-#         self.content_layout.addLayout(order_layout)
+#         top_row.addWidget(self.order_input, 1)
+#         outer_layout.addLayout(top_row)
 
-#         # Динамическая область: перестраивается при выборе модификации
+#         # Динамическая область: горизонтальные колонки испытаний -
+#         # перестраивается при выборе модификации
 #         self.values_widget = QWidget()
-#         self.values_layout = QVBoxLayout(self.values_widget)
-#         self.content_layout.addWidget(self.values_widget)
+#         self.values_layout = QHBoxLayout(self.values_widget)
+#         outer_layout.addWidget(self.values_widget)
 
-#         self.content_layout.addWidget(QLabel("Пароль для сохранения:"))
+#         password_row = QHBoxLayout()
+#         password_row.addWidget(QLabel("Пароль для сохранения:"))
 #         self.password_input = QLineEdit()
 #         self.password_input.setEchoMode(QLineEdit.Password)
-#         self.content_layout.addWidget(self.password_input)
-
-#         scroll.setWidget(content)
-#         outer_layout.addWidget(scroll)
+#         password_row.addWidget(self.password_input)
+#         outer_layout.addLayout(password_row)
 
 #         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
 #         button_box.accepted.connect(self.try_accept)
@@ -473,6 +498,8 @@
 #             child = self.values_layout.takeAt(0)
 #             if child.widget():
 #                 child.widget().deleteLater()
+#             elif child.layout():
+#                 self._clear_sub_layout(child.layout())
 #         self.value_tables = {}
 #         self.seal_inputs = {}
 
@@ -485,54 +512,86 @@
 
 #         self.value_tables['test1'] = self._build_value_table(
 #             "Испытание 1: подача от оборотов (ECO выкл.)",
-#             self.selected_mod['norm_graph1_x'], "Обороты, об/мин"
+#             self.selected_mod['norm_graph1_x'], "Обороты"
 #         )
 #         self.value_tables['test2'] = self._build_value_table(
 #             "Испытание 2: подача от оборотов (ECO вкл.)",
-#             self.selected_mod['norm_graph2_x'], "Обороты, об/мин"
+#             self.selected_mod['norm_graph2_x'], "Обороты"
 #         )
 #         self.value_tables['test3'] = self._build_value_table(
 #             "Испытание 3: подача от силы тока ECO",
-#             self.selected_mod['norm_graph3_x'], "Сила тока, А"
+#             self.selected_mod['norm_graph3_x'], "Ток, А"
 #         )
 
+#         # Четвёртая колонка: давление + герметичность
+#         extra_col = QVBoxLayout()
 #         pressure_label = QLabel(
-#             f"Испытание 4: давление настройки клапана "
-#             f"(норма: {self.selected_mod['pressure_min']} – {self.selected_mod['pressure_max']} бар)"
+#             f"Испытание 4: давление\n(норма: {self.selected_mod['pressure_min']} – "
+#             f"{self.selected_mod['pressure_max']} бар)"
 #         )
-#         pressure_label.setStyleSheet("font-weight: bold; margin-top: 8px;")
-#         self.values_layout.addWidget(pressure_label)
+#         pressure_label.setStyleSheet("font-weight: bold;")
+#         pressure_label.setWordWrap(True)
+#         extra_col.addWidget(pressure_label)
 #         self.pressure_input = QLineEdit()
-#         self.values_layout.addWidget(self.pressure_input)
+#         extra_col.addWidget(self.pressure_input)
 
-#         seal_label = QLabel("Проверка на герметичность")
+#         seal_label = QLabel("Герметичность")
 #         seal_label.setStyleSheet("font-weight: bold; margin-top: 8px;")
-#         self.values_layout.addWidget(seal_label)
+#         extra_col.addWidget(seal_label)
 #         for key in utils.SEAL_KEYS:
-#             row_layout = QHBoxLayout()
-#             row_layout.addWidget(QLabel(utils.SEAL_LABELS[key] + ":"))
+#             lbl = QLabel(utils.SEAL_LABELS[key] + ":")
+#             lbl.setWordWrap(True)
+#             extra_col.addWidget(lbl)
 #             edit = QLineEdit(self.selected_mod['seal_rules'].get(key, ''))
-#             row_layout.addWidget(edit)
+#             extra_col.addWidget(edit)
 #             self.seal_inputs[key] = edit
-#             self.values_layout.addLayout(row_layout)
+#         extra_col.addStretch()
+#         self.values_layout.addLayout(extra_col, 1)
+
+#     def _clear_sub_layout(self, layout):
+#         while layout.count():
+#             child = layout.takeAt(0)
+#             if child.widget():
+#                 child.widget().deleteLater()
+#             elif child.layout():
+#                 self._clear_sub_layout(child.layout())
 
 #     def _build_value_table(self, title, x_values, x_label):
+#         col = QVBoxLayout()
 #         title_label = QLabel(title)
-#         title_label.setStyleSheet("font-weight: bold; margin-top: 8px;")
-#         self.values_layout.addWidget(title_label)
+#         title_label.setStyleSheet("font-weight: bold;")
+#         title_label.setWordWrap(True)
+#         col.addWidget(title_label)
 
 #         table = QTableWidget()
 #         table.setColumnCount(2)
-#         table.setHorizontalHeaderLabels([x_label, "Результат, л/мин"])
+#         table.setHorizontalHeaderLabels([x_label, "Результат"])
 #         table.setRowCount(len(x_values))
 #         for i, x in enumerate(x_values):
 #             x_item = QTableWidgetItem(str(x))
 #             x_item.setFlags(Qt.ItemIsEnabled)
 #             table.setItem(i, 0, x_item)
 #             table.setItem(i, 1, QTableWidgetItem(""))
-#         table.resizeColumnsToContents()
 #         table.setEditTriggers(QTableWidget.AllEditTriggers)
-#         self.values_layout.addWidget(table)
+
+#         # Подгоняем высоту точно под содержимое - без внутренней прокрутки
+#         small_font = QFont()
+#         small_font.setPointSize(8)
+#         table.setFont(small_font)
+#         table.horizontalHeader().setFont(small_font)
+#         table.verticalHeader().setDefaultSectionSize(20)
+#         table.resizeRowsToContents()
+#         table.resizeColumnsToContents()
+#         table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+#         table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+#         total_height = table.horizontalHeader().height() + 4
+#         for row in range(table.rowCount()):
+#             total_height += table.rowHeight(row)
+#         table.setFixedHeight(total_height)
+
+#         col.addWidget(table)
+#         col.addStretch()
+#         self.values_layout.addLayout(col, 1)
 #         return table
 
 #     def try_accept(self):
@@ -795,9 +854,11 @@ class PointsEditorWidget(QWidget):
         self._fit_table_height()
 
         btn_layout = QHBoxLayout()
-        self.btn_add = QPushButton("Добавить точку")
+        self.btn_add = QPushButton("+ точка")
+        self.btn_add.setMaximumWidth(80)
         self.btn_add.clicked.connect(self.add_row)
-        self.btn_remove = QPushButton("Удалить последнюю точку")
+        self.btn_remove = QPushButton("− точка")
+        self.btn_remove.setMaximumWidth(80)
         self.btn_remove.clicked.connect(self.remove_row)
         btn_layout.addWidget(self.btn_add)
         btn_layout.addWidget(self.btn_remove)
@@ -805,20 +866,27 @@ class PointsEditorWidget(QWidget):
         self._update_buttons()
 
     def _fit_table_height(self):
-        """Подгоняет высоту таблицы точно под содержимое - без внутренней
-        прокрутки. Используется, чтобы диалог обходился без QScrollArea."""
+        """Подгоняет высоту и ширину таблицы точно под содержимое - без
+        внутренней прокрутки и без пустого пространства справа. Используется,
+        чтобы диалог обходился без QScrollArea."""
         small_font = QFont()
         small_font.setPointSize(8)
         self.table.setFont(small_font)
         self.table.horizontalHeader().setFont(small_font)
         self.table.verticalHeader().setDefaultSectionSize(20)
         self.table.resizeRowsToContents()
+        self.table.resizeColumnsToContents()
         self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         total_height = self.table.horizontalHeader().height() + 4
         for row in range(self.table.rowCount()):
             total_height += self.table.rowHeight(row)
         self.table.setFixedHeight(total_height)
+
+        total_width = 4
+        for col in range(self.table.columnCount()):
+            total_width += self.table.columnWidth(col)
+        self.table.setFixedWidth(total_width)
 
     def _update_buttons(self):
         self.btn_add.setEnabled(self.table.rowCount() < self.max_points)
@@ -894,7 +962,7 @@ class AddModificationDialog(QDialog):
         tests_layout = QHBoxLayout()
 
         test1_col = QVBoxLayout()
-        test1_col.addWidget(self._section_title("Испытание 1: подача от оборотов (ECO выкл.)"))
+        test1_col.addWidget(self._section_title("Испытание 1:\nПодача от оборотов\nECO выкл."))
         self.test1 = PointsEditorWidget(
             x_values=existing_mod['norm_graph1_x'] if existing_mod else list(utils.DEFAULT_GRAPH1_X),
             min_values=existing_mod['norm_graph1_min'] if existing_mod else [],
@@ -906,7 +974,7 @@ class AddModificationDialog(QDialog):
         tests_layout.addLayout(test1_col)
 
         test2_col = QVBoxLayout()
-        test2_col.addWidget(self._section_title("Испытание 2: подача от оборотов (ECO вкл.)"))
+        test2_col.addWidget(self._section_title("Испытание 2:\nПодача от оборотов\nECO вкл."))
         self.test2 = PointsEditorWidget(
             x_values=existing_mod['norm_graph2_x'] if existing_mod else list(utils.DEFAULT_GRAPH2_X),
             min_values=existing_mod['norm_graph2_min'] if existing_mod else [],
@@ -918,7 +986,7 @@ class AddModificationDialog(QDialog):
         tests_layout.addLayout(test2_col)
 
         test3_col = QVBoxLayout()
-        test3_col.addWidget(self._section_title("Испытание 3: подача от силы тока ECO"))
+        test3_col.addWidget(self._section_title("Испытание 3:\nПодача от силы тока ECO"))
         self.test3 = PointsEditorWidget(
             x_values=existing_mod['norm_graph3_x'] if existing_mod else list(utils.DEFAULT_GRAPH3_X),
             min_values=existing_mod['norm_graph3_min'] if existing_mod else [],
@@ -1158,7 +1226,7 @@ class AddPumpDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Добавление насоса вручную")
         self.setModal(True)
-        self.resize(1100, 650)
+        self.resize(950, 780)
         self.selected_mod = None
         self.value_tables = {}
         self.seal_inputs = {}
@@ -1199,7 +1267,11 @@ class AddPumpDialog(QDialog):
         # Динамическая область: горизонтальные колонки испытаний -
         # перестраивается при выборе модификации
         self.values_widget = QWidget()
-        self.values_layout = QHBoxLayout(self.values_widget)
+        self.values_main_layout = QVBoxLayout(self.values_widget)
+        self.tests_row = QHBoxLayout()      # Испытания 1-3, в ряд
+        self.extra_row = QHBoxLayout()      # Испытание 4 + герметичность, под ними
+        self.values_main_layout.addLayout(self.tests_row)
+        self.values_main_layout.addLayout(self.extra_row)
         outer_layout.addWidget(self.values_widget)
 
         password_row = QHBoxLayout()
@@ -1223,13 +1295,9 @@ class AddPumpDialog(QDialog):
             )
 
     def on_modification_changed(self, index):
-        # Очищаем предыдущее содержимое динамической области
-        while self.values_layout.count():
-            child = self.values_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-            elif child.layout():
-                self._clear_sub_layout(child.layout())
+        # Очищаем предыдущее содержимое обоих рядов
+        self._clear_sub_layout(self.tests_row)
+        self._clear_sub_layout(self.extra_row)
         self.value_tables = {}
         self.seal_inputs = {}
 
@@ -1253,30 +1321,39 @@ class AddPumpDialog(QDialog):
             self.selected_mod['norm_graph3_x'], "Ток, А"
         )
 
-        # Четвёртая колонка: давление + герметичность
-        extra_col = QVBoxLayout()
+        # Испытание 4 (давление) - отдельная колонка нижнего ряда
+        pressure_col = QVBoxLayout()
         pressure_label = QLabel(
             f"Испытание 4: давление\n(норма: {self.selected_mod['pressure_min']} – "
             f"{self.selected_mod['pressure_max']} бар)"
         )
         pressure_label.setStyleSheet("font-weight: bold;")
         pressure_label.setWordWrap(True)
-        extra_col.addWidget(pressure_label)
+        pressure_col.addWidget(pressure_label)
         self.pressure_input = QLineEdit()
-        extra_col.addWidget(self.pressure_input)
+        pressure_col.addWidget(self.pressure_input)
+        pressure_col.addStretch()
+        self.extra_row.addLayout(pressure_col, 1)
 
+        # Герметичность - вторая колонка нижнего ряда
+        seal_col = QVBoxLayout()
         seal_label = QLabel("Герметичность")
-        seal_label.setStyleSheet("font-weight: bold; margin-top: 8px;")
-        extra_col.addWidget(seal_label)
+        seal_label.setStyleSheet("font-weight: bold;")
+        seal_col.addWidget(seal_label)
+        seal_grid = QHBoxLayout()
         for key in utils.SEAL_KEYS:
+            one_col = QVBoxLayout()
             lbl = QLabel(utils.SEAL_LABELS[key] + ":")
             lbl.setWordWrap(True)
-            extra_col.addWidget(lbl)
+            lbl.setFixedWidth(110)
+            one_col.addWidget(lbl)
             edit = QLineEdit(self.selected_mod['seal_rules'].get(key, ''))
-            extra_col.addWidget(edit)
+            edit.setFixedWidth(110)
+            one_col.addWidget(edit)
             self.seal_inputs[key] = edit
-        extra_col.addStretch()
-        self.values_layout.addLayout(extra_col, 1)
+            seal_grid.addLayout(one_col)
+        seal_col.addLayout(seal_grid)
+        self.extra_row.addLayout(seal_col, 3)
 
     def _clear_sub_layout(self, layout):
         while layout.count():
@@ -1304,7 +1381,7 @@ class AddPumpDialog(QDialog):
             table.setItem(i, 1, QTableWidgetItem(""))
         table.setEditTriggers(QTableWidget.AllEditTriggers)
 
-        # Подгоняем высоту точно под содержимое - без внутренней прокрутки
+        # Подгоняем высоту и ширину точно под содержимое - без внутренней прокрутки
         small_font = QFont()
         small_font.setPointSize(8)
         table.setFont(small_font)
@@ -1318,10 +1395,14 @@ class AddPumpDialog(QDialog):
         for row in range(table.rowCount()):
             total_height += table.rowHeight(row)
         table.setFixedHeight(total_height)
+        total_width = 4
+        for c in range(table.columnCount()):
+            total_width += table.columnWidth(c)
+        table.setFixedWidth(total_width)
 
         col.addWidget(table)
         col.addStretch()
-        self.values_layout.addLayout(col, 1)
+        self.tests_row.addLayout(col)
         return table
 
     def try_accept(self):
