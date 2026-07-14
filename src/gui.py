@@ -2,11 +2,12 @@
 # from PyQt5.QtWidgets import (
 #     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
 #     QSplitter, QMessageBox, QInputDialog, QLineEdit,
-#     QDialog, QPushButton, QLabel
+#     QDialog, QPushButton, QLabel, QTableWidget, QTableWidgetItem
 # )
-# from PyQt5.QtCore import Qt
+# from PyQt5.QtCore import Qt, QTimer, QRectF
 
-# from PyQt5.QtGui import QFont
+# from PyQt5.QtGui import QFont, QPainter, QColor
+# from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintPreviewWidget
 
 # from .widgets.left_panel import LeftPanel
 # from .widgets.right_panel import RightPanel
@@ -65,7 +66,7 @@
 #         # Подключаем заглушки
 #         btn_theme.clicked.connect(lambda: QMessageBox.information(self, "Тема", "Функция будет реализована позже"))
 #         btn_settings.clicked.connect(self.open_settings)
-#         btn_print.clicked.connect(lambda: QMessageBox.information(self, "Печать", "Функция будет реализована позже"))
+#         btn_print.clicked.connect(self.on_print_requested)
 
 #         top_layout.addWidget(btn_theme)
 #         top_layout.addWidget(btn_settings)
@@ -155,6 +156,226 @@
 #         self.current_selected_pump = f"{items[0]['pump_number']} (сравнение {len(items)} шт.)"
 #         self.update_status()
 
+#     def on_print_requested(self):
+#         box = QMessageBox(self)
+#         box.setWindowTitle("Печать")
+#         box.setText("Что напечатать?")
+#         btn_protocol = box.addButton("Текущий протокол", QMessageBox.ActionRole)
+#         btn_list_compact = box.addButton("Список (сокращённый)", QMessageBox.ActionRole)
+#         btn_list_expanded = box.addButton("Список (расширенный)", QMessageBox.ActionRole)
+#         box.addButton("Отмена", QMessageBox.RejectRole)
+#         box.exec_()
+#         clicked = box.clickedButton()
+
+#         if clicked == btn_protocol:
+#             if self.right_panel.current_data is None:
+#                 QMessageBox.information(self, "Печать", "Сначала откройте протокол для просмотра.")
+#                 return
+#             self.right_panel.print_protocol()
+#         elif clicked == btn_list_compact:
+#             self.print_pump_list(compact=True)
+#         elif clicked == btn_list_expanded:
+#             self.print_pump_list(compact=False)
+
+#     def print_pump_list(self, compact=True):
+#         """Открывает предпросмотр печати списка насосов - сокращённого или
+#         расширенного (выбирается явно в диалоге печати), с учётом текущих
+#         применённых фильтров, текущей сортировки колонки и, если включён
+#         режим "Дубли", группировки по образцам (как на экране).
+
+#         Таблица рисуется вручную через QPainter (а не рендером живого
+#         QTableWidget) - так гарантированно вписывается в размер листа:
+#         ширина колонок считается напрямую от ширины страницы."""
+#         filters = dict(self.left_panel.current_filters or {})
+
+#         # ===== Учитываем текущую сортировку колонки в таблице списка =====
+#         on_screen_columns = (
+#             ['pump_number', 'test_date', 'verdict', 'test_type', 'is_sealed']
+#             if self.left_panel.compact_mode else
+#             ['pump_number', 'test_date', 'mod_name', 'is_sealed', 'test_type', 'order_number', 'verdict']
+#         )
+#         field_to_sql = {
+#             'pump_number': 'p.pump_number', 'test_date': 'p.test_date', 'verdict': 'p.verdict',
+#             'test_type': 'p.test_type', 'is_sealed': 'p.is_sealed',
+#             'mod_name': 'mod_name', 'order_number': 'order_number',
+#         }
+#         order_by = 'p.test_date DESC'
+#         header_view = self.left_panel.table.horizontalHeader()
+#         sort_col = header_view.sortIndicatorSection()
+#         sort_order = header_view.sortIndicatorOrder()
+#         if 0 <= sort_col < len(on_screen_columns):
+#             field = on_screen_columns[sort_col]
+#             direction = 'ASC' if sort_order == Qt.AscendingOrder else 'DESC'
+#             order_by = f"{field_to_sql.get(field, 'p.test_date')} {direction}"
+
+#         pumps = db.get_all_pumps(filters, order_by=order_by)
+#         if not pumps:
+#             QMessageBox.information(self, "Печать", "Нет записей для печати с текущими фильтрами.")
+#             return
+
+#         # Текстовое описание применённых фильтров - выводится над таблицей,
+#         # чтобы на бумаге было видно, по каким условиям отобран список
+#         filter_parts = []
+#         if filters.get('pump_number'):
+#             filter_parts.append(f"поиск: {filters['pump_number']}")
+#         if filters.get('verdict'):
+#             filter_parts.append(f"вердикт: {filters['verdict']}")
+#         if filters.get('test_type'):
+#             filter_parts.append(f"тип: {filters['test_type']}")
+#         if filters.get('is_sealed') is not None:
+#             filter_parts.append(f"герметичность: {'Да' if filters['is_sealed'] else 'Нет'}")
+#         if filters.get('order_id'):
+#             order_str = self.left_panel.order_map.get(filters['order_id'], str(filters['order_id']))
+#             filter_parts.append(f"заказ: №{order_str}")
+#         if filters.get('date_from') or filters.get('date_to'):
+#             filter_parts.append(f"дата: {filters.get('date_from', '')} - {filters.get('date_to', '')}")
+#         if filters.get('only_duplicates'):
+#             filter_parts.append("только дубли")
+#         filters_summary = ("Применены фильтры: " + ", ".join(filter_parts)) if filter_parts else "Фильтры не применены (полный список)"
+
+#         if compact:
+#             headers = ["Номер", "Дата", "Вердикт", "Тип", "Герметичность"]
+#             col_weights = [1, 1, 1, 1, 1]
+#         else:
+#             headers = ["Номер", "Дата", "Модификация", "Герметичность", "Тип", "Заказ", "Вердикт"]
+#             # Номер/Дата/Заказ - уже, Модификация - шире, остальные - стандартно
+#             col_weights = [0.7, 0.8, 1.6, 1.1, 0.9, 0.7, 0.9]
+
+#         def build_row(p):
+#             date_str = p.get('test_date') or ''
+#             if date_str and ' ' in date_str:
+#                 date_str = date_str.split(' ')[0]
+#             sealed_text = 'Герметичен' if p.get('is_sealed') else 'Негерметичен'
+#             if compact:
+#                 return [
+#                     str(p.get('pump_number', '')),
+#                     date_str,
+#                     p.get('verdict') or '—',
+#                     p.get('test_type') or '—',
+#                     sealed_text,
+#                 ]
+#             order_num = p.get('order_number')
+#             order_str = str(order_num).replace('.0', '') if order_num else '—'
+#             return [
+#                 str(p.get('pump_number', '')),
+#                 date_str,
+#                 p.get('mod_name') or '—',
+#                 sealed_text,
+#                 p.get('test_type') or '—',
+#                 order_str,
+#                 p.get('verdict') or '—',
+#             ]
+
+#         # ===== Группировка по дублям (как на экране), если включена =====
+#         # Внутри каждой группы порядок сохраняется таким, каким пришёл из
+#         # БД - то есть с учётом уже применённой выше сортировки колонки.
+#         print_items = []  # ('header', text) или ('row', values)
+#         if filters.get('only_duplicates'):
+#             groups = {}
+#             for p in pumps:
+#                 key = (p.get('pump_number'), p.get('mod_name'))
+#                 groups.setdefault(key, []).append(p)
+#             sorted_groups = sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0][0] or ''))
+#             for (pump_number, mod_name), items in sorted_groups:
+#                 print_items.append(('header', f"Образец № {pump_number} — {len(items)} шт."))
+#                 for p in items:
+#                     print_items.append(('row', build_row(p)))
+#         else:
+#             for p in pumps:
+#                 print_items.append(('row', build_row(p)))
+
+#         printer = QPrinter()
+#         printer.setPageSize(QPrinter.A4)
+#         printer.setOrientation(QPrinter.Portrait if compact else QPrinter.Landscape)
+#         printer.setPageMargins(8, 8, 8, 8, QPrinter.Millimeter)
+
+#         def render_list(printer_obj):
+#             painter = QPainter()
+#             painter.begin(printer_obj)
+#             page_rect = printer_obj.pageRect()
+
+#             n_cols = len(headers)
+#             n_items = len(print_items)
+
+#             # Небольшой запас по ширине (таблица уже полной печатной
+#             # области), чтобы гарантированно не выходить за границы листа
+#             table_width = page_rect.width() * 0.92
+#             x0 = page_rect.left() + (page_rect.width() - table_width) / 2
+
+#             # Ширина колонок - пропорционально весам (не поровну): номер,
+#             # дата и заказ уже, модификация шире
+#             total_weight = sum(col_weights)
+#             col_widths = [table_width * w / total_weight for w in col_weights]
+
+#             # Строка с описанием применённых фильтров над таблицей
+#             summary_height = page_rect.height() * 0.022
+#             summary_font = painter.font()
+#             summary_font.setPointSizeF(max(6, summary_height * 0.5))
+#             summary_font.setItalic(True)
+#             painter.setFont(summary_font)
+#             summary_rect = QRectF(x0, page_rect.top(), table_width, summary_height)
+#             painter.drawText(summary_rect, Qt.AlignVCenter | Qt.AlignLeft, filters_summary)
+
+#             header_height = page_rect.height() * 0.03
+#             top = page_rect.top() + summary_height
+#             # Высота строки - под все строки/заголовки групп на одном листе,
+#             # но не крупнее разумного максимума
+#             row_height = min((page_rect.height() - summary_height - header_height) / max(n_items, 1),
+#                             page_rect.height() * 0.03)
+
+#             font_size = max(5, min(8, row_height * 0.4))
+#             font = painter.font()
+#             font.setPointSizeF(font_size)
+#             font.setItalic(False)
+#             font.setBold(True)
+#             painter.setFont(font)
+
+#             pad = min(min(col_widths), row_height) * 0.06
+
+#             y = top
+
+#             # Заголовки колонок
+#             x = x0
+#             for label, cw in zip(headers, col_widths):
+#                 rect = QRectF(x, y, cw, header_height)
+#                 painter.drawRect(rect)
+#                 text_rect = rect.adjusted(pad, pad, -pad, -pad)
+#                 painter.drawText(text_rect, Qt.AlignCenter, label)
+#                 x += cw
+#             y += header_height
+
+#             # Строки и заголовки групп дублей
+#             for kind, value in print_items:
+#                 if y > page_rect.bottom():
+#                     break  # без постраничной разбивки - лишнее просто не рисуем
+#                 if kind == 'header':
+#                     rect = QRectF(x0, y, table_width, row_height)
+#                     painter.fillRect(rect, QColor(220, 230, 240))
+#                     painter.drawRect(rect)
+#                     font.setBold(True)
+#                     painter.setFont(font)
+#                     text_rect = rect.adjusted(pad, pad, -pad, -pad)
+#                     painter.drawText(text_rect, Qt.AlignCenter, value)
+#                 else:
+#                     font.setBold(False)
+#                     painter.setFont(font)
+#                     x = x0
+#                     for val, cw in zip(value, col_widths):
+#                         rect = QRectF(x, y, cw, row_height)
+#                         painter.drawRect(rect)
+#                         text_rect = rect.adjusted(pad, pad, -pad, -pad)
+#                         painter.drawText(text_rect, Qt.AlignCenter, str(val))
+#                         x += cw
+#                 y += row_height
+
+#             painter.end()
+
+#         preview = QPrintPreviewDialog(printer, self)
+#         preview.setWindowTitle("Предпросмотр печати - список насосов")
+#         preview.paintRequested.connect(render_list)
+#         preview.resize(1000, 850)
+#         preview.exec_()
+
 #     def on_import_requested(self):
 #         """Импорт Excel."""
 #         from PyQt5.QtWidgets import QFileDialog
@@ -174,7 +395,7 @@
 
 #     def on_add_requested(self):
 #         """Ручное добавление записи (модификация, номер, дата, результаты испытаний)."""
-#         pwd_dialog = PasswordDialog(self)
+#         pwd_dialog = PasswordDialog(self, message="Для добавления насоса введите пароль:")
 #         if pwd_dialog.exec_() != QDialog.Accepted:
 #             return
 #         if pwd_dialog.password != "admin":
@@ -240,7 +461,7 @@
 #             seal_results_json=data['seal_results'],
 #             verdict=verdict,
 #             is_sealed=is_sealed,
-#             note=''
+#             note=data.get('note', '')
 #         )
 
 #         self.left_panel.refresh()
@@ -296,6 +517,7 @@
 
 #         all_pumps = db.get_all_pumps()
 #         count = len(all_pumps)
+#         good_count = sum(1 for p in all_pumps if p.get('verdict') == 'годен')
 #         filters_text = ""
 #         if filters:
 #             parts = []
@@ -316,7 +538,8 @@
 #                 parts.append("только дубли")
 #             filters_text = ", ".join(parts)
 #         last_update = db.get_last_update_date()
-#         self.status_bar.set_status("Готово", count=count, filters=filters_text, selected_pump=selected_pump, last_update=last_update)
+#         self.status_bar.set_status("Готово", count=count, good_count=good_count, filters=filters_text,
+#                                    selected_pump=selected_pump, last_update=last_update)
 
 #     def on_edit_requested(self, pump_id):
 #         pump_data = db.get_pump_by_id(pump_id)
@@ -384,11 +607,12 @@ import sys
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QMessageBox, QInputDialog, QLineEdit,
-    QDialog, QPushButton, QLabel
+    QDialog, QPushButton, QLabel, QTableWidget, QTableWidgetItem
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer, QRectF
 
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QPainter, QColor
+from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintPreviewWidget
 
 from .widgets.left_panel import LeftPanel
 from .widgets.right_panel import RightPanel
@@ -447,7 +671,7 @@ class MainWindow(QMainWindow):
         # Подключаем заглушки
         btn_theme.clicked.connect(lambda: QMessageBox.information(self, "Тема", "Функция будет реализована позже"))
         btn_settings.clicked.connect(self.open_settings)
-        btn_print.clicked.connect(lambda: QMessageBox.information(self, "Печать", "Функция будет реализована позже"))
+        btn_print.clicked.connect(self.on_print_requested)
 
         top_layout.addWidget(btn_theme)
         top_layout.addWidget(btn_settings)
@@ -463,6 +687,7 @@ class MainWindow(QMainWindow):
         # Левая панель
         self.left_panel = LeftPanel()
         self.left_panel.pump_selected.connect(self.on_pump_selected)
+        self.left_panel.pump_status_selected.connect(self.on_pump_status_selected)
         self.left_panel.group_selected.connect(self.on_group_selected)
         self.left_panel.request_import.connect(self.on_import_requested)
         self.left_panel.request_add.connect(self.on_add_requested)
@@ -524,6 +749,12 @@ class MainWindow(QMainWindow):
         self.current_selected_pump = pump_data['pump_number']
         self.update_status()  # без параметров
 
+    def on_pump_status_selected(self, pump_data):
+        """Выбор строки в расширенном режиме - обновляем только статус-бар,
+        не открывая протокол и не переключая вид обратно в компактный."""
+        self.current_selected_pump = pump_data['pump_number']
+        self.update_status()
+
     def on_group_selected(self, items):
         """Клик по заголовку группы дублей - показываем сравнение протоколов."""
         if not self.left_panel.compact_mode:
@@ -536,6 +767,226 @@ class MainWindow(QMainWindow):
         self.right_panel.display_comparison(full_items)
         self.current_selected_pump = f"{items[0]['pump_number']} (сравнение {len(items)} шт.)"
         self.update_status()
+
+    def on_print_requested(self):
+        box = QMessageBox(self)
+        box.setWindowTitle("Печать")
+        box.setText("Что напечатать?")
+        btn_protocol = box.addButton("Текущий протокол", QMessageBox.ActionRole)
+        btn_list_compact = box.addButton("Список (сокращённый)", QMessageBox.ActionRole)
+        btn_list_expanded = box.addButton("Список (расширенный)", QMessageBox.ActionRole)
+        box.addButton("Отмена", QMessageBox.RejectRole)
+        box.exec_()
+        clicked = box.clickedButton()
+
+        if clicked == btn_protocol:
+            if self.right_panel.current_data is None:
+                QMessageBox.information(self, "Печать", "Сначала откройте протокол для просмотра.")
+                return
+            self.right_panel.print_protocol()
+        elif clicked == btn_list_compact:
+            self.print_pump_list(compact=True)
+        elif clicked == btn_list_expanded:
+            self.print_pump_list(compact=False)
+
+    def print_pump_list(self, compact=True):
+        """Открывает предпросмотр печати списка насосов - сокращённого или
+        расширенного (выбирается явно в диалоге печати), с учётом текущих
+        применённых фильтров, текущей сортировки колонки и, если включён
+        режим "Дубли", группировки по образцам (как на экране).
+
+        Таблица рисуется вручную через QPainter (а не рендером живого
+        QTableWidget) - так гарантированно вписывается в размер листа:
+        ширина колонок считается напрямую от ширины страницы."""
+        filters = dict(self.left_panel.current_filters or {})
+
+        # ===== Учитываем текущую сортировку колонки в таблице списка =====
+        on_screen_columns = (
+            ['pump_number', 'test_date', 'verdict', 'test_type', 'is_sealed']
+            if self.left_panel.compact_mode else
+            ['pump_number', 'test_date', 'mod_name', 'is_sealed', 'test_type', 'order_number', 'verdict']
+        )
+        field_to_sql = {
+            'pump_number': 'p.pump_number', 'test_date': 'p.test_date', 'verdict': 'p.verdict',
+            'test_type': 'p.test_type', 'is_sealed': 'p.is_sealed',
+            'mod_name': 'mod_name', 'order_number': 'order_number',
+        }
+        order_by = 'p.test_date DESC'
+        header_view = self.left_panel.table.horizontalHeader()
+        sort_col = header_view.sortIndicatorSection()
+        sort_order = header_view.sortIndicatorOrder()
+        if 0 <= sort_col < len(on_screen_columns):
+            field = on_screen_columns[sort_col]
+            direction = 'ASC' if sort_order == Qt.AscendingOrder else 'DESC'
+            order_by = f"{field_to_sql.get(field, 'p.test_date')} {direction}"
+
+        pumps = db.get_all_pumps(filters, order_by=order_by)
+        if not pumps:
+            QMessageBox.information(self, "Печать", "Нет записей для печати с текущими фильтрами.")
+            return
+
+        # Текстовое описание применённых фильтров - выводится над таблицей,
+        # чтобы на бумаге было видно, по каким условиям отобран список
+        filter_parts = []
+        if filters.get('pump_number'):
+            filter_parts.append(f"поиск: {filters['pump_number']}")
+        if filters.get('verdict'):
+            filter_parts.append(f"вердикт: {filters['verdict']}")
+        if filters.get('test_type'):
+            filter_parts.append(f"тип: {filters['test_type']}")
+        if filters.get('is_sealed') is not None:
+            filter_parts.append(f"герметичность: {'Да' if filters['is_sealed'] else 'Нет'}")
+        if filters.get('order_id'):
+            order_str = self.left_panel.order_map.get(filters['order_id'], str(filters['order_id']))
+            filter_parts.append(f"заказ: №{order_str}")
+        if filters.get('date_from') or filters.get('date_to'):
+            filter_parts.append(f"дата: {filters.get('date_from', '')} - {filters.get('date_to', '')}")
+        if filters.get('only_duplicates'):
+            filter_parts.append("только дубли")
+        filters_summary = ("Применены фильтры: " + ", ".join(filter_parts)) if filter_parts else "Фильтры не применены (полный список)"
+
+        if compact:
+            headers = ["Номер", "Дата", "Вердикт", "Тип", "Герметичность"]
+            col_weights = [1, 1, 1, 1, 1]
+        else:
+            headers = ["Номер", "Дата", "Модификация", "Герметичность", "Тип", "Заказ", "Вердикт"]
+            # Номер/Дата/Заказ - уже, Модификация - шире, остальные - стандартно
+            col_weights = [0.7, 0.8, 1.6, 1.1, 0.9, 0.7, 0.9]
+
+        def build_row(p):
+            date_str = p.get('test_date') or ''
+            if date_str and ' ' in date_str:
+                date_str = date_str.split(' ')[0]
+            sealed_text = 'Герметичен' if p.get('is_sealed') else 'Негерметичен'
+            if compact:
+                return [
+                    str(p.get('pump_number', '')),
+                    date_str,
+                    p.get('verdict') or '—',
+                    p.get('test_type') or '—',
+                    sealed_text,
+                ]
+            order_num = p.get('order_number')
+            order_str = str(order_num).replace('.0', '') if order_num else '—'
+            return [
+                str(p.get('pump_number', '')),
+                date_str,
+                p.get('mod_name') or '—',
+                sealed_text,
+                p.get('test_type') or '—',
+                order_str,
+                p.get('verdict') or '—',
+            ]
+
+        # ===== Группировка по дублям (как на экране), если включена =====
+        # Внутри каждой группы порядок сохраняется таким, каким пришёл из
+        # БД - то есть с учётом уже применённой выше сортировки колонки.
+        print_items = []  # ('header', text) или ('row', values)
+        if filters.get('only_duplicates'):
+            groups = {}
+            for p in pumps:
+                key = (p.get('pump_number'), p.get('mod_name'))
+                groups.setdefault(key, []).append(p)
+            sorted_groups = sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0][0] or ''))
+            for (pump_number, mod_name), items in sorted_groups:
+                print_items.append(('header', f"Образец № {pump_number} — {len(items)} шт."))
+                for p in items:
+                    print_items.append(('row', build_row(p)))
+        else:
+            for p in pumps:
+                print_items.append(('row', build_row(p)))
+
+        printer = QPrinter()
+        printer.setPageSize(QPrinter.A4)
+        printer.setOrientation(QPrinter.Portrait if compact else QPrinter.Landscape)
+        printer.setPageMargins(8, 8, 8, 8, QPrinter.Millimeter)
+
+        def render_list(printer_obj):
+            painter = QPainter()
+            painter.begin(printer_obj)
+            page_rect = printer_obj.pageRect()
+
+            n_cols = len(headers)
+            n_items = len(print_items)
+
+            # Небольшой запас по ширине (таблица уже полной печатной
+            # области), чтобы гарантированно не выходить за границы листа
+            table_width = page_rect.width() * 0.92
+            x0 = page_rect.left() + (page_rect.width() - table_width) / 2
+
+            # Ширина колонок - пропорционально весам (не поровну): номер,
+            # дата и заказ уже, модификация шире
+            total_weight = sum(col_weights)
+            col_widths = [table_width * w / total_weight for w in col_weights]
+
+            # Строка с описанием применённых фильтров над таблицей
+            summary_height = page_rect.height() * 0.022
+            summary_font = painter.font()
+            summary_font.setPointSizeF(max(6, summary_height * 0.5))
+            summary_font.setItalic(True)
+            painter.setFont(summary_font)
+            summary_rect = QRectF(x0, page_rect.top(), table_width, summary_height)
+            painter.drawText(summary_rect, Qt.AlignVCenter | Qt.AlignLeft, filters_summary)
+
+            header_height = page_rect.height() * 0.03
+            top = page_rect.top() + summary_height
+            # Высота строки - под все строки/заголовки групп на одном листе,
+            # но не крупнее разумного максимума
+            row_height = min((page_rect.height() - summary_height - header_height) / max(n_items, 1),
+                            page_rect.height() * 0.03)
+
+            font_size = max(5, min(8, row_height * 0.4))
+            font = painter.font()
+            font.setPointSizeF(font_size)
+            font.setItalic(False)
+            font.setBold(True)
+            painter.setFont(font)
+
+            pad = min(min(col_widths), row_height) * 0.06
+
+            y = top
+
+            # Заголовки колонок
+            x = x0
+            for label, cw in zip(headers, col_widths):
+                rect = QRectF(x, y, cw, header_height)
+                painter.drawRect(rect)
+                text_rect = rect.adjusted(pad, pad, -pad, -pad)
+                painter.drawText(text_rect, Qt.AlignCenter, label)
+                x += cw
+            y += header_height
+
+            # Строки и заголовки групп дублей
+            for kind, value in print_items:
+                if y > page_rect.bottom():
+                    break  # без постраничной разбивки - лишнее просто не рисуем
+                if kind == 'header':
+                    rect = QRectF(x0, y, table_width, row_height)
+                    painter.fillRect(rect, QColor(220, 230, 240))
+                    painter.drawRect(rect)
+                    font.setBold(True)
+                    painter.setFont(font)
+                    text_rect = rect.adjusted(pad, pad, -pad, -pad)
+                    painter.drawText(text_rect, Qt.AlignCenter, value)
+                else:
+                    font.setBold(False)
+                    painter.setFont(font)
+                    x = x0
+                    for val, cw in zip(value, col_widths):
+                        rect = QRectF(x, y, cw, row_height)
+                        painter.drawRect(rect)
+                        text_rect = rect.adjusted(pad, pad, -pad, -pad)
+                        painter.drawText(text_rect, Qt.AlignCenter, str(val))
+                        x += cw
+                y += row_height
+
+            painter.end()
+
+        preview = QPrintPreviewDialog(printer, self)
+        preview.setWindowTitle("Предпросмотр печати - список насосов")
+        preview.paintRequested.connect(render_list)
+        preview.resize(1000, 850)
+        preview.exec_()
 
     def on_import_requested(self):
         """Импорт Excel."""
@@ -622,7 +1073,7 @@ class MainWindow(QMainWindow):
             seal_results_json=data['seal_results'],
             verdict=verdict,
             is_sealed=is_sealed,
-            note=''
+            note=data.get('note', '')
         )
 
         self.left_panel.refresh()
@@ -678,6 +1129,7 @@ class MainWindow(QMainWindow):
 
         all_pumps = db.get_all_pumps()
         count = len(all_pumps)
+        good_count = sum(1 for p in all_pumps if p.get('verdict') == 'годен')
         filters_text = ""
         if filters:
             parts = []
@@ -698,7 +1150,8 @@ class MainWindow(QMainWindow):
                 parts.append("только дубли")
             filters_text = ", ".join(parts)
         last_update = db.get_last_update_date()
-        self.status_bar.set_status("Готово", count=count, filters=filters_text, selected_pump=selected_pump, last_update=last_update)
+        self.status_bar.set_status("Готово", count=count, good_count=good_count, filters=filters_text,
+                                   selected_pump=selected_pump, last_update=last_update)
 
     def on_edit_requested(self, pump_id):
         pump_data = db.get_pump_by_id(pump_id)

@@ -3,7 +3,7 @@
 #     QTableWidget, QTableWidgetItem, QPushButton, QLabel, QCheckBox,
 #     QDateEdit, QHeaderView, QAbstractItemView, QMenu
 # )
-# from PyQt5.QtCore import Qt, pyqtSignal, QDate, QPoint
+# from PyQt5.QtCore import Qt, pyqtSignal, QDate, QPoint, QTimer
 # from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QPolygon
 
 # from .. import database as db
@@ -11,6 +11,7 @@
 
 # class LeftPanel(QWidget):
 #     pump_selected = pyqtSignal(dict)
+#     group_selected = pyqtSignal(list)
 #     request_import = pyqtSignal()
 #     request_add = pyqtSignal()
 #     request_delete = pyqtSignal(int)
@@ -21,9 +22,12 @@
 #         super().__init__(parent)
 #         self.compact_mode = True
 #         self.current_page = 0
-#         self.page_size = 20
+#         self.page_size = 20  # начальное значение, пересчитывается под размер окна
 #         self.total_records = 0
 #         self.current_filters = {}
+#         self._resize_timer = QTimer(self)
+#         self._resize_timer.setSingleShot(True)
+#         self._resize_timer.timeout.connect(self._on_resize_settled)
 #         self.setup_ui()
 #         self.load_data()
 
@@ -49,7 +53,7 @@
 
 #       # Ряд 2: Фильтры (вердикт, тип, герметичность, заказ)
 #       filter_layout = QHBoxLayout()
-#       filter_layout.setSpacing(2)
+#       filter_layout.setSpacing(2)  # минимальный - между подписью и её виджетом
 #       self.filter_verdict = QComboBox()
 #       self.filter_verdict.addItems(["Все", "Годен", "Не годен"])
 #       self.filter_verdict.currentTextChanged.connect(self.apply_filters)
@@ -65,17 +69,20 @@
 
 #       filter_layout.addWidget(QLabel("Вердикт:"))
 #       filter_layout.addWidget(self.filter_verdict)
+#       filter_layout.addSpacing(20)  # большой - между разными фильтрами
 #       filter_layout.addWidget(QLabel("Тип:"))
 #       filter_layout.addWidget(self.filter_test_type)
+#       filter_layout.addSpacing(20)
 #       filter_layout.addWidget(QLabel("Герметичность:"))
 #       filter_layout.addWidget(self.filter_sealed)
+#       filter_layout.addSpacing(20)
 #       filter_layout.addWidget(QLabel("Заказ №:"))
 #       filter_layout.addWidget(self.filter_order)
 #       layout.addLayout(filter_layout)
 
 #       # Ряд 3: Дата и дубли
 #       extra_layout = QHBoxLayout()
-#       extra_layout.setSpacing(2)
+#       extra_layout.setSpacing(2)  # минимальный - между подписью и её виджетом
 #       self.date_from = QDateEdit()
 #       self.date_from.setCalendarPopup(True)
 #       self.date_from.setDate(QDate(2000, 1, 1))
@@ -84,13 +91,15 @@
 #       self.date_to.setCalendarPopup(True)
 #       self.date_to.setDate(QDate.currentDate())
 #       self.date_to.dateChanged.connect(self.apply_filters)
-#       self.only_duplicates = QCheckBox("Повторные (дубли)")
+#       self.only_duplicates = QCheckBox("Дубли")
 #       self.only_duplicates.stateChanged.connect(self.apply_filters)
 
 #       extra_layout.addWidget(QLabel("С:"))
 #       extra_layout.addWidget(self.date_from)
+#       extra_layout.addSpacing(20)  # большой - между разными фильтрами
 #       extra_layout.addWidget(QLabel("По:"))
 #       extra_layout.addWidget(self.date_to)
+#       extra_layout.addSpacing(20)
 #       extra_layout.addWidget(self.only_duplicates)
 #       layout.addLayout(extra_layout)
 
@@ -135,6 +144,7 @@
 #       self.table.itemSelectionChanged.connect(self.on_selection_changed)
 #       self.table.setContextMenuPolicy(Qt.CustomContextMenu)
 #       self.table.customContextMenuRequested.connect(self.show_context_menu)
+#       self.table.cellClicked.connect(self.on_cell_clicked)
 #       layout.addWidget(self.table)
 
 #       # Центрирование таблицы в левой панели
@@ -142,14 +152,14 @@
 
 #       # Кнопки управления
 #       btn_layout = QHBoxLayout()
-#       btn_layout.setSpacing(10)
-#       self.btn_add = QPushButton("Добавить вручную")
+#       btn_layout.setSpacing(5)
+#       self.btn_add = QPushButton("Добавить")
 #       self.btn_add.clicked.connect(self.request_add.emit)
 #       self.btn_delete = QPushButton("Удалить")
 #       self.btn_delete.clicked.connect(self.on_delete_clicked)
-#       self.btn_import = QPushButton("Импорт из Excel")
+#       self.btn_import = QPushButton("Импорт")
 #       self.btn_import.clicked.connect(self.request_import.emit)
-#       self.btn_view_toggle = QPushButton("Расширить таблицу")
+#       self.btn_view_toggle = QPushButton("Расширить")
 #       self.btn_view_toggle.setCheckable(True)
 #       self.btn_view_toggle.toggled.connect(self.toggle_view)
 
@@ -168,7 +178,7 @@
 
 #       # Пагинация
 #       pagination_layout = QHBoxLayout()
-#       pagination_layout.setSpacing(5)
+#       pagination_layout.setSpacing(3)
 #       self.btn_prev = QPushButton("◀")
 #       self.btn_prev.setFixedWidth(30)
 #       self.btn_prev.clicked.connect(self.prev_page)
@@ -208,7 +218,7 @@
 #         if checked:
 #             # Расширенный режим
 #             self.compact_mode = False
-#             self.btn_view_toggle.setText("Свернуть таблицу")
+#             self.btn_view_toggle.setText("Свернуть список")
 #             # # Левая 100%, правая 0 (скрываем)
 #             parent.splitter.setSizes([parent.width(), 0])
             
@@ -226,6 +236,7 @@
 #             # parent.splitter.setSizes([int(parent.width() * 0.15), int(parent.width() * 0.85)])
 #             # self.legend_label.show()
 #         self.apply_filters()
+#         self.table.clearSelection()
 
 #     def _setup_table_columns(self, compact=True):
 #         """Настраивает количество и заголовки колонок таблицы."""
@@ -236,7 +247,7 @@
 #         if compact:
 #             col_count = 5
 #             self.table.setColumnCount(col_count)
-#             self.table.setHorizontalHeaderLabels(["Номер насоса", "Дата проверки", "Соответствие", "Тип проверки", "Герметичность"])
+#             self.table.setHorizontalHeaderLabels(["Номер", "Дата", "Вердикт", "Тип", "Герметичность"])
 #             for col in range(5, self.table.columnCount()):
 #                 self.table.setColumnHidden(col, True)
 #             self.table.verticalHeader().setVisible(False)
@@ -249,7 +260,7 @@
 #             col_count = 7
 #             self.table.setColumnCount(col_count)
 #             self.table.setHorizontalHeaderLabels(
-#                 ["Номер насоса", "Дата проверки", "Модификация", "Герметичность", "Тип проверки", "Номер заказа", "Соответствие"]
+#                 ["Номер", "Дата", "Модификация", "Герметичность", "Тип", "Заказ", "Вердикт"]
 #             )
 #             for col in range(self.table.columnCount()):
 #                 self.table.setColumnHidden(col, False)
@@ -360,20 +371,23 @@
 #             self.table.sortByColumn(0, Qt.AscendingOrder)
 
 #     def populate_table_grouped(self, pumps, compact=True):
-#         """Отображает насосы, сгруппированные по номеру (для фильтра 'Дубли'):
-#         строка-заголовок 'Образец № X — N шт.', а под ней сами протоколы,
-#         отсортированные по дате (сначала новые)."""
+#         """Отображает насосы, сгруппированные по номеру + модификации (для
+#         фильтра 'Дубли'): строка-заголовок 'Образец № X — N шт.', а под ней
+#         сами протоколы, отсортированные по дате (сначала новые). Если у
+#         насоса с одинаковым номером разные модификации - это разные группы,
+#         а не дубликаты."""
 #         self.table.setSortingEnabled(False)
 #         self.table.clearSpans()
 
-#         # Группируем по номеру насоса
+#         # Группируем по (номер насоса, модификация)
 #         groups = {}
 #         for p in pumps:
-#             groups.setdefault(p['pump_number'], []).append(p)
+#             key = (p['pump_number'], p.get('mod_name'))
+#             groups.setdefault(key, []).append(p)
 
 #         # Сортируем группы: сначала по убыванию количества найденных протоколов,
 #         # при равном количестве - по номеру насоса
-#         sorted_groups = sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+#         sorted_groups = sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0][0]))
 
 #         # Внутри группы - сортировка протоколов по дате (сначала новые)
 #         for _, items in sorted_groups:
@@ -385,15 +399,19 @@
 #         self.table.setRowCount(total_rows)
 
 #         row = 0
-#         for pump_number, items in sorted_groups:
+#         for (pump_number, mod_name), items in sorted_groups:
 #             # ---- Строка-заголовок группы ----
-#             header_item = QTableWidgetItem(f"Образец № {pump_number} — {len(items)} шт.")
+#             header_text = f"Образец № {pump_number} — {len(items)} шт."
+#             header_item = QTableWidgetItem(header_text)
 #             header_item.setTextAlignment(Qt.AlignCenter)
 #             header_item.setFlags(Qt.ItemIsEnabled)  # не выделяется и не открывается как протокол
 #             header_font = QFont()
 #             header_font.setBold(True)
 #             header_item.setFont(header_font)
 #             header_item.setBackground(QColor(210, 224, 240))
+#             # Сохраняем сами дублирующиеся протоколы на заголовке -
+#             # понадобится, чтобы по клику показать сравнение (пункт 5)
+#             header_item.setData(Qt.UserRole + 1, items)
 #             self.table.setItem(row, 0, header_item)
 #             self.table.setSpan(row, 0, 1, col_count)
 #             row += 1
@@ -447,6 +465,37 @@
 #     #     painter.end()
 #     #     return QIcon(pixmap)
 
+#     def resizeEvent(self, event):
+#         super().resizeEvent(event)
+#         self._resize_timer.start(200)
+
+#     def showEvent(self, event):
+#         super().showEvent(event)
+#         if not getattr(self, '_initial_size_done', False):
+#             self._initial_size_done = True
+#             QTimer.singleShot(0, self._on_resize_settled)
+
+#     def _on_resize_settled(self):
+#         if self.only_duplicates.isChecked():
+#             return  # в режиме дублей пагинация отключена - не трогаем
+#         row_height = self.table.verticalHeader().defaultSectionSize() or 24
+#         header_height = self.table.horizontalHeader().height()
+#         available = self.table.viewport().height() - header_height
+#         new_page_size = max(5, available // row_height)
+#         if new_page_size != self.page_size:
+#             self.page_size = new_page_size
+#             self.current_page = 0
+#             self.apply_filters()
+
+#     def on_cell_clicked(self, row, col):
+#         """Клик по заголовку группы дублей открывает сравнение в правой панели."""
+#         item = self.table.item(row, 0)
+#         if item is None:
+#             return
+#         group_items = item.data(Qt.UserRole + 1)
+#         if group_items:
+#             self.group_selected.emit(group_items)
+
 #     def on_selection_changed(self):
 #         """Обработка выбора строки (только в компактном режиме)."""
 #         if not self.compact_mode:
@@ -478,7 +527,7 @@
 
 #         menu = QMenu(self)
 #         action_view = menu.addAction("Показать протокол")
-#         action_edit = menu.addAction("Примечание")
+#         action_edit = menu.addAction("Редактировать")
 #         action_delete = menu.addAction("Удалить")
 
 #         action = menu.exec_(self.table.mapToGlobal(pos))
@@ -642,21 +691,21 @@
 #             self.page_label.setText("Группировка по дублям")
 #             self.btn_prev.setEnabled(False)
 #             self.btn_next.setEnabled(False)
-#             self.count_label.setText(f"Показано записей: {self.total_records}")
+#             self.count_label.setText(f"Всего записей: {self.total_records}")
 #             return
 
 #         total_pages = max(1, (self.total_records + self.page_size - 1) // self.page_size)
 #         self.page_label.setText(f"Страница {self.current_page + 1} из {total_pages}")
 #         self.btn_prev.setEnabled(self.current_page > 0)
 #         self.btn_next.setEnabled((self.current_page + 1) * self.page_size < self.total_records)
-#         self.count_label.setText(f"Показано записей: {self.total_records}")
+#         self.count_label.setText(f"Всего записей: {self.total_records}")
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QComboBox,
     QTableWidget, QTableWidgetItem, QPushButton, QLabel, QCheckBox,
     QDateEdit, QHeaderView, QAbstractItemView, QMenu
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QDate, QPoint
+from PyQt5.QtCore import Qt, pyqtSignal, QDate, QPoint, QTimer
 from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QPolygon
 
 from .. import database as db
@@ -664,6 +713,7 @@ from .. import utils
 
 class LeftPanel(QWidget):
     pump_selected = pyqtSignal(dict)
+    pump_status_selected = pyqtSignal(dict)
     group_selected = pyqtSignal(list)
     request_import = pyqtSignal()
     request_add = pyqtSignal()
@@ -675,9 +725,12 @@ class LeftPanel(QWidget):
         super().__init__(parent)
         self.compact_mode = True
         self.current_page = 0
-        self.page_size = 20
+        self.page_size = 20  # начальное значение, пересчитывается под размер окна
         self.total_records = 0
         self.current_filters = {}
+        self._resize_timer = QTimer(self)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.timeout.connect(self._on_resize_settled)
         self.setup_ui()
         self.load_data()
 
@@ -703,7 +756,7 @@ class LeftPanel(QWidget):
 
       # Ряд 2: Фильтры (вердикт, тип, герметичность, заказ)
       filter_layout = QHBoxLayout()
-      filter_layout.setSpacing(5)
+      filter_layout.setSpacing(2)  # минимальный - между подписью и её виджетом
       self.filter_verdict = QComboBox()
       self.filter_verdict.addItems(["Все", "Годен", "Не годен"])
       self.filter_verdict.currentTextChanged.connect(self.apply_filters)
@@ -719,17 +772,20 @@ class LeftPanel(QWidget):
 
       filter_layout.addWidget(QLabel("Вердикт:"))
       filter_layout.addWidget(self.filter_verdict)
+      filter_layout.addSpacing(20)  # большой - между разными фильтрами
       filter_layout.addWidget(QLabel("Тип:"))
       filter_layout.addWidget(self.filter_test_type)
+      filter_layout.addSpacing(20)
       filter_layout.addWidget(QLabel("Герметичность:"))
       filter_layout.addWidget(self.filter_sealed)
+      filter_layout.addSpacing(20)
       filter_layout.addWidget(QLabel("Заказ №:"))
       filter_layout.addWidget(self.filter_order)
       layout.addLayout(filter_layout)
 
       # Ряд 3: Дата и дубли
       extra_layout = QHBoxLayout()
-      extra_layout.setSpacing(5)
+      extra_layout.setSpacing(2)  # минимальный - между подписью и её виджетом
       self.date_from = QDateEdit()
       self.date_from.setCalendarPopup(True)
       self.date_from.setDate(QDate(2000, 1, 1))
@@ -743,8 +799,10 @@ class LeftPanel(QWidget):
 
       extra_layout.addWidget(QLabel("С:"))
       extra_layout.addWidget(self.date_from)
+      extra_layout.addSpacing(20)  # большой - между разными фильтрами
       extra_layout.addWidget(QLabel("По:"))
       extra_layout.addWidget(self.date_to)
+      extra_layout.addSpacing(20)
       extra_layout.addWidget(self.only_duplicates)
       layout.addLayout(extra_layout)
 
@@ -881,6 +939,7 @@ class LeftPanel(QWidget):
             # parent.splitter.setSizes([int(parent.width() * 0.15), int(parent.width() * 0.85)])
             # self.legend_label.show()
         self.apply_filters()
+        self.table.clearSelection()
 
     def _setup_table_columns(self, compact=True):
         """Настраивает количество и заголовки колонок таблицы."""
@@ -1109,6 +1168,28 @@ class LeftPanel(QWidget):
     #     painter.end()
     #     return QIcon(pixmap)
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._resize_timer.start(200)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not getattr(self, '_initial_size_done', False):
+            self._initial_size_done = True
+            QTimer.singleShot(0, self._on_resize_settled)
+
+    def _on_resize_settled(self):
+        if self.only_duplicates.isChecked():
+            return  # в режиме дублей пагинация отключена - не трогаем
+        row_height = self.table.verticalHeader().defaultSectionSize() or 24
+        header_height = self.table.horizontalHeader().height()
+        available = self.table.viewport().height() - header_height
+        new_page_size = max(5, available // row_height)
+        if new_page_size != self.page_size:
+            self.page_size = new_page_size
+            self.current_page = 0
+            self.apply_filters()
+
     def on_cell_clicked(self, row, col):
         """Клик по заголовку группы дублей открывает сравнение в правой панели."""
         item = self.table.item(row, 0)
@@ -1119,9 +1200,9 @@ class LeftPanel(QWidget):
             self.group_selected.emit(group_items)
 
     def on_selection_changed(self):
-        """Обработка выбора строки (только в компактном режиме)."""
-        if not self.compact_mode:
-            return
+        """Обработка выбора строки. В компактном режиме открывает протокол
+        (как раньше); в расширенном - только обновляет статус-бар, не
+        переключая вид и не открывая протокол."""
         selected = self.table.selectedItems()
         if not selected:
             return
@@ -1133,8 +1214,12 @@ class LeftPanel(QWidget):
         if pump_id is None:
             return
         pump_data = db.get_pump_by_id(pump_id)
-        if pump_data:
+        if not pump_data:
+            return
+        if self.compact_mode:
             self.pump_selected.emit(pump_data)
+        else:
+            self.pump_status_selected.emit(pump_data)
 
     def show_context_menu(self, pos):
         row = self.table.rowAt(pos.y())
