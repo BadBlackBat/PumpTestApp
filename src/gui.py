@@ -81,6 +81,7 @@
 #         # Левая панель
 #         self.left_panel = LeftPanel()
 #         self.left_panel.pump_selected.connect(self.on_pump_selected)
+#         self.left_panel.group_selected.connect(self.on_group_selected)
 #         self.left_panel.request_import.connect(self.on_import_requested)
 #         self.left_panel.request_add.connect(self.on_add_requested)
 #         self.left_panel.request_delete.connect(self.on_delete_requested)
@@ -140,6 +141,19 @@
 #         self.right_panel.display_protocol(pump_data)
 #         self.current_selected_pump = pump_data['pump_number']
 #         self.update_status()  # без параметров
+
+#     def on_group_selected(self, items):
+#         """Клик по заголовку группы дублей - показываем сравнение протоколов."""
+#         if not self.left_panel.compact_mode:
+#             self.left_panel.btn_view_toggle.setChecked(False)
+#         if self.showing_stats:
+#             self.showing_stats = False
+#         # Подгружаем полные данные (с результатами испытаний) по каждому насосу группы
+#         full_items = [db.get_pump_by_id(it['id']) for it in items]
+#         full_items = [it for it in full_items if it]
+#         self.right_panel.display_comparison(full_items)
+#         self.current_selected_pump = f"{items[0]['pump_number']} (сравнение {len(items)} шт.)"
+#         self.update_status()
 
 #     def on_import_requested(self):
 #         """Импорт Excel."""
@@ -542,7 +556,7 @@ class MainWindow(QMainWindow):
 
     def on_add_requested(self):
         """Ручное добавление записи (модификация, номер, дата, результаты испытаний)."""
-        pwd_dialog = PasswordDialog(self)
+        pwd_dialog = PasswordDialog(self, message="Для добавления насоса введите пароль:")
         if pwd_dialog.exec_() != QDialog.Accepted:
             return
         if pwd_dialog.password != "admin":

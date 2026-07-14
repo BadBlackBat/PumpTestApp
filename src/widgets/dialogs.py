@@ -65,9 +65,11 @@
 #         self._fit_table_height()
 
 #         btn_layout = QHBoxLayout()
-#         self.btn_add = QPushButton("Добавить точку")
+#         self.btn_add = QPushButton("+ точка")
+#         self.btn_add.setMaximumWidth(80)
 #         self.btn_add.clicked.connect(self.add_row)
-#         self.btn_remove = QPushButton("Удалить последнюю точку")
+#         self.btn_remove = QPushButton("− точка")
+#         self.btn_remove.setMaximumWidth(80)
 #         self.btn_remove.clicked.connect(self.remove_row)
 #         btn_layout.addWidget(self.btn_add)
 #         btn_layout.addWidget(self.btn_remove)
@@ -75,20 +77,27 @@
 #         self._update_buttons()
 
 #     def _fit_table_height(self):
-#         """Подгоняет высоту таблицы точно под содержимое - без внутренней
-#         прокрутки. Используется, чтобы диалог обходился без QScrollArea."""
+#         """Подгоняет высоту и ширину таблицы точно под содержимое - без
+#         внутренней прокрутки и без пустого пространства справа. Используется,
+#         чтобы диалог обходился без QScrollArea."""
 #         small_font = QFont()
 #         small_font.setPointSize(8)
 #         self.table.setFont(small_font)
 #         self.table.horizontalHeader().setFont(small_font)
 #         self.table.verticalHeader().setDefaultSectionSize(20)
 #         self.table.resizeRowsToContents()
+#         self.table.resizeColumnsToContents()
 #         self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 #         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 #         total_height = self.table.horizontalHeader().height() + 4
 #         for row in range(self.table.rowCount()):
 #             total_height += self.table.rowHeight(row)
 #         self.table.setFixedHeight(total_height)
+
+#         total_width = 4
+#         for col in range(self.table.columnCount()):
+#             total_width += self.table.columnWidth(col)
+#         self.table.setFixedWidth(total_width)
 
 #     def _update_buttons(self):
 #         self.btn_add.setEnabled(self.table.rowCount() < self.max_points)
@@ -164,7 +173,7 @@
 #         tests_layout = QHBoxLayout()
 
 #         test1_col = QVBoxLayout()
-#         test1_col.addWidget(self._section_title("Испытание 1: подача от оборотов (ECO выкл.)"))
+#         test1_col.addWidget(self._section_title("Испытание 1:\nПодача от оборотов\nECO выкл."))
 #         self.test1 = PointsEditorWidget(
 #             x_values=existing_mod['norm_graph1_x'] if existing_mod else list(utils.DEFAULT_GRAPH1_X),
 #             min_values=existing_mod['norm_graph1_min'] if existing_mod else [],
@@ -176,7 +185,7 @@
 #         tests_layout.addLayout(test1_col)
 
 #         test2_col = QVBoxLayout()
-#         test2_col.addWidget(self._section_title("Испытание 2: подача от оборотов (ECO вкл.)"))
+#         test2_col.addWidget(self._section_title("Испытание 2:\nПодача от оборотов\nECO вкл."))
 #         self.test2 = PointsEditorWidget(
 #             x_values=existing_mod['norm_graph2_x'] if existing_mod else list(utils.DEFAULT_GRAPH2_X),
 #             min_values=existing_mod['norm_graph2_min'] if existing_mod else [],
@@ -188,7 +197,7 @@
 #         tests_layout.addLayout(test2_col)
 
 #         test3_col = QVBoxLayout()
-#         test3_col.addWidget(self._section_title("Испытание 3: подача от силы тока ECO"))
+#         test3_col.addWidget(self._section_title("Испытание 3:\nПодача от силы тока ECO"))
 #         self.test3 = PointsEditorWidget(
 #             x_values=existing_mod['norm_graph3_x'] if existing_mod else list(utils.DEFAULT_GRAPH3_X),
 #             min_values=existing_mod['norm_graph3_min'] if existing_mod else [],
@@ -428,7 +437,7 @@
 #         super().__init__(parent)
 #         self.setWindowTitle("Добавление насоса вручную")
 #         self.setModal(True)
-#         self.resize(1100, 650)
+#         self.resize(950, 780)
 #         self.selected_mod = None
 #         self.value_tables = {}
 #         self.seal_inputs = {}
@@ -469,7 +478,11 @@
 #         # Динамическая область: горизонтальные колонки испытаний -
 #         # перестраивается при выборе модификации
 #         self.values_widget = QWidget()
-#         self.values_layout = QHBoxLayout(self.values_widget)
+#         self.values_main_layout = QVBoxLayout(self.values_widget)
+#         self.tests_row = QHBoxLayout()      # Испытания 1-3, в ряд
+#         self.extra_row = QHBoxLayout()      # Испытание 4 + герметичность, под ними
+#         self.values_main_layout.addLayout(self.tests_row)
+#         self.values_main_layout.addLayout(self.extra_row)
 #         outer_layout.addWidget(self.values_widget)
 
 #         password_row = QHBoxLayout()
@@ -493,13 +506,9 @@
 #             )
 
 #     def on_modification_changed(self, index):
-#         # Очищаем предыдущее содержимое динамической области
-#         while self.values_layout.count():
-#             child = self.values_layout.takeAt(0)
-#             if child.widget():
-#                 child.widget().deleteLater()
-#             elif child.layout():
-#                 self._clear_sub_layout(child.layout())
+#         # Очищаем предыдущее содержимое обоих рядов
+#         self._clear_sub_layout(self.tests_row)
+#         self._clear_sub_layout(self.extra_row)
 #         self.value_tables = {}
 #         self.seal_inputs = {}
 
@@ -523,30 +532,39 @@
 #             self.selected_mod['norm_graph3_x'], "Ток, А"
 #         )
 
-#         # Четвёртая колонка: давление + герметичность
-#         extra_col = QVBoxLayout()
+#         # Испытание 4 (давление) - отдельная колонка нижнего ряда
+#         pressure_col = QVBoxLayout()
 #         pressure_label = QLabel(
 #             f"Испытание 4: давление\n(норма: {self.selected_mod['pressure_min']} – "
 #             f"{self.selected_mod['pressure_max']} бар)"
 #         )
 #         pressure_label.setStyleSheet("font-weight: bold;")
 #         pressure_label.setWordWrap(True)
-#         extra_col.addWidget(pressure_label)
+#         pressure_col.addWidget(pressure_label)
 #         self.pressure_input = QLineEdit()
-#         extra_col.addWidget(self.pressure_input)
+#         pressure_col.addWidget(self.pressure_input)
+#         pressure_col.addStretch()
+#         self.extra_row.addLayout(pressure_col, 1)
 
+#         # Герметичность - вторая колонка нижнего ряда
+#         seal_col = QVBoxLayout()
 #         seal_label = QLabel("Герметичность")
-#         seal_label.setStyleSheet("font-weight: bold; margin-top: 8px;")
-#         extra_col.addWidget(seal_label)
+#         seal_label.setStyleSheet("font-weight: bold;")
+#         seal_col.addWidget(seal_label)
+#         seal_grid = QHBoxLayout()
 #         for key in utils.SEAL_KEYS:
+#             one_col = QVBoxLayout()
 #             lbl = QLabel(utils.SEAL_LABELS[key] + ":")
 #             lbl.setWordWrap(True)
-#             extra_col.addWidget(lbl)
+#             lbl.setFixedWidth(110)
+#             one_col.addWidget(lbl)
 #             edit = QLineEdit(self.selected_mod['seal_rules'].get(key, ''))
-#             extra_col.addWidget(edit)
+#             edit.setFixedWidth(110)
+#             one_col.addWidget(edit)
 #             self.seal_inputs[key] = edit
-#         extra_col.addStretch()
-#         self.values_layout.addLayout(extra_col, 1)
+#             seal_grid.addLayout(one_col)
+#         seal_col.addLayout(seal_grid)
+#         self.extra_row.addLayout(seal_col, 3)
 
 #     def _clear_sub_layout(self, layout):
 #         while layout.count():
@@ -574,7 +592,7 @@
 #             table.setItem(i, 1, QTableWidgetItem(""))
 #         table.setEditTriggers(QTableWidget.AllEditTriggers)
 
-#         # Подгоняем высоту точно под содержимое - без внутренней прокрутки
+#         # Подгоняем высоту и ширину точно под содержимое - без внутренней прокрутки
 #         small_font = QFont()
 #         small_font.setPointSize(8)
 #         table.setFont(small_font)
@@ -588,10 +606,14 @@
 #         for row in range(table.rowCount()):
 #             total_height += table.rowHeight(row)
 #         table.setFixedHeight(total_height)
+#         total_width = 4
+#         for c in range(table.columnCount()):
+#             total_width += table.columnWidth(c)
+#         table.setFixedWidth(total_width)
 
 #         col.addWidget(table)
 #         col.addStretch()
-#         self.values_layout.addLayout(col, 1)
+#         self.tests_row.addLayout(col)
 #         return table
 
 #     def try_accept(self):
@@ -803,12 +825,12 @@ from .. import database as db
 from .. import utils
 
 class PasswordDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, message="Для удаления записи введите пароль:"):
         super().__init__(parent)
         self.setWindowTitle("Введите пароль")
         self.setModal(True)
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Для удаления записи введите пароль:"))
+        layout.addWidget(QLabel(message))
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.Password)
         layout.addWidget(self.password_input)
@@ -846,9 +868,15 @@ class PointsEditorWidget(QWidget):
             x_val = x_values[i] if i < len(x_values) else ''
             min_val = min_values[i] if i < len(min_values) else ''
             max_val = max_values[i] if i < len(max_values) else ''
-            self.table.setItem(i, 0, QTableWidgetItem(str(x_val)))
-            self.table.setItem(i, 1, QTableWidgetItem(str(min_val)))
-            self.table.setItem(i, 2, QTableWidgetItem(str(max_val)))
+            x_item = QTableWidgetItem(str(x_val))
+            x_item.setTextAlignment(Qt.AlignCenter)
+            min_item = QTableWidgetItem(str(min_val))
+            min_item.setTextAlignment(Qt.AlignCenter)
+            max_item = QTableWidgetItem(str(max_val))
+            max_item.setTextAlignment(Qt.AlignCenter)
+            self.table.setItem(i, 0, x_item)
+            self.table.setItem(i, 1, min_item)
+            self.table.setItem(i, 2, max_item)
         self.table.resizeColumnsToContents()
         layout.addWidget(self.table)
         self._fit_table_height()
@@ -870,12 +898,14 @@ class PointsEditorWidget(QWidget):
         внутренней прокрутки и без пустого пространства справа. Используется,
         чтобы диалог обходился без QScrollArea."""
         small_font = QFont()
-        small_font.setPointSize(8)
+        small_font.setPointSize(9)
         self.table.setFont(small_font)
         self.table.horizontalHeader().setFont(small_font)
-        self.table.verticalHeader().setDefaultSectionSize(20)
+        self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(22)
         self.table.resizeRowsToContents()
         self.table.resizeColumnsToContents()
+        self.table.horizontalHeader().setMinimumSectionSize(55)
         self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         total_height = self.table.horizontalHeader().height() + 4
@@ -883,7 +913,7 @@ class PointsEditorWidget(QWidget):
             total_height += self.table.rowHeight(row)
         self.table.setFixedHeight(total_height)
 
-        total_width = 4
+        total_width = 6
         for col in range(self.table.columnCount()):
             total_width += self.table.columnWidth(col)
         self.table.setFixedWidth(total_width)
@@ -899,7 +929,9 @@ class PointsEditorWidget(QWidget):
         row = self.table.rowCount()
         self.table.insertRow(row)
         for col in range(3):
-            self.table.setItem(row, col, QTableWidgetItem(""))
+            item = QTableWidgetItem("")
+            item.setTextAlignment(Qt.AlignCenter)
+            self.table.setItem(row, col, item)
         self._fit_table_height()
         self._update_buttons()
 
@@ -947,7 +979,7 @@ class AddModificationDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Добавление модификации насоса ГУР")
         self.setModal(True)
-        self.resize(1050, 620)
+        self.resize(750, 760)
 
         layout = QVBoxLayout(self)
 
@@ -960,6 +992,7 @@ class AddModificationDialog(QDialog):
         # Три испытания - в один горизонтальный ряд, чтобы диалог оставался
         # компактным по высоте и не требовал прокрутки
         tests_layout = QHBoxLayout()
+        tests_layout.setSpacing(20)
 
         test1_col = QVBoxLayout()
         test1_col.addWidget(self._section_title("Испытание 1:\nПодача от оборотов\nECO выкл."))
@@ -999,8 +1032,6 @@ class AddModificationDialog(QDialog):
 
         layout.addLayout(tests_layout)
 
-        bottom_layout = QHBoxLayout()
-
         pressure_box = QVBoxLayout()
         pressure_box.addWidget(self._section_title("Испытание 4: давление предохранительного клапана"))
         pressure_row = QHBoxLayout()
@@ -1012,9 +1043,9 @@ class AddModificationDialog(QDialog):
         self.pressure_max_input = QLineEdit(
             str(existing_mod['pressure_max']) if existing_mod and existing_mod['pressure_max'] is not None else "")
         pressure_row.addWidget(self.pressure_max_input)
+        pressure_row.addStretch()
         pressure_box.addLayout(pressure_row)
-        pressure_box.addStretch()
-        bottom_layout.addLayout(pressure_box, 1)
+        layout.addLayout(pressure_box)
 
         seal_box = QVBoxLayout()
         seal_box.addWidget(self._section_title("Проверка на герметичность"))
@@ -1024,15 +1055,13 @@ class AddModificationDialog(QDialog):
             row_layout = QHBoxLayout()
             lbl = QLabel(utils.SEAL_LABELS[key] + ":")
             lbl.setWordWrap(True)
-            lbl.setFixedWidth(200)
+            lbl.setFixedWidth(220)
             row_layout.addWidget(lbl)
             edit = QLineEdit(seal_rules.get(key, utils.DEFAULT_SEAL_REQUIREMENTS[key]))
             row_layout.addWidget(edit)
             self.seal_inputs[key] = edit
             seal_box.addLayout(row_layout)
-        bottom_layout.addLayout(seal_box, 2)
-
-        layout.addLayout(bottom_layout)
+        layout.addLayout(seal_box)
 
         password_row = QHBoxLayout()
         password_row.addWidget(QLabel("Пароль для сохранения:"))
@@ -1042,6 +1071,7 @@ class AddModificationDialog(QDialog):
         layout.addLayout(password_row)
 
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.button(QDialogButtonBox.Cancel).setText("Отмена")
         button_box.accepted.connect(self.try_accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
@@ -1226,7 +1256,7 @@ class AddPumpDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Добавление насоса вручную")
         self.setModal(True)
-        self.resize(950, 780)
+        self.resize(900, 820)
         self.selected_mod = None
         self.value_tables = {}
         self.seal_inputs = {}
@@ -1235,43 +1265,47 @@ class AddPumpDialog(QDialog):
 
         self.mods = db.get_all_modifications()  # список (id, name)
 
-        # Компактная строка с основными полями
-        top_row = QHBoxLayout()
-        top_row.addWidget(QLabel("Модификация:"))
+        # Первая строка: модификация + номер насоса
+        top_row1 = QHBoxLayout()
+        top_row1.addWidget(QLabel("Модификация:"))
         self.mod_combo = QComboBox()
         for mod_id, name in self.mods:
             self.mod_combo.addItem(name, mod_id)
         self.mod_combo.currentIndexChanged.connect(self.on_modification_changed)
-        top_row.addWidget(self.mod_combo, 2)
+        top_row1.addWidget(self.mod_combo, 2)
 
-        top_row.addWidget(QLabel("№ насоса:"))
+        top_row1.addWidget(QLabel("№ насоса:"))
         self.pump_number_input = QLineEdit()
-        top_row.addWidget(self.pump_number_input, 1)
+        top_row1.addWidget(self.pump_number_input, 1)
+        outer_layout.addLayout(top_row1)
 
-        top_row.addWidget(QLabel("Дата:"))
+        # Вторая строка: дата проверки, тип, номер заказа
+        top_row2 = QHBoxLayout()
+        top_row2.addWidget(QLabel("Дата проверки:"))
         self.date_input = QDateEdit()
         self.date_input.setCalendarPopup(True)
         self.date_input.setDate(QDate.currentDate())
-        top_row.addWidget(self.date_input, 1)
+        top_row2.addWidget(self.date_input, 1)
 
-        top_row.addWidget(QLabel("Тип:"))
+        top_row2.addWidget(QLabel("Тип проверки:"))
         self.type_combo = QComboBox()
         self.type_combo.addItems(["первичная", "повторная"])
-        top_row.addWidget(self.type_combo, 1)
+        top_row2.addWidget(self.type_combo, 1)
 
-        top_row.addWidget(QLabel("№ заказа:"))
+        top_row2.addWidget(QLabel("№ заказа:"))
         self.order_input = QLineEdit()
-        top_row.addWidget(self.order_input, 1)
-        outer_layout.addLayout(top_row)
+        top_row2.addWidget(self.order_input, 1)
+        outer_layout.addLayout(top_row2)
 
         # Динамическая область: горизонтальные колонки испытаний -
         # перестраивается при выборе модификации
         self.values_widget = QWidget()
         self.values_main_layout = QVBoxLayout(self.values_widget)
         self.tests_row = QHBoxLayout()      # Испытания 1-3, в ряд
-        self.extra_row = QHBoxLayout()      # Испытание 4 + герметичность, под ними
+        self.tests_row.setSpacing(20)
+        self.extra_column = QVBoxLayout()   # Испытание 4, затем герметичность - друг под другом
         self.values_main_layout.addLayout(self.tests_row)
-        self.values_main_layout.addLayout(self.extra_row)
+        self.values_main_layout.addLayout(self.extra_column)
         outer_layout.addWidget(self.values_widget)
 
         password_row = QHBoxLayout()
@@ -1282,6 +1316,7 @@ class AddPumpDialog(QDialog):
         outer_layout.addLayout(password_row)
 
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.button(QDialogButtonBox.Cancel).setText("Отмена")
         button_box.accepted.connect(self.try_accept)
         button_box.rejected.connect(self.reject)
         outer_layout.addWidget(button_box)
@@ -1295,9 +1330,9 @@ class AddPumpDialog(QDialog):
             )
 
     def on_modification_changed(self, index):
-        # Очищаем предыдущее содержимое обоих рядов
+        # Очищаем предыдущее содержимое
         self._clear_sub_layout(self.tests_row)
-        self._clear_sub_layout(self.extra_row)
+        self._clear_sub_layout(self.extra_column)
         self.value_tables = {}
         self.seal_inputs = {}
 
@@ -1321,39 +1356,38 @@ class AddPumpDialog(QDialog):
             self.selected_mod['norm_graph3_x'], "Ток, А"
         )
 
-        # Испытание 4 (давление) - отдельная колонка нижнего ряда
-        pressure_col = QVBoxLayout()
+        # Испытание 4 (давление) - полноширинная строка
+        pressure_row = QHBoxLayout()
         pressure_label = QLabel(
-            f"Испытание 4: давление\n(норма: {self.selected_mod['pressure_min']} – "
-            f"{self.selected_mod['pressure_max']} бар)"
+            f"Испытание 4: давление (норма: {self.selected_mod['pressure_min']} – "
+            f"{self.selected_mod['pressure_max']} бар):"
         )
         pressure_label.setStyleSheet("font-weight: bold;")
-        pressure_label.setWordWrap(True)
-        pressure_col.addWidget(pressure_label)
+        pressure_row.addWidget(pressure_label)
         self.pressure_input = QLineEdit()
-        pressure_col.addWidget(self.pressure_input)
-        pressure_col.addStretch()
-        self.extra_row.addLayout(pressure_col, 1)
+        self.pressure_input.setFixedWidth(120)
+        pressure_row.addWidget(self.pressure_input)
+        pressure_row.addStretch()
+        self.extra_column.addLayout(pressure_row)
 
-        # Герметичность - вторая колонка нижнего ряда
-        seal_col = QVBoxLayout()
-        seal_label = QLabel("Герметичность")
-        seal_label.setStyleSheet("font-weight: bold;")
-        seal_col.addWidget(seal_label)
+        # Герметичность - отдельная полноширинная строка ПОД испытанием 4
+        seal_label = QLabel("Герметичность:")
+        seal_label.setStyleSheet("font-weight: bold; margin-top: 6px;")
+        self.extra_column.addWidget(seal_label)
         seal_grid = QHBoxLayout()
         for key in utils.SEAL_KEYS:
             one_col = QVBoxLayout()
             lbl = QLabel(utils.SEAL_LABELS[key] + ":")
             lbl.setWordWrap(True)
-            lbl.setFixedWidth(110)
+            lbl.setFixedWidth(130)
             one_col.addWidget(lbl)
             edit = QLineEdit(self.selected_mod['seal_rules'].get(key, ''))
-            edit.setFixedWidth(110)
+            edit.setFixedWidth(130)
             one_col.addWidget(edit)
             self.seal_inputs[key] = edit
             seal_grid.addLayout(one_col)
-        seal_col.addLayout(seal_grid)
-        self.extra_row.addLayout(seal_col, 3)
+        seal_grid.addStretch()
+        self.extra_column.addLayout(seal_grid)
 
     def _clear_sub_layout(self, layout):
         while layout.count():
@@ -1377,25 +1411,30 @@ class AddPumpDialog(QDialog):
         for i, x in enumerate(x_values):
             x_item = QTableWidgetItem(str(x))
             x_item.setFlags(Qt.ItemIsEnabled)
+            x_item.setTextAlignment(Qt.AlignCenter)
             table.setItem(i, 0, x_item)
-            table.setItem(i, 1, QTableWidgetItem(""))
+            res_item = QTableWidgetItem("")
+            res_item.setTextAlignment(Qt.AlignCenter)
+            table.setItem(i, 1, res_item)
         table.setEditTriggers(QTableWidget.AllEditTriggers)
 
         # Подгоняем высоту и ширину точно под содержимое - без внутренней прокрутки
         small_font = QFont()
-        small_font.setPointSize(8)
+        small_font.setPointSize(9)
         table.setFont(small_font)
         table.horizontalHeader().setFont(small_font)
-        table.verticalHeader().setDefaultSectionSize(20)
+        table.verticalHeader().setVisible(False)
+        table.verticalHeader().setDefaultSectionSize(22)
         table.resizeRowsToContents()
         table.resizeColumnsToContents()
+        table.horizontalHeader().setMinimumSectionSize(65)
         table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         total_height = table.horizontalHeader().height() + 4
         for row in range(table.rowCount()):
             total_height += table.rowHeight(row)
         table.setFixedHeight(total_height)
-        total_width = 4
+        total_width = 6
         for c in range(table.columnCount()):
             total_width += table.columnWidth(c)
         table.setFixedWidth(total_width)
@@ -1512,6 +1551,7 @@ class EditProtocolDialog(QDialog):
 
         # Кнопки
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.button(QDialogButtonBox.Cancel).setText("Отмена")
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)

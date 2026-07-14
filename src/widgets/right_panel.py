@@ -25,6 +25,7 @@
 #     def __init__(self, parent=None):
 #         super().__init__(parent)
 #         self.current_data = None
+#         self._graph_toolbars = []
 #         self.setup_ui()
 
 #     def setup_ui(self):
@@ -77,7 +78,7 @@
 #         self.dynamic_layout = QHBoxLayout(self.dynamic_widget)
 #         self.tables_column = QVBoxLayout()
 #         self.graphs_column = QVBoxLayout()
-#         self.dynamic_layout.addLayout(self.tables_column, 1)
+#         self.dynamic_layout.addLayout(self.tables_column, 0)
 #         self.dynamic_layout.addLayout(self.graphs_column, 1)
 #         self.content_layout.addWidget(self.dynamic_widget)
 
@@ -172,16 +173,21 @@
 #         self.create_graphs(data)
 #         self.create_notes_section(data)
 
-#         self.legend_label.setText("Красная подсветка – значение не соответствует техническим требованиям.")
+#         self.legend_label.setText(
+#             "<span style='background-color:#ffc8c8; border:1px solid #999;'>"
+#             "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>"
+#             "&nbsp;&nbsp;— значение не соответствует техническим требованиям."
+#         )
 
 #     def _compact_table(self, table):
-#         """Уменьшает шрифт таблицы и подгоняет высоту точно под содержимое,
-#         чтобы таблица показывалась полностью, без собственной прокрутки -
-#         прокручиваться может только вся правая панель целиком."""
+#         """Уменьшает шрифт таблицы и подгоняет высоту и ширину точно под
+#         содержимое, чтобы таблица показывалась полностью, без собственной
+#         прокрутки и без пустого пространства справа - прокручиваться может
+#         только вся правая панель целиком."""
 #         small_font = QFont("Arial", 8)
 #         table.setFont(small_font)
 #         table.horizontalHeader().setFont(small_font)
-#         table.verticalHeader().setDefaultSectionSize(20)
+#         table.verticalHeader().setDefaultSectionSize(18)
 #         table.resizeRowsToContents()
 #         table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 #         table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -191,7 +197,12 @@
 #         for row in range(table.rowCount()):
 #             total_height += table.rowHeight(row)
 #         table.setFixedHeight(total_height)
-#         table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+#         total_width = 4  # небольшой запас на рамки/скролл-полосы
+#         for col in range(table.columnCount()):
+#             total_width += table.columnWidth(col)
+#         table.setFixedWidth(total_width)
+#         table.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
 #     def create_test_table(self, title, indices, results, mod_name):
 #         mod = None
@@ -317,7 +328,10 @@
 #         for i, (key, label) in enumerate(labels.items()):
 #             table.setItem(i, 0, QTableWidgetItem(label))
 #             val = seal.get(key)
-#             val_item = QTableWidgetItem(str(val) if val is not None else '')
+#             display_text = str(val) if val is not None else ''
+#             if display_text.strip().lower() == 'присутствуют в допускаемой степени':
+#                 display_text = 'присутствуют в\nдопускаемой степени'
+#             val_item = QTableWidgetItem(display_text)
 #             if key in ['g33', 'g34', 'g35', 'g36']:
 #                 if val is not None and str(val).strip().lower() != 'отсутствуют':
 #                     val_item.setBackground(QColor(255, 200, 200))
@@ -362,6 +376,7 @@
 #         canvas = FigureCanvas(fig)
 #         canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 #         toolbar = NavigationToolbar(canvas, self)
+#         self._graph_toolbars.append(toolbar)  # понадобится скрыть при экспорте в PDF
 #         container = QWidget()
 #         c_layout = QVBoxLayout(container)
 #         c_layout.setContentsMargins(0, 0, 0, 0)
@@ -435,6 +450,11 @@
 #         ax2.grid(True, alpha=0.3)
 #         ax2.legend(loc='best', fontsize=7)
 #         ax2.set_title('Зависимость расхода от силы тока ECO', fontsize=10)
+#         # Оси по умолчанию (масштаб по-прежнему можно менять зумом тулбара)
+#         ax2.set_xlim(0, 1)
+#         ax2.set_xticks(np.arange(0, 1.01, 0.1))
+#         ax2.set_ylim(4, 17)
+#         ax2.set_yticks(np.arange(4, 18, 1))
 #         fig2.tight_layout()
 
 #         self.graphs_column.addWidget(self._make_graph_widget(fig2))
@@ -484,7 +504,9 @@
 
 #         self.legend_label.setText(
 #             "Сравнение всех найденных дублей выбранного образца. "
-#             "Красная подсветка/точка - значение не соответствует техническим требованиям."
+#             "<span style='background-color:#ffc8c8; border:1px solid #999;'>"
+#             "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>"
+#             "&nbsp;&nbsp;— значение не соответствует техническим требованиям."
 #         )
 
 #     def _create_comparison_table(self, title, indices, items, norm_min, norm_max, x_vals, x_label):
@@ -585,7 +607,10 @@
 #             seal = it['seal_results_json']
 #             for col, key in enumerate(labels.keys()):
 #                 val = seal.get(key)
-#                 val_item = QTableWidgetItem(str(val) if val is not None else '')
+#                 display_text = str(val) if val is not None else ''
+#                 if display_text.strip().lower() == 'присутствуют в допускаемой степени':
+#                     display_text = 'присутствуют в\nдопускаемой степени'
+#                 val_item = QTableWidgetItem(display_text)
 #                 if key in ('g33', 'g34', 'g35', 'g36'):
 #                     if val is not None and str(val).strip().lower() != 'отсутствуют':
 #                         val_item.setBackground(QColor(255, 200, 200))
@@ -673,6 +698,10 @@
 #         ax2.grid(True, alpha=0.3)
 #         ax2.legend(loc='best', fontsize=6)
 #         ax2.set_title('Сравнение дублей: расход от силы тока ECO', fontsize=10)
+#         ax2.set_xlim(0, 1)
+#         ax2.set_xticks(np.arange(0, 1.01, 0.1))
+#         ax2.set_ylim(4, 17)
+#         ax2.set_yticks(np.arange(4, 18, 1))
 #         fig2.tight_layout()
 #         self.graphs_column.addWidget(self._make_graph_widget(fig2))
 
@@ -693,9 +722,12 @@
 #         if not file_path.lower().endswith('.pdf'):
 #             file_path += '.pdf'
 
-#         # Скрываем кнопки на время рендера, чтобы они не попали на PDF
+#         # Скрываем кнопки и тулбары графиков на время рендера - в бумажном
+#         # документе элементы управления зумом неуместны
 #         self.clear_btn.hide()
 #         self.export_pdf_btn.hide()
+#         for toolbar in self._graph_toolbars:
+#             toolbar.hide()
 
 #         try:
 #             printer = QPrinter(QPrinter.HighResolution)
@@ -723,6 +755,8 @@
 #         finally:
 #             self.clear_btn.show()
 #             self.export_pdf_btn.show()
+#             for toolbar in self._graph_toolbars:
+#                 toolbar.show()
 
 #     def create_notes_section(self, data):
 #         note = data.get('note', '')
@@ -777,6 +811,7 @@
 #         фильтры при обычном выборе насоса из списка. Очищаются только
 #         СОДЕРЖИМОЕ колонок tables_column/graphs_column - сама двухколоночная
 #         структура (dynamic_layout) не пересоздаётся."""
+#         self._graph_toolbars = []
 #         for column in (self.tables_column, self.graphs_column):
 #             while column.count():
 #                 child = column.takeAt(0)
@@ -804,9 +839,9 @@
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
     QTableWidgetItem, QPushButton, QScrollArea, QSizePolicy,
-    QFileDialog, QMessageBox
+    QFileDialog, QMessageBox, QFrame
 )
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal, QSize
 from PyQt5.QtGui import QColor, QFont, QPainter
 from PyQt5.QtPrintSupport import QPrinter
 
@@ -872,18 +907,36 @@ class RightPanel(QWidget):
         self.legend_label.setStyleSheet("background-color: #f0f0f0; padding: 5px;")
         self.content_layout.addWidget(self.legend_label)
 
-        # Динамический контейнер: слева таблицы, справа графики.
-        # Сами колонки создаются один раз и больше не пересоздаются -
-        # при перерисовке протокола очищается только их содержимое
-        # (см. _clear_dynamic_content), чтобы двухколоночная структура
-        # не ломалась между показами разных протоколов.
+        # Динамический контейнер: слева таблицы (на общей панели-подложке),
+        # справа графики. Сами колонки создаются один раз и больше не
+        # пересоздаются - при перерисовке протокола очищается только их
+        # содержимое (см. _clear_dynamic_content).
         self.dynamic_widget = QWidget()
         self.dynamic_layout = QHBoxLayout(self.dynamic_widget)
-        self.tables_column = QVBoxLayout()
+        self.dynamic_layout.setSpacing(10)
+
+        panel_style = ("QFrame { background-color: #f2f5f7; "
+                       "border: 1px solid #d5dbe0; border-radius: 4px; }")
+
+        self.tables_panel = QFrame()
+        self.tables_panel.setStyleSheet(panel_style)
+        self.tables_column = QVBoxLayout(self.tables_panel)
+        self.tables_column.setContentsMargins(8, 8, 8, 8)
+        self.tables_column.setSpacing(8)
+
         self.graphs_column = QVBoxLayout()
-        self.dynamic_layout.addLayout(self.tables_column, 0)
+
+        self.dynamic_layout.addWidget(self.tables_panel, 0)
         self.dynamic_layout.addLayout(self.graphs_column, 1)
         self.content_layout.addWidget(self.dynamic_widget)
+
+        # Отдельная полноширинная панель для таблицы герметичности (тот же
+        # фон, чтобы визуально выглядело продолжением общей панели)
+        self.seal_panel = QFrame()
+        self.seal_panel.setStyleSheet(panel_style)
+        self.seal_layout = QVBoxLayout(self.seal_panel)
+        self.seal_layout.setContentsMargins(8, 8, 8, 8)
+        self.content_layout.addWidget(self.seal_panel)
 
         scroll.setWidget(content)
         layout.addWidget(scroll)
@@ -893,6 +946,7 @@ class RightPanel(QWidget):
         self.clear_btn.hide()
         self.export_pdf_btn.hide()
         self.legend_label.hide()
+        self.seal_panel.hide()
         self.logo_label.show()
 
     def display_statistics(self, stats_data):
@@ -955,25 +1009,47 @@ class RightPanel(QWidget):
         if order_num != '—' and order_num is not None:
             order_num = str(order_num).replace('.0', '')
             
-        header_text = (f"Характеристики образца насоса ГУР\n"
-                       f"Протокол проверки насоса ГУР от: {date_str}\n"
-                       f"Идентификационный №: {data['pump_number']}  Заказ: {order_num}\n"
-                       f"Проверка: {data['test_type']}\n"
-                       f"Модификация: {data.get('mod_name', '—')}\n"
-                       f"Герметичен: {'Да' if data['is_sealed'] else 'Нет'}\n"
-                       f"Вердикт: {data['verdict']}")
-        self.header_label.setText(header_text)
+        header_html = (
+            "<div align='center'>Характеристики образца насоса ГУР</div>"
+            "<div align='left'>"
+            f"Протокол проверки насоса ГУР от: {date_str}<br>"
+            f"Идентификационный №: {data['pump_number']}  Заказ: {order_num}<br>"
+            f"Проверка: {data['test_type']}<br>"
+            f"Модификация: {data.get('mod_name', '—')}<br>"
+            f"Герметичен: {'Да' if data['is_sealed'] else 'Нет'}<br>"
+            f"Вердикт: {data['verdict']}"
+            "</div>"
+        )
+        self.header_label.setText(header_html)
 
         # Динамическое содержимое
-        self.create_test_table("Тест 1: Зависимость расхода от оборотов (ECO выкл.)",
+        t1_table = self.create_test_table("Тест 1: Зависимость расхода от оборотов (ECO выкл.)",
                                list(range(5, 13)), data['results_json'], data.get('mod_name'))
-        self.create_test_table("Тест 2: Зависимость расхода от оборотов (ECO вкл.)",
+        t2_table = self.create_test_table("Тест 2: Зависимость расхода от оборотов (ECO вкл.)",
                                list(range(13, 21)), data['results_json'], data.get('mod_name'))
-        self.create_test_table("Тест 3: Зависимость расхода от силы тока ECO",
+        t3_table = self.create_test_table("Тест 3: Зависимость расхода от силы тока ECO",
                                list(range(21, 32)), data['results_json'], data.get('mod_name'))
-        self.create_pressure_table(data)
+        p_table = self.create_pressure_table(data)
+
+        # Выравниваем таблицы тестов 1-3 и давления по максимальной ширине
+        # (лишняя ширина уходит в последнюю колонку - без пустых полос)
+        main_tables = [t1_table, t2_table, t3_table, p_table]
+        uniform_width = max(t.width() for t in main_tables)
+        for t in main_tables:
+            t.horizontalHeader().setStretchLastSection(True)
+            t.setFixedWidth(uniform_width)
+
         self.create_seal_table(data)
-        self.create_graphs(data)
+        self.seal_panel.show()
+
+        # Высоты групп "заголовок + таблица" - чтобы графики визуально
+        # вписывались по размеру в соответствующие таблицы слева
+        title_h = 22  # приблизительная высота строки заголовка + отступ
+        spacing = self.tables_column.spacing()
+        graph1_height = title_h + t1_table.height() + spacing + title_h + t2_table.height()
+        graph2_height = title_h + t3_table.height() + spacing + title_h + p_table.height()
+
+        self.create_graphs(data, graph1_height, graph2_height)
         self.create_notes_section(data)
 
         self.legend_label.setText(
@@ -982,11 +1058,11 @@ class RightPanel(QWidget):
             "&nbsp;&nbsp;— значение не соответствует техническим требованиям."
         )
 
-    def _compact_table(self, table):
-        """Уменьшает шрифт таблицы и подгоняет высоту и ширину точно под
-        содержимое, чтобы таблица показывалась полностью, без собственной
-        прокрутки и без пустого пространства справа - прокручиваться может
-        только вся правая панель целиком."""
+    def _compact_table(self, table, fix_width=True):
+        """Уменьшает шрифт таблицы и подгоняет высоту (и, если fix_width=True,
+        ширину) точно под содержимое, чтобы таблица показывалась полностью,
+        без собственной прокрутки и без пустого пространства справа -
+        прокручиваться может только вся правая панель целиком."""
         small_font = QFont("Arial", 8)
         table.setFont(small_font)
         table.horizontalHeader().setFont(small_font)
@@ -1001,11 +1077,14 @@ class RightPanel(QWidget):
             total_height += table.rowHeight(row)
         table.setFixedHeight(total_height)
 
-        total_width = 4  # небольшой запас на рамки/скролл-полосы
-        for col in range(table.columnCount()):
-            total_width += table.columnWidth(col)
-        table.setFixedWidth(total_width)
-        table.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        if fix_width:
+            total_width = 4  # небольшой запас на рамки/скролл-полосы
+            for col in range(table.columnCount()):
+                total_width += table.columnWidth(col)
+            table.setFixedWidth(total_width)
+            table.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        else:
+            table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
     def create_test_table(self, title, indices, results, mod_name):
         mod = None
@@ -1051,11 +1130,14 @@ class RightPanel(QWidget):
             key = f'g{idx}'
             val = results.get(key)
             x_val = x_vals[i] if i < len(x_vals) else ''
-            table.setItem(i, 0, QTableWidgetItem(str(x_val)))
+            x_item = QTableWidgetItem(str(x_val))
+            x_item.setTextAlignment(Qt.AlignCenter)
+            table.setItem(i, 0, x_item)
 
             # Значение расхода с форматированием
             val_text = format_number(val)
             val_item = QTableWidgetItem(val_text)
+            val_item.setTextAlignment(Qt.AlignCenter)
             # Проверка диапазона (используем исходное значение val, не строку)
             if val is not None and i < len(norm_min) and i < len(norm_max):
                 if not is_value_in_range(val, norm_min[i], norm_max[i]):
@@ -1069,8 +1151,12 @@ class RightPanel(QWidget):
             max_val = norm_max[i] if i < len(norm_max) else None
             min_text = format_number(min_val)
             max_text = format_number(max_val)
-            table.setItem(i, 2, QTableWidgetItem(min_text))
-            table.setItem(i, 3, QTableWidgetItem(max_text))
+            min_item = QTableWidgetItem(min_text)
+            min_item.setTextAlignment(Qt.AlignCenter)
+            max_item = QTableWidgetItem(max_text)
+            max_item.setTextAlignment(Qt.AlignCenter)
+            table.setItem(i, 2, min_item)
+            table.setItem(i, 3, max_item)
 
         table.verticalHeader().setVisible(False)
         table.resizeColumnsToContents()
@@ -1082,6 +1168,7 @@ class RightPanel(QWidget):
         title_label.setWordWrap(True)
         self.tables_column.addWidget(title_label)
         self.tables_column.addWidget(table)
+        return table
 
     def create_pressure_table(self, data):
         mod = None
@@ -1095,15 +1182,20 @@ class RightPanel(QWidget):
         table.setColumnCount(3)
         table.setHorizontalHeaderLabels(["Параметр", "Значение", "Допустимый диапазон"])
         table.setRowCount(1)
-        table.setItem(0, 0, QTableWidgetItem("Макс. давление, бар"))
+        param_item = QTableWidgetItem("Макс. давление, бар")
+        param_item.setTextAlignment(Qt.AlignCenter)
+        table.setItem(0, 0, param_item)
         val_item = QTableWidgetItem(str(pressure_val) if pressure_val is not None else '')
+        val_item.setTextAlignment(Qt.AlignCenter)
         if pressure_val is not None and min_p is not None and max_p is not None:
             if not is_value_in_range(pressure_val, min_p, max_p):
                 val_item.setBackground(QColor(255, 200, 200))
         elif pressure_val is None:
             val_item.setBackground(QColor(255, 200, 200))
         table.setItem(0, 1, val_item)
-        table.setItem(0, 2, QTableWidgetItem(f"{min_p} – {max_p}" if min_p is not None and max_p is not None else ''))
+        range_item = QTableWidgetItem(f"{min_p} – {max_p}" if min_p is not None and max_p is not None else '')
+        range_item.setTextAlignment(Qt.AlignCenter)
+        table.setItem(0, 2, range_item)
         table.verticalHeader().setVisible(False)
         table.resizeColumnsToContents()
         table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -1114,6 +1206,7 @@ class RightPanel(QWidget):
         title_label.setWordWrap(True)
         self.tables_column.addWidget(title_label)
         self.tables_column.addWidget(table)
+        return table
 
     def create_seal_table(self, data):
         seal = data['seal_results_json']
@@ -1129,12 +1222,15 @@ class RightPanel(QWidget):
         table.setHorizontalHeaderLabels(["Место проверки", "Результат"])
         table.setRowCount(len(labels))
         for i, (key, label) in enumerate(labels.items()):
-            table.setItem(i, 0, QTableWidgetItem(label))
+            place_item = QTableWidgetItem(label)
+            place_item.setTextAlignment(Qt.AlignCenter)
+            table.setItem(i, 0, place_item)
             val = seal.get(key)
             display_text = str(val) if val is not None else ''
             if display_text.strip().lower() == 'присутствуют в допускаемой степени':
                 display_text = 'присутствуют в\nдопускаемой степени'
             val_item = QTableWidgetItem(display_text)
+            val_item.setTextAlignment(Qt.AlignCenter)
             if key in ['g33', 'g34', 'g35', 'g36']:
                 if val is not None and str(val).strip().lower() != 'отсутствуют':
                     val_item.setBackground(QColor(255, 200, 200))
@@ -1150,13 +1246,14 @@ class RightPanel(QWidget):
         table.verticalHeader().setVisible(False)
         table.resizeColumnsToContents()
         table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self._compact_table(table)
+        table.horizontalHeader().setStretchLastSection(True)
+        self._compact_table(table, fix_width=False)
 
         title_label = QLabel("Герметичность")
         title_label.setFont(QFont("Arial", 9, QFont.Bold))
         title_label.setWordWrap(True)
-        self.tables_column.addWidget(title_label)
-        self.tables_column.addWidget(table)
+        self.seal_layout.addWidget(title_label)
+        self.seal_layout.addWidget(table)
 
     def _plot_series(self, ax, x_vals, y_vals, norm_min, norm_max, color, linestyle, label):
         """Рисует линию БЕЗ маркеров на промежуточных точках; точки, не
@@ -1173,21 +1270,27 @@ class RightPanel(QWidget):
         if out_of_range_x:
             ax.plot(out_of_range_x, out_of_range_y, 'o', color='red', markersize=7, zorder=5)
 
-    def _make_graph_widget(self, fig):
+    def _make_graph_widget(self, fig, height=None):
         """Оборачивает Figure в canvas + тулбар matplotlib (зум/панорама/
-        сброс масштаба кнопкой 'Home') и возвращает готовый контейнер-виджет."""
+        сброс масштаба кнопкой 'Home') и возвращает готовый контейнер-виджет.
+        Если задана height - контейнер фиксируется по высоте (чтобы график
+        визуально вписывался в размер соответствующих таблиц слева)."""
         canvas = FigureCanvas(fig)
         canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         toolbar = NavigationToolbar(canvas, self)
+        toolbar.setIconSize(QSize(16, 16))
         self._graph_toolbars.append(toolbar)  # понадобится скрыть при экспорте в PDF
         container = QWidget()
         c_layout = QVBoxLayout(container)
         c_layout.setContentsMargins(0, 0, 0, 0)
+        c_layout.setSpacing(2)
         c_layout.addWidget(toolbar)
         c_layout.addWidget(canvas)
+        if height:
+            container.setFixedHeight(height)
         return container
 
-    def create_graphs(self, data):
+    def create_graphs(self, data, graph1_height=None, graph2_height=None):
         mod = None
         if data.get('mod_name'):
             mod = db.get_modification_by_name(data['mod_name'])
@@ -1199,7 +1302,7 @@ class RightPanel(QWidget):
         results = data['results_json']
 
         # График 1: расход от оборотов (ECO выкл. / ECO вкл.)
-        fig1 = Figure(figsize=(5, 4), dpi=100)
+        fig1 = Figure(figsize=(4, 3), dpi=100)
         ax1 = fig1.add_subplot(111)
         x_vals = mod.get('norm_graph1_x') or list(utils.DEFAULT_GRAPH1_X)
         y1 = [results.get(f'g{i}') for i in range(5, 13)]
@@ -1231,10 +1334,10 @@ class RightPanel(QWidget):
         ax1.set_title('Зависимость расхода от оборотов', fontsize=10)
         fig1.tight_layout()
 
-        self.graphs_column.addWidget(self._make_graph_widget(fig1))
+        self.graphs_column.addWidget(self._make_graph_widget(fig1, graph1_height))
 
         # График 2: расход от силы тока ECO
-        fig2 = Figure(figsize=(5, 4), dpi=100)
+        fig2 = Figure(figsize=(4, 3), dpi=100)
         ax2 = fig2.add_subplot(111)
         x_tok = mod.get('norm_graph3_x') or list(utils.DEFAULT_GRAPH3_X)
         y3 = [results.get(f'g{i}') for i in range(21, 32)]
@@ -1260,7 +1363,7 @@ class RightPanel(QWidget):
         ax2.set_yticks(np.arange(4, 18, 1))
         fig2.tight_layout()
 
-        self.graphs_column.addWidget(self._make_graph_widget(fig2))
+        self.graphs_column.addWidget(self._make_graph_widget(fig2, graph2_height))
 
     def display_comparison(self, items):
         """items - список полных данных (с results_json) насосов-дублей:
@@ -1538,13 +1641,16 @@ class RightPanel(QWidget):
             printer.setOutputFileName(file_path)
             printer.setPageSize(QPrinter.A4)
             printer.setOrientation(QPrinter.Portrait)
-            printer.setFullPage(True)
+            # Обычные поля страницы (не setFullPage) - чтобы контент не
+            # обрезался краевой непечатаемой зоной реального принтера
+            printer.setPageMargins(10, 10, 10, 10, QPrinter.Millimeter)
 
             widget_to_print = self.content_widget
             w = max(widget_to_print.width(), 1)
             h = max(widget_to_print.height(), 1)
             page_rect = printer.pageRect()
-            scale = min(page_rect.width() / w, page_rect.height() / h)
+            # Небольшой запас (0.98), чтобы точно не выйти за границы печати
+            scale = min(page_rect.width() / w, page_rect.height() / h) * 0.98
 
             painter = QPainter()
             painter.begin(printer)
@@ -1615,7 +1721,7 @@ class RightPanel(QWidget):
         СОДЕРЖИМОЕ колонок tables_column/graphs_column - сама двухколоночная
         структура (dynamic_layout) не пересоздаётся."""
         self._graph_toolbars = []
-        for column in (self.tables_column, self.graphs_column):
+        for column in (self.tables_column, self.graphs_column, self.seal_layout):
             while column.count():
                 child = column.takeAt(0)
                 if child.widget():
@@ -1627,6 +1733,7 @@ class RightPanel(QWidget):
         self.clear_btn.hide()
         self.export_pdf_btn.hide()
         self.legend_label.hide()
+        self.seal_panel.hide()
         self.logo_label.show()
 
     def _clear_layout(self, layout):
