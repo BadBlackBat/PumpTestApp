@@ -2,7 +2,8 @@
 # from PyQt5.QtWidgets import (
 #     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
 #     QSplitter, QMessageBox, QInputDialog, QLineEdit,
-#     QDialog, QPushButton, QLabel, QTableWidget, QTableWidgetItem
+#     QDialog, QPushButton, QLabel, QTableWidget, QTableWidgetItem,
+#     QApplication
 # )
 # from PyQt5.QtCore import Qt, QTimer, QRectF
 
@@ -12,19 +13,20 @@
 # from .widgets.left_panel import LeftPanel
 # from .widgets.right_panel import RightPanel
 # from .widgets.status_bar import StatusBar
-# from .widgets.dialogs import PasswordDialog, AddModificationDialog, AddOrderDialog, SettingsDialog, AddPumpDialog
+# from .widgets.dialogs import PasswordDialog, AddModificationDialog, AddOrderDialog, SettingsDialog, AddPumpDialog, _clamp_to_screen
 # from . import database as db
 # from . import excel_importer as importer
 # from . import utils
 
 # from datetime import datetime
-# from .widgets.dialogs import EditProtocolDialog
+# from .widgets.dialogs import EditPumpDialog
+# import json
 
 # class MainWindow(QMainWindow):
 #     def __init__(self):
 #         super().__init__()
 #         self.setWindowTitle("База данных проверок насосов ГУР")
-#         self.setGeometry(100, 100, 1400, 900)
+#         self._setup_window_geometry()
 
 #         self.current_selected_pump = None
 #         self.current_filters = None
@@ -118,6 +120,31 @@
 #             # но ниже мы всё равно принудительно зададим правильные пропорции)
 #             self.left_panel.btn_view_toggle.setChecked(False)
 #         self.splitter.setSizes([int(self.width() * 0.4), int(self.width() * 0.6)])
+
+#     def _setup_window_geometry(self):
+#         """Считает размер и позицию окна от реальной доступной области
+#         экрана (а не от жёстко заданных пикселей) - так окно нормально
+#         открывается и на HD (1366x768), и на Full HD, и на более крупных
+#         мониторах (1920x1200 и выше), используя доступное пространство,
+#         но не разрастаясь до неразумных размеров на 4K/ultrawide."""
+#         screen = QApplication.primaryScreen()
+#         available = screen.availableGeometry() if screen else None
+
+#         # Разумные пределы на случай, если доступную область экрана
+#         # почему-то не удалось определить, а также "потолок" для очень
+#         # больших экранов (иначе на 4K окно растянулось бы на весь стол)
+#         MIN_WIDTH, MIN_HEIGHT = 1024, 700
+#         MAX_WIDTH, MAX_HEIGHT = 1900, 1200
+#         FALLBACK_WIDTH, FALLBACK_HEIGHT = 1400, 900
+
+#         if available:
+#             width = max(MIN_WIDTH, min(MAX_WIDTH, int(available.width() * 0.85)))
+#             height = max(MIN_HEIGHT, min(MAX_HEIGHT, int(available.height() * 0.85)))
+#             x = available.x() + (available.width() - width) // 2
+#             y = available.y() + (available.height() - height) // 2
+#             self.setGeometry(x, y, width, height)
+#         else:
+#             self.setGeometry(100, 100, FALLBACK_WIDTH, FALLBACK_HEIGHT)
 
 #     def toggle_statistics(self):
 #         if self.showing_stats:
@@ -381,6 +408,7 @@
 #         preview.setWindowTitle("Предпросмотр печати - список насосов")
 #         preview.paintRequested.connect(render_list)
 #         preview.resize(1000, 850)
+#         _clamp_to_screen(preview, width_fraction=0.92, height_fraction=0.92)
 #         preview.exec_()
 
 #     def on_import_requested(self):
@@ -554,40 +582,112 @@
 #             QMessageBox.warning(self, "Ошибка", "Запись не найдена.")
 #             return
 
-#         dialog = EditProtocolDialog(pump_data, self)
-#         if dialog.exec_() == QDialog.Accepted:
-#             data = dialog.get_data()
-#             if data['password'] != "admin":
-#                 QMessageBox.warning(self, "Ошибка", "Неверный пароль.")
-#                 return
+#         if not db.get_all_modifications():
+#             QMessageBox.warning(
+#                 self, "Нет модификаций",
+#                 "В базе нет ни одной модификации. Сначала добавьте модификацию через "
+#                 "⚙️ Настройки → Добавить модификацию."
+#             )
+#             return
 
-#             new_note = data['note']
-#             old_note = pump_data.get('note', '')
+#         dialog = EditPumpDialog(pump_data, self)
+#         if dialog.exec_() != QDialog.Accepted:
+#             return
+#         data = dialog.get_data()
+#         if data['password'] != "admin":
+#             QMessageBox.warning(self, "Ошибка", "Неверный пароль. Изменения не сохранены.")
+#             return
 
-#             # Формируем запись для истории
-#             from datetime import datetime
-#             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+#         # ===== Определяем, какие поля реально изменились =====
+#         changed_fields = []
+
+#         old_date = (pump_data.get('test_date') or '').split(' ')[0]
+#         if old_date != data['test_date']:
+#             changed_fields.append('test_date')
+
+#         if pump_data.get('test_type') != data['test_type']:
+#             changed_fields.append('test_type')
+
+#         if pump_data.get('modification_id') != data['modification_id']:
+#             changed_fields.append('modification')
+
+#         old_order = pump_data.get('order_number')
+#         old_order_str = str(old_order).replace('.0', '') if old_order else ''
+#         new_order_str = data['order_number'] or ''
+#         if old_order_str != new_order_str:
+#             changed_fields.append('order_number')
+
+#         old_results = pump_data.get('results_json') or {}
+#         for key, new_val in data['results'].items():
+#             if old_results.get(key) != new_val:
+#                 changed_fields.append(key)
+
+#         old_seal = pump_data.get('seal_results_json') or {}
+#         for key, new_val in data['seal_results'].items():
+#             if (old_seal.get(key) or '') != (new_val or ''):
+#                 changed_fields.append(key)
+
+#         # Заказ: находим/создаём запись заказа
+#         order_id = None
+#         if data['order_number']:
+#             order_id = db.get_order_by_number(data['order_number'])
+#             if not order_id:
+#                 order_id = db.add_order(data['order_number'])
+
+#         # Пересчитываем вердикт и герметичность под (возможно новую) модификацию
+#         mod = db.get_modification_by_id(data['modification_id'])
+#         verdict, is_sealed = utils.compute_verdict_and_sealed(
+#             data['results'], data['seal_results'], mod
+#         )
+
+#         # ===== История правок =====
+#         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+#         new_note = data['note']
+#         old_note = pump_data.get('note', '') or ''
+#         history_parts = []
+#         if changed_fields:
+#             history_parts.append(f"изменены поля: {', '.join(changed_fields)}")
+#         if new_note.strip() != old_note.strip():
 #             if new_note.strip() == "" and old_note.strip() != "":
-#                 edit_entry = f"{timestamp}: Примечание удалено"
+#                 history_parts.append("примечание удалено")
 #             elif new_note.strip() != "" and old_note.strip() == "":
-#                 edit_entry = f"{timestamp}: Примечание добавлено"
-#             elif new_note.strip() != "" and old_note.strip() != "":
-#                 edit_entry = f"{timestamp}: Примечание изменено"
+#                 history_parts.append("примечание добавлено")
 #             else:
-#                 edit_entry = f"{timestamp}: Примечание не изменено"  # на всякий случай
+#                 history_parts.append("примечание изменено")
 
-#             old_history = pump_data.get('edit_history', '')
+#         edit_date_str = datetime.now().strftime('%Y-%m-%d')
+#         if history_parts:
+#             edit_entry = f"{timestamp}: " + "; ".join(history_parts)
+#             old_history = pump_data.get('edit_history', '') or ''
 #             new_history = edit_entry + "\n" + old_history if old_history else edit_entry
+#         else:
+#             new_history = pump_data.get('edit_history', '') or ''
 
-#             # Сохраняем
-#             db.update_pump(pump_id, note=new_note, edit_history=new_history)
-
-#             # Обновляем интерфейс
+#         # Сохраняем только если что-то реально поменялось (поля или примечание)
+#         if changed_fields or new_note.strip() != old_note.strip():
+#             db.update_pump(
+#                 pump_id,
+#                 test_date=data['test_date'],
+#                 test_type=data['test_type'],
+#                 modification_id=data['modification_id'],
+#                 order_id=order_id,
+#                 results_json=data['results'],
+#                 seal_results_json=data['seal_results'],
+#                 verdict=verdict,
+#                 is_sealed=is_sealed,
+#                 note=new_note,
+#                 edit_history=new_history,
+#                 edit_date=edit_date_str,
+#                 changed_fields_json=json.dumps(changed_fields),
+#             )
 #             self.left_panel.refresh()
 #             current_selected = self.right_panel.current_data
+#             updated = db.get_pump_by_id(pump_id)
 #             if current_selected and current_selected['id'] == pump_id:
-#                 updated = db.get_pump_by_id(pump_id)
 #                 self.right_panel.display_protocol(updated)
+#             QMessageBox.information(self, "Успех", "Протокол обновлён.")
+#         else:
+#             QMessageBox.information(self, "Информация", "Изменений не обнаружено.")
 
 #             QMessageBox.information(self, "Успех", "Примечание обновлено.")
     
@@ -631,7 +731,8 @@ from . import excel_importer as importer
 from . import utils
 
 from datetime import datetime
-from .widgets.dialogs import EditProtocolDialog
+from .widgets.dialogs import EditPumpDialog
+import json
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -1193,40 +1294,114 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Ошибка", "Запись не найдена.")
             return
 
-        dialog = EditProtocolDialog(pump_data, self)
-        if dialog.exec_() == QDialog.Accepted:
-            data = dialog.get_data()
-            if data['password'] != "admin":
-                QMessageBox.warning(self, "Ошибка", "Неверный пароль.")
-                return
+        if not db.get_all_modifications():
+            QMessageBox.warning(
+                self, "Нет модификаций",
+                "В базе нет ни одной модификации. Сначала добавьте модификацию через "
+                "⚙️ Настройки → Добавить модификацию."
+            )
+            return
 
-            new_note = data['note']
-            old_note = pump_data.get('note', '')
+        dialog = EditPumpDialog(pump_data, self)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        data = dialog.get_data()
+        if data['password'] != "admin":
+            QMessageBox.warning(self, "Ошибка", "Неверный пароль. Изменения не сохранены.")
+            return
 
-            # Формируем запись для истории
-            from datetime import datetime
-            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        # ===== Определяем, какие поля реально изменились =====
+        changed_fields = []
+
+        old_date = (pump_data.get('test_date') or '').split(' ')[0]
+        if old_date != data['test_date']:
+            changed_fields.append('test_date')
+
+        if pump_data.get('test_type') != data['test_type']:
+            changed_fields.append('test_type')
+
+        if pump_data.get('modification_id') != data['modification_id']:
+            changed_fields.append('modification')
+
+        old_order = pump_data.get('order_number')
+        old_order_str = str(old_order).replace('.0', '') if old_order else ''
+        new_order_str = data['order_number'] or ''
+        if old_order_str != new_order_str:
+            changed_fields.append('order_number')
+
+        old_results = pump_data.get('results_json') or {}
+        for key, new_val in data['results'].items():
+            if old_results.get(key) != new_val:
+                changed_fields.append(key)
+
+        old_seal = pump_data.get('seal_results_json') or {}
+        for key, new_val in data['seal_results'].items():
+            if (old_seal.get(key) or '') != (new_val or ''):
+                changed_fields.append(key)
+
+        # Заказ: находим/создаём запись заказа
+        order_id = None
+        if data['order_number']:
+            order_id = db.get_order_by_number(data['order_number'])
+            if not order_id:
+                order_id = db.add_order(data['order_number'])
+
+        # Пересчитываем вердикт и герметичность под (возможно новую) модификацию
+        mod = db.get_modification_by_id(data['modification_id'])
+        verdict, is_sealed = utils.compute_verdict_and_sealed(
+            data['results'], data['seal_results'], mod
+        )
+
+        # ===== История правок =====
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        new_note = data['note']
+        old_note = pump_data.get('note', '') or ''
+        history_parts = []
+        if changed_fields:
+            description = utils.describe_changed_fields(changed_fields)
+            if description:
+                history_parts.append(description)
+        if new_note.strip() != old_note.strip():
             if new_note.strip() == "" and old_note.strip() != "":
-                edit_entry = f"{timestamp}: Примечание удалено"
+                history_parts.append("примечание удалено")
             elif new_note.strip() != "" and old_note.strip() == "":
-                edit_entry = f"{timestamp}: Примечание добавлено"
-            elif new_note.strip() != "" and old_note.strip() != "":
-                edit_entry = f"{timestamp}: Примечание изменено"
+                history_parts.append("примечание добавлено")
             else:
-                edit_entry = f"{timestamp}: Примечание не изменено"  # на всякий случай
+                history_parts.append("примечание изменено")
 
-            old_history = pump_data.get('edit_history', '')
+        edit_date_str = datetime.now().strftime('%Y-%m-%d')
+        if history_parts:
+            edit_entry = f"{timestamp}: " + "; ".join(history_parts)
+            old_history = pump_data.get('edit_history', '') or ''
             new_history = edit_entry + "\n" + old_history if old_history else edit_entry
+        else:
+            new_history = pump_data.get('edit_history', '') or ''
 
-            # Сохраняем
-            db.update_pump(pump_id, note=new_note, edit_history=new_history)
-
-            # Обновляем интерфейс
+        # Сохраняем только если что-то реально поменялось (поля или примечание)
+        if changed_fields or new_note.strip() != old_note.strip():
+            db.update_pump(
+                pump_id,
+                test_date=data['test_date'],
+                test_type=data['test_type'],
+                modification_id=data['modification_id'],
+                order_id=order_id,
+                results_json=data['results'],
+                seal_results_json=data['seal_results'],
+                verdict=verdict,
+                is_sealed=is_sealed,
+                note=new_note,
+                edit_history=new_history,
+                edit_date=edit_date_str,
+                changed_fields_json=json.dumps(changed_fields),
+            )
             self.left_panel.refresh()
             current_selected = self.right_panel.current_data
+            updated = db.get_pump_by_id(pump_id)
             if current_selected and current_selected['id'] == pump_id:
-                updated = db.get_pump_by_id(pump_id)
                 self.right_panel.display_protocol(updated)
+            QMessageBox.information(self, "Успех", "Протокол обновлён.")
+        else:
+            QMessageBox.information(self, "Информация", "Изменений не обнаружено.")
 
             QMessageBox.information(self, "Успех", "Примечание обновлено.")
     

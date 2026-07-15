@@ -3,7 +3,7 @@
 #     QTableWidget, QTableWidgetItem, QPushButton, QLabel, QCheckBox,
 #     QDateEdit, QHeaderView, QAbstractItemView, QMenu
 # )
-# from PyQt5.QtCore import Qt, pyqtSignal, QDate, QPoint, QTimer
+# from PyQt5.QtCore import Qt, pyqtSignal, QDate, QPoint, QTimer, QEvent, QVariantAnimation, QEasingCurve
 # from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QPolygon
 
 # from .. import database as db
@@ -11,6 +11,7 @@
 
 # class LeftPanel(QWidget):
 #     pump_selected = pyqtSignal(dict)
+#     pump_status_selected = pyqtSignal(dict)
 #     group_selected = pyqtSignal(list)
 #     request_import = pyqtSignal()
 #     request_add = pyqtSignal()
@@ -145,6 +146,16 @@
 #       self.table.setContextMenuPolicy(Qt.CustomContextMenu)
 #       self.table.customContextMenuRequested.connect(self.show_context_menu)
 #       self.table.cellClicked.connect(self.on_cell_clicked)
+
+#       # Эффект наведения на строку (плавное осветление цвета + жирный
+#       # текст) и эффект нажатия (плавное приглушение цвета)
+#       self._hovered_row = -1
+#       self._row_base_bg = {}     # row -> "родной" цвет строки (по вердикту)
+#       self._row_animations = {}  # row -> активная QVariantAnimation
+#       self.table.setMouseTracking(True)
+#       self.table.entered.connect(self.on_row_hover)
+#       self.table.viewport().installEventFilter(self)
+
 #       layout.addWidget(self.table)
 
 #       # Центрирование таблицы в левой панели
@@ -353,11 +364,19 @@
 #                 item = self.table.item(row, col)
 #                 if item:
 #                     item.setBackground(bg_color)
+#         # Запоминаем базовый цвет строки - от него анимируются
+#         # наведение/нажатие и к нему же возвращаемся
+#         self._row_base_bg[row] = bg_color if bg_color else QColor(255, 255, 255)
 
 #     def populate_table(self, pumps, compact=True):
 #         self.table.setSortingEnabled(False)
 #         self.table.clearSpans()  # сбрасываем объединения ячеек, оставшиеся от группового режима (дубли)
 #         self.table.setRowCount(len(pumps))
+#         self._hovered_row = -1
+#         self._row_base_bg = {}
+#         for anim in self._row_animations.values():
+#             anim.stop()
+#         self._row_animations = {}
 
 #         col_count = self._setup_table_columns(compact)
 
@@ -378,6 +397,11 @@
 #         а не дубликаты."""
 #         self.table.setSortingEnabled(False)
 #         self.table.clearSpans()
+#         self._hovered_row = -1
+#         self._row_base_bg = {}
+#         for anim in self._row_animations.values():
+#             anim.stop()
+#         self._row_animations = {}
 
 #         # Группируем по (номер насоса, модификация)
 #         groups = {}
@@ -475,31 +499,165 @@
 #             self._initial_size_done = True
 #             QTimer.singleShot(0, self._on_resize_settled)
 
+#     def _compute_dynamic_page_size(self):
+#         """Считает, сколько строк реально помещается в видимую область
+#         таблицы сейчас. viewport().height() уже НЕ включает область
+#         заголовка колонок - вычитать её ещё раз не нужно (это и было
+#         причиной заниженного расчёта)."""
+#         row_height = self.table.verticalHeader().defaultSectionSize() or 24
+#         available = self.table.viewport().height()
+#         return max(5, available // row_height)
+
 #     def _on_resize_settled(self):
 #         if self.only_duplicates.isChecked():
 #             return  # в режиме дублей пагинация отключена - не трогаем
-#         row_height = self.table.verticalHeader().defaultSectionSize() or 24
-#         header_height = self.table.horizontalHeader().height()
-#         available = self.table.viewport().height() - header_height
-#         new_page_size = max(5, available // row_height)
+#         new_page_size = self._compute_dynamic_page_size()
 #         if new_page_size != self.page_size:
 #             self.page_size = new_page_size
 #             self.current_page = 0
 #             self.apply_filters()
 
 #     def on_cell_clicked(self, row, col):
-#         """Клик по заголовку группы дублей открывает сравнение в правой панели."""
+#         """Клик по заголовку группы дублей открывает сравнение в правой панели.
+#         Для обычных строк - плавный эффект нажатия (цвет на мгновение
+#         становится менее контрастным и плавно возвращается)."""
 #         item = self.table.item(row, 0)
 #         if item is None:
 #             return
 #         group_items = item.data(Qt.UserRole + 1)
 #         if group_items:
 #             self.group_selected.emit(group_items)
+#             return
+#         self._press_row(row)
+
+#     def _row_is_group_header(self, row):
+#         item0 = self.table.item(row, 0)
+#         return bool(item0 and item0.data(Qt.UserRole + 1))
+
+#     def _row_items(self, row):
+#         if row < 0 or row >= self.table.rowCount() or self._row_is_group_header(row):
+#             return []
+#         return [it for it in (self.table.item(row, c) for c in range(self.table.columnCount())) if it]
+
+#     @staticmethod
+#     def _blend(color_from, color_to, t):
+#         r = color_from.red() + (color_to.red() - color_from.red()) * t
+#         g = color_from.green() + (color_to.green() - color_from.green()) * t
+#         b = color_from.blue() + (color_to.blue() - color_from.blue()) * t
+#         return QColor(int(r), int(g), int(b))
+
+#     def _lighten(self, color, factor=0.35):
+#         """Смешивает цвет с белым - делает ярче (для наведения)."""
+#         return self._blend(color, QColor(255, 255, 255), factor)
+
+#     def _mute(self, color, factor=0.45):
+#         """Смешивает цвет с нейтральным серым - делает менее контрастным
+#         (для эффекта нажатия)."""
+#         return self._blend(color, QColor(205, 205, 205), factor)
+
+#     def _animate_row(self, row, target_color, duration=350, on_finished=None):
+#         """Плавно перекрашивает всю строку в target_color за duration мс.
+#         Останавливает предыдущую анимацию этой же строки, если она ещё идёт
+#         (чтобы быстрые движения мыши/клики не накладывались друг на друга)."""
+#         items = self._row_items(row)
+#         if not items:
+#             if on_finished:
+#                 on_finished()
+#             return
+
+#         old_anim = self._row_animations.get(row)
+#         if old_anim is not None:
+#             old_anim.stop()
+
+#         start_colors = [it.background().color() for it in items]
+
+#         anim = QVariantAnimation(self.table)
+#         anim.setDuration(duration)
+#         anim.setEasingCurve(QEasingCurve.InOutQuad)
+#         anim.setStartValue(0.0)
+#         anim.setEndValue(1.0)
+
+#         def update(t):
+#             for it, start_c in zip(items, start_colors):
+#                 if it:
+#                     it.setBackground(self._blend(start_c, target_color, t))
+
+#         anim.valueChanged.connect(update)
+#         if on_finished:
+#             anim.finished.connect(on_finished)
+#         self._row_animations[row] = anim
+#         anim.start()
+
+#     def on_row_hover(self, index):
+#         """Наведение мыши на строку - цвет плавно становится ярче, текст -
+#         жирным и чуть крупнее."""
+#         row = index.row()
+#         if row == self._hovered_row:
+#             return
+#         self._leave_row(self._hovered_row)
+#         self._enter_row(row)
+#         self._hovered_row = row
+
+#     def _enter_row(self, row):
+#         items = self._row_items(row)
+#         if not items:
+#             return
+#         base = self._row_base_bg.get(row, QColor(255, 255, 255))
+#         self._animate_row(row, self._lighten(base), duration=350)
+#         for item in items:
+#             font = item.font()
+#             font.setBold(True)
+#             font.setPointSize(font.pointSize() + 1)
+#             item.setFont(font)
+
+#     def _leave_row(self, row):
+#         items = self._row_items(row)
+#         if not items:
+#             return
+#         base = self._row_base_bg.get(row, QColor(255, 255, 255))
+#         self._animate_row(row, base, duration=350)
+#         for item in items:
+#             font = item.font()
+#             font.setBold(False)
+#             font.setPointSize(max(1, font.pointSize() - 1))
+#             item.setFont(font)
+
+#     def _press_row(self, row):
+#         """Плавный эффект нажатия: цвет строки на мгновение становится
+#         менее контрастным и плавно возвращается к тому, что должно быть
+#         (наведённый или обычный вид - в зависимости от текущего состояния)."""
+#         items = self._row_items(row)
+#         if not items:
+#             return
+#         current = items[0].background().color()
+#         muted = self._mute(current)
+
+#         def restore():
+#             base = self._row_base_bg.get(row, QColor(255, 255, 255))
+#             target = self._lighten(base) if row == self._hovered_row else base
+#             self._animate_row(row, target, duration=200)
+
+#         self._animate_row(row, muted, duration=150, on_finished=restore)
+
+#     def eventFilter(self, obj, event):
+#         if obj is self.table.viewport():
+#             if event.type() == QEvent.Leave:
+#                 self._leave_row(self._hovered_row)
+#                 self._hovered_row = -1
+#             elif event.type() == QEvent.MouseMove:
+#                 # Курсор мог уйти на пустое пространство под последней
+#                 # строкой - там нет валидного индекса, и сигнал entered()
+#                 # в этом случае не срабатывает вообще
+#                 index = self.table.indexAt(event.pos())
+#                 if not index.isValid() and self._hovered_row != -1:
+#                     self._leave_row(self._hovered_row)
+#                     self._hovered_row = -1
+#         return super().eventFilter(obj, event)
 
 #     def on_selection_changed(self):
-#         """Обработка выбора строки (только в компактном режиме)."""
-#         if not self.compact_mode:
-#             return
+#         """Обработка выбора строки. В компактном режиме открывает протокол
+#         (как раньше); в расширенном - только обновляет статус-бар, не
+#         переключая вид и не открывая протокол."""
 #         selected = self.table.selectedItems()
 #         if not selected:
 #             return
@@ -511,8 +669,12 @@
 #         if pump_id is None:
 #             return
 #         pump_data = db.get_pump_by_id(pump_id)
-#         if pump_data:
+#         if not pump_data:
+#             return
+#         if self.compact_mode:
 #             self.pump_selected.emit(pump_data)
+#         else:
+#             self.pump_status_selected.emit(pump_data)
 
 #     def show_context_menu(self, pos):
 #         row = self.table.rowAt(pos.y())
@@ -617,6 +779,13 @@
 #             # показываем все найденные записи целиком
 #             filtered = db.get_all_pumps(filters)
 #         else:
+#             # Подстраховка: пересчитываем размер страницы прямо сейчас (а не
+#             # только по событию resize) - гарантирует актуальное значение,
+#             # даже если окно ещё не успело прислать событие изменения размера
+#             fresh_page_size = self._compute_dynamic_page_size()
+#             if fresh_page_size != self.page_size:
+#                 self.page_size = fresh_page_size
+#                 self.current_page = 0
 #             offset = self.current_page * self.page_size
 #             filtered = db.get_all_pumps(filters, limit=self.page_size, offset=offset)
 
@@ -703,13 +872,30 @@
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QComboBox,
     QTableWidget, QTableWidgetItem, QPushButton, QLabel, QCheckBox,
-    QDateEdit, QHeaderView, QAbstractItemView, QMenu
+    QDateEdit, QHeaderView, QAbstractItemView, QMenu,
+    QStyledItemDelegate, QStyle, QStyleOptionViewItem
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QDate, QPoint, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QDate, QPoint, QTimer, QEvent, QVariantAnimation, QEasingCurve
 from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QPolygon
 
 from .. import database as db
 from .. import utils
+
+class _NoSelectionPaintDelegate(QStyledItemDelegate):
+    """Обычно Qt при отрисовке выделенной ячейки полностью игнорирует её
+    собственный фон (Qt::BackgroundRole) и вместо этого рисует заливку
+    состояния ":selected" (даже если в QSS она задана как transparent -
+    это всё равно перекрывает то, что мы красим через setBackground()).
+    Этот делегат перед отрисовкой снимает флаг "выделено" у копии опций -
+    ячейка визуально рисуется как обычная, со своим настоящим фоном,
+    а выделение как таковое (сигналы, модель) продолжает работать штатно."""
+    def paint(self, painter, option, index):
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        opt.state &= ~QStyle.State_Selected
+        opt.state &= ~QStyle.State_HasFocus
+        super().paint(painter, opt, index)
+
 
 class LeftPanel(QWidget):
     pump_selected = pyqtSignal(dict)
@@ -826,14 +1012,14 @@ class LeftPanel(QWidget):
           QTableWidget::item {
               text-align: center;
           }
-          QTableWidget::item:selected {
-              background-color: #3d8ec9;
-              color: white;
-          }
           QHeaderView::section {
               font-weight: bold;
           }
       """)
+      # Отключаем штатную заливку выделения Qt - иначе она перекрывает наш
+      # собственный (анимированный) цвет ячейки, даже если в QSS задать
+      # ":selected { background-color: transparent }"
+      self.table.setItemDelegate(_NoSelectionPaintDelegate(self.table))
       # Жирные заголовки
       font = self.table.horizontalHeader().font()
       font.setBold(True)
@@ -848,6 +1034,19 @@ class LeftPanel(QWidget):
       self.table.setContextMenuPolicy(Qt.CustomContextMenu)
       self.table.customContextMenuRequested.connect(self.show_context_menu)
       self.table.cellClicked.connect(self.on_cell_clicked)
+
+      # Эффект наведения на строку (плавное осветление цвета + жирный
+      # текст) и эффект нажатия (плавное приглушение цвета). Базовый цвет
+      # строки хранится как данные ячейки (см. _row_base_color) - не в
+      # словаре по индексу, т.к. сортировка таблицы переставляет строки
+      self._hovered_row = -1
+      self._selected_row = -1
+      self._base_font_size = float(self.table.font().pointSize() or 9)
+      self._row_animations = {}  # row -> активная QVariantAnimation
+      self.table.setMouseTracking(True)
+      self.table.entered.connect(self.on_row_hover)
+      self.table.viewport().installEventFilter(self)
+
       layout.addWidget(self.table)
 
       # Центрирование таблицы в левой панели
@@ -1051,16 +1250,34 @@ class LeftPanel(QWidget):
             bg_color = QColor(245, 230, 230)
         else:
             bg_color = None
-        if bg_color:
-            for col in range(self.table.columnCount()):
-                item = self.table.item(row, col)
-                if item:
+        base_color = bg_color if bg_color else QColor(255, 255, 255)
+        base_font = QFont()
+        base_font.setPointSizeF(self._base_font_size)
+        base_font.setWeight(QFont.Normal)
+        for col in range(self.table.columnCount()):
+            item = self.table.item(row, col)
+            if item:
+                if bg_color:
                     item.setBackground(bg_color)
+                item.setFont(base_font)
+        # Запоминаем базовый цвет строки как данные ПЕРВОЙ ячейки - именно
+        # там, а не в словаре по номеру строки, потому что таблица потом
+        # сортируется (setSortingEnabled/sortByColumn) и физически
+        # переставляет строки; словарь по индексу строки после сортировки
+        # указывал бы уже на другой насос
+        item0 = self.table.item(row, 0)
+        if item0:
+            item0.setData(Qt.UserRole + 2, base_color)
 
     def populate_table(self, pumps, compact=True):
         self.table.setSortingEnabled(False)
         self.table.clearSpans()  # сбрасываем объединения ячеек, оставшиеся от группового режима (дубли)
         self.table.setRowCount(len(pumps))
+        self._hovered_row = -1
+        self._selected_row = -1
+        for anim in self._row_animations.values():
+            anim.stop()
+        self._row_animations = {}
 
         col_count = self._setup_table_columns(compact)
 
@@ -1081,6 +1298,11 @@ class LeftPanel(QWidget):
         а не дубликаты."""
         self.table.setSortingEnabled(False)
         self.table.clearSpans()
+        self._hovered_row = -1
+        self._selected_row = -1
+        for anim in self._row_animations.values():
+            anim.stop()
+        self._row_animations = {}
 
         # Группируем по (номер насоса, модификация)
         groups = {}
@@ -1178,35 +1400,215 @@ class LeftPanel(QWidget):
             self._initial_size_done = True
             QTimer.singleShot(0, self._on_resize_settled)
 
+    def _compute_dynamic_page_size(self):
+        """Считает, сколько строк реально помещается в видимую область
+        таблицы сейчас. viewport().height() уже НЕ включает область
+        заголовка колонок - вычитать её ещё раз не нужно (это и было
+        причиной заниженного расчёта)."""
+        row_height = self.table.verticalHeader().defaultSectionSize() or 24
+        available = self.table.viewport().height()
+        return max(5, available // row_height)
+
     def _on_resize_settled(self):
         if self.only_duplicates.isChecked():
             return  # в режиме дублей пагинация отключена - не трогаем
-        row_height = self.table.verticalHeader().defaultSectionSize() or 24
-        header_height = self.table.horizontalHeader().height()
-        available = self.table.viewport().height() - header_height
-        new_page_size = max(5, available // row_height)
+        new_page_size = self._compute_dynamic_page_size()
         if new_page_size != self.page_size:
             self.page_size = new_page_size
             self.current_page = 0
             self.apply_filters()
 
     def on_cell_clicked(self, row, col):
-        """Клик по заголовку группы дублей открывает сравнение в правой панели."""
+        """Клик по заголовку группы дублей открывает сравнение в правой панели.
+        Для обычных строк - плавный эффект нажатия (цвет на мгновение
+        становится менее контрастным и плавно возвращается)."""
         item = self.table.item(row, 0)
         if item is None:
             return
         group_items = item.data(Qt.UserRole + 1)
         if group_items:
             self.group_selected.emit(group_items)
+            return
+        self._press_row(row)
+
+    def _row_is_group_header(self, row):
+        item0 = self.table.item(row, 0)
+        return bool(item0 and item0.data(Qt.UserRole + 1))
+
+    def _row_items(self, row):
+        if row < 0 or row >= self.table.rowCount() or self._row_is_group_header(row):
+            return []
+        return [it for it in (self.table.item(row, c) for c in range(self.table.columnCount())) if it]
+
+    @staticmethod
+    def _blend(color_from, color_to, t):
+        r = color_from.red() + (color_to.red() - color_from.red()) * t
+        g = color_from.green() + (color_to.green() - color_from.green()) * t
+        b = color_from.blue() + (color_to.blue() - color_from.blue()) * t
+        return QColor(int(r), int(g), int(b))
+
+    def _lighten(self, color, factor=0.5):
+        """Смешивает цвет с белым - делает ярче (для наведения)."""
+        return self._blend(color, QColor(255, 255, 255), factor)
+
+    def _mute(self, color, factor=0.45):
+        """Смешивает цвет с нейтральным серым - делает менее контрастным
+        (для эффекта нажатия)."""
+        return self._blend(color, QColor(205, 205, 205), factor)
+
+    def _vivid(self, color):
+        """Яркая, насыщенная версия цвета строки (для выделения) - тот же
+        оттенок, что и обычная подсветка по вердикту, но гораздо
+        насыщеннее. Для нейтральных строк (без оттенка) - акцентный синий."""
+        h, s, v, _ = color.getHsv()
+        if h < 0 or s < 12:
+            return QColor(140, 185, 235)
+        vivid = QColor()
+        vivid.setHsv(h, 190, 220)
+        return vivid
+
+    def _row_base_color(self, row):
+        """Базовый цвет строки (по вердикту), хранится как данные первой
+        ячейки - переживает пересортировку таблицы, в отличие от словаря
+        по индексу строки."""
+        item0 = self.table.item(row, 0)
+        color = item0.data(Qt.UserRole + 2) if item0 else None
+        return color if color else QColor(255, 255, 255)
+
+    def _state_for_row(self, row):
+        """Возвращает (цвет, размер_шрифта, насыщенность_шрифта), которые
+        ДОЛЖНЫ сейчас отображаться для строки - в зависимости от того,
+        выделена она, наведена, или в обычном состоянии."""
+        base = self._row_base_color(row)
+        if row == self._selected_row:
+            return self._vivid(base), self._base_font_size + 1, QFont.Bold
+        if row == self._hovered_row:
+            return self._lighten(base, 0.5), self._base_font_size + 1, QFont.Bold
+        return base, self._base_font_size, QFont.Normal
+
+    def _animate_row(self, row, target_color, target_size, target_weight, duration, on_finished=None):
+        """Плавно и СИНХРОННО меняет цвет фона, размер и насыщенность
+        шрифта всей строки за duration мс - всё на одном таймлайне, так
+        что цвет и шрифт всегда меняются вместе. Останавливает предыдущую
+        анимацию этой же строки, если она ещё идёт."""
+        items = self._row_items(row)
+        if not items:
+            if on_finished:
+                on_finished()
+            return
+
+        old_anim = self._row_animations.get(row)
+        if old_anim is not None:
+            old_anim.stop()
+
+        start_colors = [it.background().color() for it in items]
+        start_font = items[0].font()
+        start_size = start_font.pointSizeF()
+        start_weight = start_font.weight()
+
+        anim = QVariantAnimation(self.table)
+        anim.setDuration(duration)
+        anim.setEasingCurve(QEasingCurve.InOutQuad)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+
+        def update(t):
+            size = start_size + (target_size - start_size) * t
+            weight = start_weight + (target_weight - start_weight) * t
+            for it, start_c in zip(items, start_colors):
+                if it:
+                    it.setBackground(self._blend(start_c, target_color, t))
+                    f = it.font()
+                    f.setPointSizeF(size)
+                    f.setWeight(int(weight))
+                    it.setFont(f)
+
+        anim.valueChanged.connect(update)
+        if on_finished:
+            anim.finished.connect(on_finished)
+        self._row_animations[row] = anim
+        anim.start()
+
+    def _animate_row_to_state(self, row, duration=350, on_finished=None):
+        color, size, weight = self._state_for_row(row)
+        self._animate_row(row, color, size, weight, duration, on_finished)
+
+    def on_row_hover(self, index):
+        """Наведение мыши на строку - цвет, размер и жирность шрифта
+        плавно и синхронно переходят в "наведённое" состояние."""
+        row = index.row()
+        if self._row_is_group_header(row):
+            row = -1
+        if row == self._hovered_row:
+            return
+        old_hover = self._hovered_row
+        self._hovered_row = row
+        if old_hover != -1:
+            self._animate_row_to_state(old_hover, duration=350)
+        if row != -1:
+            self._animate_row_to_state(row, duration=350)
+
+    def _press_row(self, row):
+        """Плавный эффект нажатия: цвет строки на мгновение становится
+        менее контрастным (шрифт при этом не меняется) и плавно
+        возвращается к тому состоянию, которое сейчас должно отображаться
+        (выделенному, наведённому или обычному).
+
+        Возврат запускается НЕЗАВИСИМЫМ таймером, а не через сигнал
+        finished() у анимации приглушения - Qt не эмитит finished(), если
+        анимация была прервана чьим-то ещё вызовом .stop() (например,
+        параллельной анимацией выделения), из-за чего возврат мог вообще
+        не произойти и строка "зависала" приглушённой."""
+        items = self._row_items(row)
+        if not items:
+            return
+        current_font = items[0].font()
+        current_color = items[0].background().color()
+        muted = self._mute(current_color)
+
+        self._animate_row(row, muted, current_font.pointSizeF(), current_font.weight(), duration=150)
+
+        def restore():
+            self._animate_row_to_state(row, duration=200)
+        QTimer.singleShot(150, restore)
+
+    def eventFilter(self, obj, event):
+        if obj is self.table.viewport():
+            if event.type() == QEvent.Leave:
+                old_hover = self._hovered_row
+                self._hovered_row = -1
+                if old_hover != -1:
+                    self._animate_row_to_state(old_hover, duration=350)
+            elif event.type() == QEvent.MouseMove:
+                # Курсор мог уйти на пустое пространство под последней
+                # строкой - там нет валидного индекса, и сигнал entered()
+                # в этом случае не срабатывает вообще
+                index = self.table.indexAt(event.pos())
+                if not index.isValid() and self._hovered_row != -1:
+                    old_hover = self._hovered_row
+                    self._hovered_row = -1
+                    self._animate_row_to_state(old_hover, duration=350)
+        return super().eventFilter(obj, event)
 
     def on_selection_changed(self):
         """Обработка выбора строки. В компактном режиме открывает протокол
         (как раньше); в расширенном - только обновляет статус-бар, не
-        переключая вид и не открывая протокол."""
+        переключая вид и не открывая протокол. Плюс - синхронизированная
+        анимация выделения (яркий цвет строки вместо стандартного синего)."""
         selected = self.table.selectedItems()
+        new_row = selected[0].row() if selected else -1
+
+        if new_row != self._selected_row:
+            old_selected = self._selected_row
+            self._selected_row = new_row
+            if old_selected != -1:
+                self._animate_row_to_state(old_selected, duration=300)
+            if new_row != -1:
+                self._animate_row_to_state(new_row, duration=300)
+
         if not selected:
             return
-        row = selected[0].row()
+        row = new_row
         item = self.table.item(row, 0)
         if item is None:
             return
@@ -1324,6 +1726,13 @@ class LeftPanel(QWidget):
             # показываем все найденные записи целиком
             filtered = db.get_all_pumps(filters)
         else:
+            # Подстраховка: пересчитываем размер страницы прямо сейчас (а не
+            # только по событию resize) - гарантирует актуальное значение,
+            # даже если окно ещё не успело прислать событие изменения размера
+            fresh_page_size = self._compute_dynamic_page_size()
+            if fresh_page_size != self.page_size:
+                self.page_size = fresh_page_size
+                self.current_page = 0
             offset = self.current_page * self.page_size
             filtered = db.get_all_pumps(filters, limit=self.page_size, offset=offset)
 

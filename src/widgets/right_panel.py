@@ -19,6 +19,8 @@
 # from .. import utils
 # from ..utils import is_value_in_range
 # from ..utils import format_order_number
+# from .dialogs import _clamp_to_screen
+# from datetime import datetime
 
 # class RightPanel(QWidget):
 #     clear_requested = pyqtSignal()   # сигнал для запроса сброса
@@ -112,11 +114,13 @@
 #         self.export_pdf_btn.hide()
 #         self.legend_label.hide()
 #         self.seal_panel.hide()
+#         self.dynamic_widget.hide()
 #         self.logo_label.show()
 
 #     def display_statistics(self, stats_data):
 #         """Отображает сводную статистику в правой панели."""
 #         self._clear_dynamic_content()  # очищаем динамическую область
+#         self.dynamic_widget.show()
 #         self.logo_label.hide()
 #         self.header_label.hide()  # скрываем заголовок протокола
 #         self.clear_btn.hide()
@@ -160,6 +164,7 @@
 
 #         # Показываем постоянные виджеты
 #         self.logo_label.hide()
+#         self.dynamic_widget.show()
 #         self.header_label.show()
 #         self.clear_btn.show()
 #         self.export_pdf_btn.show()
@@ -173,27 +178,46 @@
 #         order_num = data.get('order_number', '—')
 #         if order_num != '—' and order_num is not None:
 #             order_num = str(order_num).replace('.0', '')
-            
+
+#         changed_fields = data.get('changed_fields') or []
+#         ORANGE = "#B35C00"  # тёмно-оранжевый - для отметки изменённых при редактировании значений
+
+#         def mark(text, field_key):
+#             if field_key in changed_fields:
+#                 return f"<span style='color:{ORANGE};'>{text}</span>"
+#             return text
+
 #         header_html = (
 #             "<div align='center'>Характеристики образца насоса ГУР</div>"
 #             "<div align='left'>"
-#             f"Протокол проверки насоса ГУР от: {date_str}<br>"
-#             f"Идентификационный №: {data['pump_number']}  Заказ: {order_num}<br>"
-#             f"Проверка: {data['test_type']}<br>"
-#             f"Модификация: {data.get('mod_name', '—')}<br>"
+#             f"Протокол проверки насоса ГУР от: {mark(date_str, 'test_date')}<br>"
+#             f"Идентификационный №: {data['pump_number']}  Заказ: {mark(order_num, 'order_number')}<br>"
+#             f"Проверка: {mark(data['test_type'], 'test_type')}<br>"
+#             f"Модификация: {mark(data.get('mod_name', '—'), 'modification')}<br>"
 #             f"Герметичен: {'Да' if data['is_sealed'] else 'Нет'}<br>"
 #             f"Вердикт: {data['verdict']}"
-#             "</div>"
 #         )
+#         edit_date = data.get('edit_date')
+#         if edit_date:
+#             try:
+#                 edit_date_display = datetime.strptime(edit_date, '%Y-%m-%d').strftime('%d-%m-%Y')
+#             except (ValueError, TypeError):
+#                 edit_date_display = edit_date
+#             header_html += (
+#                 f"<br><span style='font-size:8pt; color:{ORANGE};'>"
+#                 f"Редакция протокола от: {edit_date_display}</span>"
+#             )
+#         header_html += "</div>"
 #         self.header_label.setText(header_html)
 
 #         # Динамическое содержимое
+#         changed_fields = data.get('changed_fields') or []
 #         t1_title, t1_table = self.create_test_table("Тест 1: Зависимость расхода от оборотов (ECO выкл.)",
-#                                list(range(5, 13)), data['results_json'], data.get('mod_name'))
+#                                list(range(5, 13)), data['results_json'], data.get('mod_name'), changed_fields)
 #         t2_title, t2_table = self.create_test_table("Тест 2: Зависимость расхода от оборотов (ECO вкл.)",
-#                                list(range(13, 21)), data['results_json'], data.get('mod_name'))
+#                                list(range(13, 21)), data['results_json'], data.get('mod_name'), changed_fields)
 #         t3_title, t3_table = self.create_test_table("Тест 3: Зависимость расхода от силы тока ECO",
-#                                list(range(21, 32)), data['results_json'], data.get('mod_name'))
+#                                list(range(21, 32)), data['results_json'], data.get('mod_name'), changed_fields)
 #         p_title, p_table = self.create_pressure_table(data)
 
 #         # Выравниваем таблицы тестов 1-3 и давления по максимальной ширине
@@ -268,7 +292,8 @@
 #         else:
 #             table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-#     def create_test_table(self, title, indices, results, mod_name):
+#     def create_test_table(self, title, indices, results, mod_name, changed_fields=None):
+#         changed_fields = changed_fields or []
 #         mod = None
 #         if mod_name:
 #             mod = db.get_modification_by_name(mod_name)
@@ -320,6 +345,8 @@
 #             val_text = format_number(val)
 #             val_item = QTableWidgetItem(val_text)
 #             val_item.setTextAlignment(Qt.AlignCenter)
+#             if key in changed_fields:
+#                 val_item.setForeground(QColor(179, 92, 0))  # тёмно-оранжевый - значение изменено при редактировании
 #             # Проверка диапазона (используем исходное значение val, не строку)
 #             if val is not None and i < len(norm_min) and i < len(norm_max):
 #                 if not is_value_in_range(val, norm_min[i], norm_max[i]):
@@ -369,6 +396,8 @@
 #         table.setItem(0, 0, param_item)
 #         val_item = QTableWidgetItem(str(pressure_val) if pressure_val is not None else '')
 #         val_item.setTextAlignment(Qt.AlignCenter)
+#         if 'g32' in (data.get('changed_fields') or []):
+#             val_item.setForeground(QColor(179, 92, 0))  # тёмно-оранжевый - значение изменено при редактировании
 #         if pressure_val is not None and min_p is not None and max_p is not None:
 #             if not is_value_in_range(pressure_val, min_p, max_p):
 #                 val_item.setBackground(QColor(255, 200, 200))
@@ -411,6 +440,8 @@
 #             display_text = str(val) if val is not None else ''
 #             val_item = QTableWidgetItem(display_text)
 #             val_item.setTextAlignment(Qt.AlignCenter)
+#             if key in (data.get('changed_fields') or []):
+#                 val_item.setForeground(QColor(179, 92, 0))  # тёмно-оранжевый - значение изменено при редактировании
 #             if key in ['g33', 'g34', 'g35', 'g36']:
 #                 if val is not None and str(val).strip().lower() != 'отсутствуют':
 #                     val_item.setBackground(QColor(255, 200, 200))
@@ -560,6 +591,7 @@
 #         self._clear_dynamic_content()
 
 #         self.logo_label.hide()
+#         self.dynamic_widget.show()
 #         self.header_label.show()
 #         self.clear_btn.show()
 #         self.legend_label.show()
@@ -852,6 +884,7 @@
 #         # Окно должно быть достаточно большим, чтобы лист А4 целиком
 #         # помещался при масштабе 65% (без обрезки и без прокрутки)
 #         preview.resize(850, 950)
+#         _clamp_to_screen(preview, width_fraction=0.92, height_fraction=0.92)
 
 #         preview_widget = preview.findChild(QPrintPreviewWidget)
 #         if preview_widget:
@@ -1047,6 +1080,7 @@
 #         self.export_pdf_btn.hide()
 #         self.legend_label.hide()
 #         self.seal_panel.hide()
+#         self.dynamic_widget.hide()  # иначе видна пустая панель-подложка без содержимого
 #         self.logo_label.show()
 
 #     def _clear_layout(self, layout):
@@ -1081,6 +1115,7 @@ from .. import utils
 from ..utils import is_value_in_range
 from ..utils import format_order_number
 from .dialogs import _clamp_to_screen
+from datetime import datetime
 
 class RightPanel(QWidget):
     clear_requested = pyqtSignal()   # сигнал для запроса сброса
@@ -1165,6 +1200,12 @@ class RightPanel(QWidget):
         self.seal_layout.setContentsMargins(8, 8, 8, 8)
         self.content_layout.addWidget(self.seal_panel)
 
+        # Примечание и история редактирования - в самом конце, после
+        # герметичности
+        self.notes_widget = QWidget()
+        self.notes_layout = QVBoxLayout(self.notes_widget)
+        self.content_layout.addWidget(self.notes_widget)
+
         scroll.setWidget(content)
         layout.addWidget(scroll)
 
@@ -1174,11 +1215,14 @@ class RightPanel(QWidget):
         self.export_pdf_btn.hide()
         self.legend_label.hide()
         self.seal_panel.hide()
+        self.notes_widget.hide()
+        self.dynamic_widget.hide()
         self.logo_label.show()
 
     def display_statistics(self, stats_data):
         """Отображает сводную статистику в правой панели."""
         self._clear_dynamic_content()  # очищаем динамическую область
+        self.dynamic_widget.show()
         self.logo_label.hide()
         self.header_label.hide()  # скрываем заголовок протокола
         self.clear_btn.hide()
@@ -1222,6 +1266,7 @@ class RightPanel(QWidget):
 
         # Показываем постоянные виджеты
         self.logo_label.hide()
+        self.dynamic_widget.show()
         self.header_label.show()
         self.clear_btn.show()
         self.export_pdf_btn.show()
@@ -1235,27 +1280,46 @@ class RightPanel(QWidget):
         order_num = data.get('order_number', '—')
         if order_num != '—' and order_num is not None:
             order_num = str(order_num).replace('.0', '')
-            
+
+        changed_fields = data.get('changed_fields') or []
+        ORANGE = "#B35C00"  # тёмно-оранжевый - для отметки изменённых при редактировании значений
+
+        def mark(text, field_key):
+            if field_key in changed_fields:
+                return f"<span style='color:{ORANGE};'>{text}</span>"
+            return text
+
         header_html = (
             "<div align='center'>Характеристики образца насоса ГУР</div>"
             "<div align='left'>"
-            f"Протокол проверки насоса ГУР от: {date_str}<br>"
-            f"Идентификационный №: {data['pump_number']}  Заказ: {order_num}<br>"
-            f"Проверка: {data['test_type']}<br>"
-            f"Модификация: {data.get('mod_name', '—')}<br>"
+            f"Протокол проверки насоса ГУР от: {mark(date_str, 'test_date')}<br>"
+            f"Идентификационный №: {data['pump_number']}  Заказ: {mark(order_num, 'order_number')}<br>"
+            f"Проверка: {mark(data['test_type'], 'test_type')}<br>"
+            f"Модификация: {mark(data.get('mod_name', '—'), 'modification')}<br>"
             f"Герметичен: {'Да' if data['is_sealed'] else 'Нет'}<br>"
             f"Вердикт: {data['verdict']}"
-            "</div>"
         )
+        edit_date = data.get('edit_date')
+        if edit_date:
+            try:
+                edit_date_display = datetime.strptime(edit_date, '%Y-%m-%d').strftime('%d-%m-%Y')
+            except (ValueError, TypeError):
+                edit_date_display = edit_date
+            header_html += (
+                f"<br><span style='font-size:8pt; color:{ORANGE};'>"
+                f"Редакция протокола от: {edit_date_display}</span>"
+            )
+        header_html += "</div>"
         self.header_label.setText(header_html)
 
         # Динамическое содержимое
+        changed_fields = data.get('changed_fields') or []
         t1_title, t1_table = self.create_test_table("Тест 1: Зависимость расхода от оборотов (ECO выкл.)",
-                               list(range(5, 13)), data['results_json'], data.get('mod_name'))
+                               list(range(5, 13)), data['results_json'], data.get('mod_name'), changed_fields)
         t2_title, t2_table = self.create_test_table("Тест 2: Зависимость расхода от оборотов (ECO вкл.)",
-                               list(range(13, 21)), data['results_json'], data.get('mod_name'))
+                               list(range(13, 21)), data['results_json'], data.get('mod_name'), changed_fields)
         t3_title, t3_table = self.create_test_table("Тест 3: Зависимость расхода от силы тока ECO",
-                               list(range(21, 32)), data['results_json'], data.get('mod_name'))
+                               list(range(21, 32)), data['results_json'], data.get('mod_name'), changed_fields)
         p_title, p_table = self.create_pressure_table(data)
 
         # Выравниваем таблицы тестов 1-3 и давления по максимальной ширине
@@ -1330,7 +1394,8 @@ class RightPanel(QWidget):
         else:
             table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-    def create_test_table(self, title, indices, results, mod_name):
+    def create_test_table(self, title, indices, results, mod_name, changed_fields=None):
+        changed_fields = changed_fields or []
         mod = None
         if mod_name:
             mod = db.get_modification_by_name(mod_name)
@@ -1382,6 +1447,8 @@ class RightPanel(QWidget):
             val_text = format_number(val)
             val_item = QTableWidgetItem(val_text)
             val_item.setTextAlignment(Qt.AlignCenter)
+            if key in changed_fields:
+                val_item.setForeground(QColor(179, 92, 0))  # тёмно-оранжевый - значение изменено при редактировании
             # Проверка диапазона (используем исходное значение val, не строку)
             if val is not None and i < len(norm_min) and i < len(norm_max):
                 if not is_value_in_range(val, norm_min[i], norm_max[i]):
@@ -1431,6 +1498,8 @@ class RightPanel(QWidget):
         table.setItem(0, 0, param_item)
         val_item = QTableWidgetItem(str(pressure_val) if pressure_val is not None else '')
         val_item.setTextAlignment(Qt.AlignCenter)
+        if 'g32' in (data.get('changed_fields') or []):
+            val_item.setForeground(QColor(179, 92, 0))  # тёмно-оранжевый - значение изменено при редактировании
         if pressure_val is not None and min_p is not None and max_p is not None:
             if not is_value_in_range(pressure_val, min_p, max_p):
                 val_item.setBackground(QColor(255, 200, 200))
@@ -1473,6 +1542,8 @@ class RightPanel(QWidget):
             display_text = str(val) if val is not None else ''
             val_item = QTableWidgetItem(display_text)
             val_item.setTextAlignment(Qt.AlignCenter)
+            if key in (data.get('changed_fields') or []):
+                val_item.setForeground(QColor(179, 92, 0))  # тёмно-оранжевый - значение изменено при редактировании
             if key in ['g33', 'g34', 'g35', 'g36']:
                 if val is not None and str(val).strip().lower() != 'отсутствуют':
                     val_item.setBackground(QColor(255, 200, 200))
@@ -1622,6 +1693,7 @@ class RightPanel(QWidget):
         self._clear_dynamic_content()
 
         self.logo_label.hide()
+        self.dynamic_widget.show()
         self.header_label.show()
         self.clear_btn.show()
         self.legend_label.show()
@@ -2048,23 +2120,26 @@ class RightPanel(QWidget):
         if note:
             note_label = QLabel(f"<b>Примечание:</b> {note}")
             note_label.setWordWrap(True)
-            self.tables_column.addWidget(note_label)
+            self.notes_layout.addWidget(note_label)
 
         edit_history = data.get('edit_history', '')
         if edit_history:
             history_label = QLabel("<b>История редактирования:</b>")
             history_label.setWordWrap(True)
-            self.tables_column.addWidget(history_label)
+            self.notes_layout.addWidget(history_label)
 
             btn_manage = QPushButton("Управлять историей")
             btn_manage.clicked.connect(lambda: self.manage_history(data))
-            self.tables_column.addWidget(btn_manage)
+            self.notes_layout.addWidget(btn_manage)
 
             for line in edit_history.strip().split('\n'):
                 if line.strip():
                     line_label = QLabel(f"  {line.strip()}")
                     line_label.setWordWrap(True)
-                    self.tables_column.addWidget(line_label)
+                    self.notes_layout.addWidget(line_label)
+
+        if note or edit_history:
+            self.notes_widget.show()
 
     def manage_history(self, data):
         from ..widgets.dialogs import EditHistoryDialog
@@ -2097,7 +2172,7 @@ class RightPanel(QWidget):
         СОДЕРЖИМОЕ колонок tables_column/graphs_column - сама двухколоночная
         структура (dynamic_layout) не пересоздаётся."""
         self._graph_toolbars = []
-        for column in (self.tables_column, self.graphs_column, self.seal_layout):
+        for column in (self.tables_column, self.graphs_column, self.seal_layout, self.notes_layout):
             while column.count():
                 child = column.takeAt(0)
                 if child.widget():
@@ -2110,6 +2185,8 @@ class RightPanel(QWidget):
         self.export_pdf_btn.hide()
         self.legend_label.hide()
         self.seal_panel.hide()
+        self.notes_widget.hide()
+        self.dynamic_widget.hide()  # иначе видна пустая панель-подложка без содержимого
         self.logo_label.show()
 
     def _clear_layout(self, layout):
