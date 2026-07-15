@@ -82,6 +82,7 @@
 #         # Левая панель
 #         self.left_panel = LeftPanel()
 #         self.left_panel.pump_selected.connect(self.on_pump_selected)
+#         self.left_panel.pump_status_selected.connect(self.on_pump_status_selected)
 #         self.left_panel.group_selected.connect(self.on_group_selected)
 #         self.left_panel.request_import.connect(self.on_import_requested)
 #         self.left_panel.request_add.connect(self.on_add_requested)
@@ -142,6 +143,12 @@
 #         self.right_panel.display_protocol(pump_data)
 #         self.current_selected_pump = pump_data['pump_number']
 #         self.update_status()  # без параметров
+
+#     def on_pump_status_selected(self, pump_data):
+#         """Выбор строки в расширенном режиме - обновляем только статус-бар,
+#         не открывая протокол и не переключая вид обратно в компактный."""
+#         self.current_selected_pump = pump_data['pump_number']
+#         self.update_status()
 
 #     def on_group_selected(self, items):
 #         """Клик по заголовку группы дублей - показываем сравнение протоколов."""
@@ -607,7 +614,8 @@ import sys
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QMessageBox, QInputDialog, QLineEdit,
-    QDialog, QPushButton, QLabel, QTableWidget, QTableWidgetItem
+    QDialog, QPushButton, QLabel, QTableWidget, QTableWidgetItem,
+    QApplication
 )
 from PyQt5.QtCore import Qt, QTimer, QRectF
 
@@ -617,7 +625,7 @@ from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintPreviewWid
 from .widgets.left_panel import LeftPanel
 from .widgets.right_panel import RightPanel
 from .widgets.status_bar import StatusBar
-from .widgets.dialogs import PasswordDialog, AddModificationDialog, AddOrderDialog, SettingsDialog, AddPumpDialog
+from .widgets.dialogs import PasswordDialog, AddModificationDialog, AddOrderDialog, SettingsDialog, AddPumpDialog, _clamp_to_screen
 from . import database as db
 from . import excel_importer as importer
 from . import utils
@@ -629,7 +637,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("База данных проверок насосов ГУР")
-        self.setGeometry(100, 100, 1400, 900)
+        self._setup_window_geometry()
 
         self.current_selected_pump = None
         self.current_filters = None
@@ -723,6 +731,31 @@ class MainWindow(QMainWindow):
             # но ниже мы всё равно принудительно зададим правильные пропорции)
             self.left_panel.btn_view_toggle.setChecked(False)
         self.splitter.setSizes([int(self.width() * 0.4), int(self.width() * 0.6)])
+
+    def _setup_window_geometry(self):
+        """Считает размер и позицию окна от реальной доступной области
+        экрана (а не от жёстко заданных пикселей) - так окно нормально
+        открывается и на HD (1366x768), и на Full HD, и на более крупных
+        мониторах (1920x1200 и выше), используя доступное пространство,
+        но не разрастаясь до неразумных размеров на 4K/ultrawide."""
+        screen = QApplication.primaryScreen()
+        available = screen.availableGeometry() if screen else None
+
+        # Разумные пределы на случай, если доступную область экрана
+        # почему-то не удалось определить, а также "потолок" для очень
+        # больших экранов (иначе на 4K окно растянулось бы на весь стол)
+        MIN_WIDTH, MIN_HEIGHT = 1024, 700
+        MAX_WIDTH, MAX_HEIGHT = 1900, 1200
+        FALLBACK_WIDTH, FALLBACK_HEIGHT = 1400, 900
+
+        if available:
+            width = max(MIN_WIDTH, min(MAX_WIDTH, int(available.width() * 0.85)))
+            height = max(MIN_HEIGHT, min(MAX_HEIGHT, int(available.height() * 0.85)))
+            x = available.x() + (available.width() - width) // 2
+            y = available.y() + (available.height() - height) // 2
+            self.setGeometry(x, y, width, height)
+        else:
+            self.setGeometry(100, 100, FALLBACK_WIDTH, FALLBACK_HEIGHT)
 
     def toggle_statistics(self):
         if self.showing_stats:
@@ -986,6 +1019,7 @@ class MainWindow(QMainWindow):
         preview.setWindowTitle("Предпросмотр печати - список насосов")
         preview.paintRequested.connect(render_list)
         preview.resize(1000, 850)
+        _clamp_to_screen(preview, width_fraction=0.92, height_fraction=0.92)
         preview.exec_()
 
     def on_import_requested(self):

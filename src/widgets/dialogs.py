@@ -431,9 +431,25 @@
 #         layout.addWidget(btn_view_mod)
 
 #         layout.addStretch()
+
+#         btn_instructions = QPushButton("Инструкция")
+#         btn_instructions.clicked.connect(self.open_instructions)
+#         layout.addWidget(btn_instructions)
+
 #         btn_close = QPushButton("Закрыть")
 #         btn_close.clicked.connect(self.accept)
 #         layout.addWidget(btn_close)
+
+#     def open_instructions(self):
+#         dialog = QDialog(self)
+#         dialog.setWindowTitle("Инструкция")
+#         dialog.resize(400, 250)
+#         dlg_layout = QVBoxLayout(dialog)
+#         dlg_layout.addWidget(QLabel("Инструкция по применению будет размещена позже"))
+#         btn_ok = QPushButton("Закрыть")
+#         btn_ok.clicked.connect(dialog.accept)
+#         dlg_layout.addWidget(btn_ok)
+#         dialog.exec_()
 
 #     def open_add_modification(self):
 #         dialog = AddModificationDialog(self)
@@ -584,15 +600,15 @@
 #             return
 
 #         c1, self.value_tables['test1'] = self._build_value_table(
-#             "Испытание 1: подача от оборотов (ECO выкл.)",
+#             "Испытание 1\nРасход от оборотов\nECO выкл, I=0 A",
 #             self.selected_mod['norm_graph1_x'], "Обороты"
 #         )
 #         c2, self.value_tables['test2'] = self._build_value_table(
-#             "Испытание 2: подача от оборотов (ECO вкл.)",
+#             "Испытание 2\nРасход от оборотов\nECO вкл, I=1 A",
 #             self.selected_mod['norm_graph2_x'], "Обороты"
 #         )
 #         c3, self.value_tables['test3'] = self._build_value_table(
-#             "Испытание 3: подача от силы тока ECO",
+#             "Испытание 3\nРасход от силы тока\nна клапане ECO",
 #             self.selected_mod['norm_graph3_x'], "Ток, А"
 #         )
 #         # Выравниваем все 3 таблицы по нижнему краю (по самой высокой из них)
@@ -894,7 +910,8 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTextEdit, QDialogButtonBox, QMessageBox, 
     QListWidget, QListWidgetItem, QComboBox, QDateEdit,
-    QTableWidget, QTableWidgetItem, QScrollArea, QWidget, QSizePolicy
+    QTableWidget, QTableWidgetItem, QScrollArea, QWidget, QSizePolicy,
+    QApplication
 )
 from PyQt5.QtCore import Qt, QDate
 from PyQt5.QtGui import QFont
@@ -902,6 +919,23 @@ import json
 
 from .. import database as db
 from .. import utils
+
+def _clamp_to_screen(widget, width_fraction=0.95, height_fraction=0.92):
+    """Если диалог после adjustSize() оказался больше доступной области
+    экрана (актуально для HD и других небольших мониторов) - аккуратно
+    уменьшает его и центрирует. Вызывать после adjustSize()/resize()."""
+    screen = QApplication.primaryScreen()
+    if not screen:
+        return
+    available = screen.availableGeometry()
+    w = min(widget.width(), int(available.width() * width_fraction))
+    h = min(widget.height(), int(available.height() * height_fraction))
+    if w != widget.width() or h != widget.height():
+        widget.resize(w, h)
+    x = available.x() + (available.width() - w) // 2
+    y = available.y() + (available.height() - h) // 2
+    widget.move(x, y)
+
 
 class PasswordDialog(QDialog):
     def __init__(self, parent=None, message="Для удаления записи введите пароль:"):
@@ -1188,6 +1222,7 @@ class AddModificationDialog(QDialog):
         # при текущем содержимом (без лишних пустот по краям)
         layout.setSizeConstraint(QVBoxLayout.SetMinimumSize)
         self.adjustSize()
+        _clamp_to_screen(self)
 
     def _section_title(self, text):
         lbl = QLabel(text)
@@ -1474,6 +1509,7 @@ class AddPumpDialog(QDialog):
         # ещё пустой динамической области
         outer_layout.setSizeConstraint(QVBoxLayout.SetMinimumSize)
         self.adjustSize()
+        _clamp_to_screen(self)
 
     def on_modification_changed(self, index):
         # Очищаем предыдущее содержимое

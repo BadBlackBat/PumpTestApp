@@ -900,11 +900,15 @@
 #             # листа; высота при необходимости просто продолжается за
 #             # пределы одной "видимой" страницы (постраничная разбивка не
 #             # реализована)
-#             scale = (page_rect.width() / w) * 0.98
+#             scale_x = (page_rect.width() / w) * 0.98
+#             # Небольшое вертикальное растяжение (визуально привлекательнее,
+#             # заполняет лист по высоте лучше, чем строго пропорциональный
+#             # масштаб от ширины)
+#             scale_y = scale_x * 1.12
 
 #             painter = QPainter()
 #             painter.begin(printer)
-#             painter.scale(scale, scale)
+#             painter.scale(scale_x, scale_y)
 #             widget_to_print.render(painter)
 #             painter.end()
 #         except Exception as e:
@@ -1076,6 +1080,7 @@ from .. import database as db
 from .. import utils
 from ..utils import is_value_in_range
 from ..utils import format_order_number
+from .dialogs import _clamp_to_screen
 
 class RightPanel(QWidget):
     clear_requested = pyqtSignal()   # сигнал для запроса сброса
@@ -1909,6 +1914,7 @@ class RightPanel(QWidget):
         # Окно должно быть достаточно большим, чтобы лист А4 целиком
         # помещался при масштабе 65% (без обрезки и без прокрутки)
         preview.resize(850, 950)
+        _clamp_to_screen(preview, width_fraction=0.92, height_fraction=0.92)
 
         preview_widget = preview.findChild(QPrintPreviewWidget)
         if preview_widget:
