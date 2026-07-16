@@ -68,6 +68,15 @@
 #         self.logo_label.setStyleSheet("background-color: #f0f0f0; border: 1px solid #ccc; padding: 20px;")
 #         self.content_layout.addWidget(self.logo_label)
 
+#         self.loading_label = QLabel("")
+#         self.loading_label.setAlignment(Qt.AlignCenter)
+#         self.loading_label.setFont(QFont("Arial", 14))
+#         self.loading_label.setStyleSheet(
+#             "background-color: #f0f0f0; border: 1px solid #ccc; padding: 20px; color: #555;"
+#         )
+#         self.loading_label.hide()
+#         self.content_layout.addWidget(self.loading_label)
+
 #         # Легенда (постоянная)
 #         self.legend_label = QLabel()
 #         self.legend_label.setWordWrap(True)
@@ -168,6 +177,8 @@
 #         self.current_comparison_items = None
 
 #     def display_protocol(self, data):
+#         self._show_loading()
+
 #         self.current_data = data
 #         self.current_comparison_items = None
 #         self._clear_dynamic_content()  # очищаем dynamic_layout
@@ -597,6 +608,8 @@
 #         """items - список полных данных (с results_json) насосов-дублей:
 #         одинаковый номер + модификация. Показывает сравнительные таблицы
 #         и 2 графика, на каждом - линии всех найденных дублей вместе."""
+#         self._show_loading("⏳  Загрузка сравнения протоколов...")
+
 #         self.current_data = None  # это не единичный протокол
 #         self.current_comparison_items = items  # для экспорта/печати сравнения
 #         self._clear_dynamic_content()
@@ -1103,7 +1116,26 @@
 #         self.seal_panel.hide()
 #         self.notes_widget.hide()
 #         self.dynamic_widget.hide()  # иначе видна пустая панель-подложка без содержимого
+#         self.loading_label.hide()
 #         self.logo_label.show()
+
+#     def _show_loading(self, message="⏳  Загрузка протокола..."):
+#         """Показывает индикатор загрузки и СРАЗУ ЖЕ принудительно
+#         отрисовывает его на экране (иначе Qt отложил бы отрисовку до
+#         конца текущего обработчика, а он ещё построит все таблицы и
+#         графики matplotlib - это заметно небыстро). Без этого пользователь
+#         мог решить, что программа зависла, а не просто загружает данные."""
+#         self.header_label.hide()
+#         self.clear_btn.hide()
+#         self.export_pdf_btn.hide()
+#         self.legend_label.hide()
+#         self.seal_panel.hide()
+#         self.notes_widget.hide()
+#         self.dynamic_widget.hide()
+#         self.logo_label.hide()
+#         self.loading_label.setText(message)
+#         self.loading_label.show()
+#         QApplication.processEvents()
 
 #     def _clear_layout(self, layout):
 #         """Рекурсивно очищает вложенный layout (используется для контейнеров
@@ -1137,6 +1169,7 @@ from .. import utils
 from ..utils import is_value_in_range
 from ..utils import format_order_number
 from .dialogs import _clamp_to_screen
+from .. import styles
 from datetime import datetime
 
 class RightPanel(QWidget):
@@ -1182,22 +1215,20 @@ class RightPanel(QWidget):
         self.logo_label = QLabel("Здесь будет логотип\nВыберите насос для просмотра протокола")
         self.logo_label.setAlignment(Qt.AlignCenter)
         self.logo_label.setFont(QFont("Arial", 14))
-        self.logo_label.setStyleSheet("background-color: #f0f0f0; border: 1px solid #ccc; padding: 20px;")
+        self.logo_label.setStyleSheet(styles.RIGHT_PANEL_LOGO_STYLE)
         self.content_layout.addWidget(self.logo_label)
 
         self.loading_label = QLabel("")
         self.loading_label.setAlignment(Qt.AlignCenter)
         self.loading_label.setFont(QFont("Arial", 14))
-        self.loading_label.setStyleSheet(
-            "background-color: #f0f0f0; border: 1px solid #ccc; padding: 20px; color: #555;"
-        )
+        self.loading_label.setStyleSheet(styles.RIGHT_PANEL_LOADING_STYLE)
         self.loading_label.hide()
         self.content_layout.addWidget(self.loading_label)
 
         # Легенда (постоянная)
         self.legend_label = QLabel()
         self.legend_label.setWordWrap(True)
-        self.legend_label.setStyleSheet("background-color: #f0f0f0; padding: 5px;")
+        self.legend_label.setStyleSheet(styles.RIGHT_PANEL_LEGEND_STYLE)
         self.content_layout.addWidget(self.legend_label)
 
         # Динамический контейнер: слева таблицы (на общей панели-подложке),
@@ -1208,11 +1239,8 @@ class RightPanel(QWidget):
         self.dynamic_layout = QHBoxLayout(self.dynamic_widget)
         self.dynamic_layout.setSpacing(10)
 
-        panel_style = ("QFrame { background-color: #f2f5f7; "
-                       "border: 1px solid #d5dbe0; border-radius: 4px; }")
-
         self.tables_panel = QFrame()
-        self.tables_panel.setStyleSheet(panel_style)
+        self.tables_panel.setStyleSheet(styles.RIGHT_PANEL_CARD_STYLE)
         self.tables_column = QVBoxLayout(self.tables_panel)
         self.tables_column.setContentsMargins(8, 8, 8, 8)
         self.tables_column.setSpacing(8)
@@ -1227,7 +1255,7 @@ class RightPanel(QWidget):
         # Отдельная полноширинная панель для таблицы герметичности (тот же
         # фон, чтобы визуально выглядело продолжением общей панели)
         self.seal_panel = QFrame()
-        self.seal_panel.setStyleSheet(panel_style)
+        self.seal_panel.setStyleSheet(styles.RIGHT_PANEL_CARD_STYLE)
         self.seal_layout = QVBoxLayout(self.seal_panel)
         self.seal_layout.setContentsMargins(8, 8, 8, 8)
         self.content_layout.addWidget(self.seal_panel)
@@ -1288,7 +1316,7 @@ class RightPanel(QWidget):
         # Создаём QLabel с HTML и добавляем в колонку таблиц
         label = QLabel(html)
         label.setWordWrap(True)
-        label.setStyleSheet("background-color: white; padding: 10px;")
+        label.setStyleSheet(styles.RIGHT_PANEL_STATS_TEXT_STYLE)
         self.tables_column.addWidget(label)
         self.current_data = None  # сбрасываем текущий протокол, т.к. показываем статистику
         self.current_comparison_items = None
@@ -1629,9 +1657,7 @@ class RightPanel(QWidget):
         toolbar = NavigationToolbar(canvas, self)
         toolbar.setIconSize(QSize(14, 14))
         toolbar.setContentsMargins(0, 0, 0, 0)
-        toolbar.setStyleSheet(
-            "QToolBar { spacing: 0px; padding: 0px; margin: 0px; border: 0px; }"
-        )
+        toolbar.setStyleSheet(styles.RIGHT_PANEL_GRAPH_TOOLBAR_STYLE)
         self._graph_toolbars.append(toolbar)  # понадобится скрыть при экспорте в PDF
         container = QWidget()
         c_layout = QVBoxLayout(container)

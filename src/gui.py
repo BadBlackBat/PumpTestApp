@@ -202,7 +202,7 @@
 #         clicked = box.clickedButton()
 
 #         if clicked == btn_protocol:
-#             if self.right_panel.current_data is None:
+#             if self.right_panel.current_data is None and self.right_panel.current_comparison_items is None:
 #                 QMessageBox.information(self, "Печать", "Сначала откройте протокол для просмотра.")
 #                 return
 #             self.right_panel.print_protocol()
@@ -731,6 +731,7 @@ from .widgets.dialogs import PasswordDialog, AddModificationDialog, AddOrderDial
 from . import database as db
 from . import excel_importer as importer
 from . import utils
+from . import styles
 
 from datetime import datetime
 from .widgets.dialogs import EditPumpDialog
@@ -760,7 +761,7 @@ class MainWindow(QMainWindow):
         logo_label = QLabel("Лаборатория Рулевого Управления")
         logo_label.setAlignment(Qt.AlignCenter)
         logo_label.setFont(QFont("Arial", 14, QFont.Bold))
-        logo_label.setStyleSheet("color: #2c3e50;")
+        logo_label.setStyleSheet(styles.TOP_BAR_LOGO_STYLE)
         top_layout.addWidget(logo_label)
 
         # Растяжение между логотипом и кнопками

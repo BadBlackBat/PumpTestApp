@@ -2,7 +2,7 @@
 #     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QComboBox,
 #     QTableWidget, QTableWidgetItem, QPushButton, QLabel, QCheckBox,
 #     QDateEdit, QHeaderView, QAbstractItemView, QMenu,
-#     QStyledItemDelegate, QStyle, QStyleOptionViewItem
+#     QStyledItemDelegate, QStyle, QStyleOptionViewItem, QApplication
 # )
 # from PyQt5.QtCore import (
 #     Qt, pyqtSignal, QDate, QPoint, QTimer, QEvent, QEasingCurve,
@@ -668,12 +668,17 @@
 
 #     def _set_overlay_instant(self, overlay, anim_attr, color):
 #         """Мгновенно (без анимации) задаёт цвет оверлея - останавливает
-#         текущую анимацию этого оверлея, если она идёт."""
+#         текущую анимацию этого оверлея, если она идёт. Перерисовывает
+#         СРАЗУ (repaint, а не отложенный update) - иначе Qt откладывает
+#         реальную отрисовку до конца текущего обработчика события, и цвет
+#         визуально появится только после (возможно медленной) остальной
+#         части клика - запроса к БД и перестроения правой панели."""
 #         old = getattr(self, anim_attr, None)
 #         if old is not None:
 #             old.stop()
 #             setattr(self, anim_attr, None)
 #         overlay.color = color
+#         overlay.repaint()
 
 #     def on_row_hover(self, index):
 #         """Наведение мыши на строку - полупрозрачный белый оверлей плавно
@@ -749,6 +754,13 @@
 #                 self._set_overlay_instant(self._selection_overlay, '_selection_anim',
 #                                           self._vivid(base))
 #                 self._refresh_row_font(new_row)
+
+#             # Принудительно сбрасываем очередь отрисовки ПРЯМО СЕЙЧАС - иначе
+#             # Qt отложит реальную покраску экрана до конца этого обработчика,
+#             # а он ещё пойдёт в БД и перестроит всю правую панель (таблицы,
+#             # графики matplotlib), из-за чего цвет визуально "запаздывал бы"
+#             self.table.viewport().repaint()
+#             QApplication.processEvents()
 
 #         if not selected:
 #             return
@@ -974,6 +986,7 @@ from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QPolygon
 
 from .. import database as db
 from .. import utils
+from .. import styles
 
 class _NoSelectionPaintDelegate(QStyledItemDelegate):
     """Обычно Qt при отрисовке выделенной ячейки полностью игнорирует её
@@ -1115,27 +1128,13 @@ class LeftPanel(QWidget):
       # Статистика по заказу (скрыта по умолчанию)
       self.stats_label = QLabel()
       self.stats_label.setWordWrap(True)
-      self.stats_label.setStyleSheet("""
-          background-color: #e8f4f8;
-          border: 1px solid #b0d4e3;
-          border-radius: 5px;
-          padding: 4px;
-          margin: 5px 0px;
-          font-size: 12px;
-      """)
+      self.stats_label.setStyleSheet(styles.LEFT_PANEL_STATS_LABEL_STYLE)
       self.stats_label.hide()
       layout.addWidget(self.stats_label)
 
       # Таблица
       self.table = QTableWidget()
-      self.table.setStyleSheet("""
-          QTableWidget::item {
-              text-align: center;
-          }
-          QHeaderView::section {
-              font-weight: bold;
-          }
-      """)
+      self.table.setStyleSheet(styles.LEFT_PANEL_TABLE_STYLE)
       # Отключаем штатную заливку выделения Qt - иначе она перекрывает наш
       # собственный (анимированный) цвет ячейки, даже если в QSS задать
       # ":selected { background-color: transparent }"

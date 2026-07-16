@@ -8,6 +8,7 @@
 #         # Левая часть: выбранный насос
 #         self.selected_label = QLabel()
 #         self.selected_label.setMinimumWidth(150)
+#         self.selected_label.setStyleSheet("padding-left: 10px;")
 #         self.selected_label.setVisible(False)
 #         self.addWidget(self.selected_label)
         
@@ -55,6 +56,7 @@
 
 from PyQt5.QtWidgets import QStatusBar, QLabel
 from PyQt5.QtCore import Qt
+from .. import styles
 
 class StatusBar(QStatusBar):
     def __init__(self, parent=None):
@@ -63,7 +65,7 @@ class StatusBar(QStatusBar):
         # Левая часть: выбранный насос
         self.selected_label = QLabel()
         self.selected_label.setMinimumWidth(150)
-        self.selected_label.setStyleSheet("padding-left: 10px;")
+        self.selected_label.setStyleSheet(styles.STATUS_BAR_SELECTED_LABEL_STYLE)
         self.selected_label.setVisible(False)
         self.addWidget(self.selected_label)
         
@@ -75,7 +77,7 @@ class StatusBar(QStatusBar):
         # Правая часть: счётчик и дата обновления (прижаты к правому краю)
         self.count_label = QLabel()
         self.update_label = QLabel()
-        self.update_label.setStyleSheet("padding-right: 10px;")
+        self.update_label.setStyleSheet(styles.STATUS_BAR_UPDATE_LABEL_STYLE)
         self.addPermanentWidget(self.count_label)
         self.addPermanentWidget(self.update_label)
         

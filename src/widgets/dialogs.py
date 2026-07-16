@@ -805,6 +805,306 @@
 #         }
 
 
+# class EditPumpDialog(QDialog):
+#     """Комплексное редактирование существующего протокола: номер заказа,
+#     дата проверки, модификация, тип проверки, герметичность, значения
+#     испытаний и примечание. Идентификационный номер насоса не меняется -
+#     показывается как справочная информация."""
+#     def __init__(self, pump_data, parent=None):
+#         super().__init__(parent)
+#         self.pump_data = pump_data
+#         self.setWindowTitle(f"Редактирование протокола - насос № {pump_data.get('pump_number')}")
+#         self.setModal(True)
+#         self.selected_mod = None
+#         self.value_tables = {}
+#         self.seal_inputs = {}
+#         # Исходные значения - используются при перестроении таблиц (смена
+#         # модификации), чтобы не терять уже введённые результаты испытаний
+#         self.original_results = dict(pump_data.get('results_json') or {})
+#         self.original_seal = dict(pump_data.get('seal_results_json') or {})
+
+#         outer_layout = QVBoxLayout(self)
+
+#         self.mods = db.get_all_modifications()
+
+#         info_row = QHBoxLayout()
+#         info_row.addWidget(QLabel(f"Идентификационный № насоса: {pump_data.get('pump_number')}"))
+#         outer_layout.addLayout(info_row)
+
+#         def field_row(label_text, widget):
+#             row = QHBoxLayout()
+#             lbl = QLabel(label_text)
+#             lbl.setFixedWidth(110)
+#             row.addWidget(lbl)
+#             row.addWidget(widget)
+#             outer_layout.addLayout(row)
+
+#         self.mod_combo = QComboBox()
+#         current_index = 0
+#         for i, (mod_id, name) in enumerate(self.mods):
+#             self.mod_combo.addItem(name, mod_id)
+#             if mod_id == pump_data.get('modification_id'):
+#                 current_index = i
+#         field_row("Модификация:", self.mod_combo)
+
+#         self.date_input = QDateEdit()
+#         self.date_input.setCalendarPopup(True)
+#         existing_date = pump_data.get('test_date') or ''
+#         if existing_date and ' ' in existing_date:
+#             existing_date = existing_date.split(' ')[0]
+#         qdate = QDate.fromString(existing_date, 'yyyy-MM-dd')
+#         self.date_input.setDate(qdate if qdate.isValid() else QDate.currentDate())
+#         field_row("Дата:", self.date_input)
+
+#         self.type_combo = QComboBox()
+#         self.type_combo.addItems(["первичная", "повторная"])
+#         idx = self.type_combo.findText(pump_data.get('test_type') or 'первичная')
+#         if idx >= 0:
+#             self.type_combo.setCurrentIndex(idx)
+#         field_row("Тип:", self.type_combo)
+
+#         self.order_input = QLineEdit()
+#         order_num = pump_data.get('order_number')
+#         if order_num:
+#             self.order_input.setText(str(order_num).replace('.0', ''))
+#         field_row("№ заказа:", self.order_input)
+
+#         self.values_widget = QWidget()
+#         self.values_main_layout = QVBoxLayout(self.values_widget)
+#         self.tests_row = QHBoxLayout()
+#         self.tests_row.setSpacing(20)
+#         self.extra_column = QVBoxLayout()
+#         centered_tests_row = QHBoxLayout()
+#         centered_tests_row.addStretch(1)
+#         centered_tests_row.addLayout(self.tests_row)
+#         centered_tests_row.addStretch(1)
+#         self.values_main_layout.addLayout(centered_tests_row)
+#         self.values_main_layout.addLayout(self.extra_column)
+#         outer_layout.addWidget(self.values_widget)
+
+#         note_row = QHBoxLayout()
+#         note_row.addWidget(QLabel("Примечание:"))
+#         self.note_input = QLineEdit()
+#         self.note_input.setText(pump_data.get('note', '') or '')
+#         note_row.addWidget(self.note_input)
+#         outer_layout.addLayout(note_row)
+
+#         password_row = QHBoxLayout()
+#         password_row.addWidget(QLabel("Пароль для сохранения:"))
+#         self.password_input = QLineEdit()
+#         self.password_input.setEchoMode(QLineEdit.Password)
+#         password_row.addWidget(self.password_input)
+#         outer_layout.addLayout(password_row)
+
+#         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+#         button_box.button(QDialogButtonBox.Cancel).setText("Отмена")
+#         button_box.accepted.connect(self.try_accept)
+#         button_box.rejected.connect(self.reject)
+#         outer_layout.addWidget(button_box)
+
+#         self.mod_combo.setCurrentIndex(current_index)
+#         self.mod_combo.currentIndexChanged.connect(self.on_modification_changed)
+#         if self.mods:
+#             self.on_modification_changed(current_index)
+#         else:
+#             QMessageBox.warning(
+#                 self, "Нет модификаций",
+#                 "В базе нет ни одной модификации. Сначала добавьте модификацию через Настройки → Добавить модификацию."
+#             )
+
+#         outer_layout.setSizeConstraint(QVBoxLayout.SetMinimumSize)
+#         self.adjustSize()
+#         _clamp_to_screen(self)
+
+#     def on_modification_changed(self, index):
+#         self._clear_sub_layout(self.tests_row)
+#         self._clear_sub_layout(self.extra_column)
+#         self.value_tables = {}
+#         self.seal_inputs = {}
+
+#         mod_id = self.mod_combo.currentData()
+#         if mod_id is None:
+#             return
+#         self.selected_mod = db.get_modification_by_id(mod_id)
+#         if not self.selected_mod:
+#             return
+
+#         self.value_tables['test1'] = self._build_value_table(
+#             "Испытание 1\nРасход от оборотов\nECO выкл, I=0 A",
+#             self.selected_mod['norm_graph1_x'], "Обороты", 5
+#         )
+#         self.value_tables['test2'] = self._build_value_table(
+#             "Испытание 2\nРасход от оборотов\nECO вкл, I=1 A",
+#             self.selected_mod['norm_graph2_x'], "Обороты", 13
+#         )
+#         self.value_tables['test3'] = self._build_value_table(
+#             "Испытание 3\nРасход от силы тока\nна клапане ECO",
+#             self.selected_mod['norm_graph3_x'], "Ток, А", 21
+#         )
+
+#         pressure_row = QHBoxLayout()
+#         pressure_label = QLabel(
+#             f"Испытание 4: давление (норма: {self.selected_mod['pressure_min']} – "
+#             f"{self.selected_mod['pressure_max']} бар):"
+#         )
+#         pressure_label.setStyleSheet("font-weight: bold;")
+#         pressure_row.addWidget(pressure_label)
+#         self.pressure_input = QLineEdit()
+#         self.pressure_input.setFixedWidth(120)
+#         existing_pressure = self.original_results.get('g32')
+#         if existing_pressure is not None:
+#             self.pressure_input.setText(str(existing_pressure))
+#         pressure_row.addWidget(self.pressure_input)
+#         pressure_row.addStretch()
+#         self.extra_column.addLayout(pressure_row)
+
+#         seal_label = QLabel("Герметичность:")
+#         seal_label.setStyleSheet("font-weight: bold;")
+#         self.extra_column.addWidget(seal_label)
+#         seal_grid = QHBoxLayout()
+#         for key in utils.SEAL_KEYS:
+#             one_col = QVBoxLayout()
+#             lbl = QLabel(utils.SEAL_LABELS[key] + ":")
+#             lbl.setWordWrap(True)
+#             lbl.setFixedWidth(140)
+#             one_col.addWidget(lbl)
+#             edit = QLineEdit(self.original_seal.get(key, self.selected_mod['seal_rules'].get(key, '')))
+#             one_col.addWidget(edit)
+#             self.seal_inputs[key] = edit
+#             seal_grid.addLayout(one_col)
+#         seal_grid.addStretch()
+#         self.extra_column.addLayout(seal_grid)
+
+#     def _clear_sub_layout(self, layout):
+#         while layout.count():
+#             child = layout.takeAt(0)
+#             if child.widget():
+#                 child.widget().deleteLater()
+#             elif child.layout():
+#                 self._clear_sub_layout(child.layout())
+
+#     def _build_value_table(self, title, x_values, x_label, start_key):
+#         col = QVBoxLayout()
+#         title_label = QLabel(title)
+#         title_label.setStyleSheet("font-weight: bold;")
+#         title_label.setWordWrap(True)
+#         col.addWidget(title_label)
+
+#         table = QTableWidget()
+#         table.setColumnCount(2)
+#         table.setHorizontalHeaderLabels([x_label, "Результат"])
+#         table.setRowCount(len(x_values))
+#         for i, x in enumerate(x_values):
+#             x_item = QTableWidgetItem(str(x))
+#             x_item.setFlags(Qt.ItemIsEnabled)
+#             x_item.setTextAlignment(Qt.AlignCenter)
+#             table.setItem(i, 0, x_item)
+#             existing_val = self.original_results.get(f'g{start_key + i}')
+#             res_item = QTableWidgetItem(str(existing_val) if existing_val is not None else '')
+#             res_item.setTextAlignment(Qt.AlignCenter)
+#             table.setItem(i, 1, res_item)
+#         table.setEditTriggers(QTableWidget.AllEditTriggers)
+
+#         small_font = QFont()
+#         small_font.setPointSize(9)
+#         table.setFont(small_font)
+#         table.horizontalHeader().setFont(small_font)
+#         table.verticalHeader().setVisible(False)
+#         table.verticalHeader().setDefaultSectionSize(22)
+#         table.resizeRowsToContents()
+#         table.resizeColumnsToContents()
+#         table.horizontalHeader().setMinimumSectionSize(65)
+#         table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+#         table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+#         total_height = table.horizontalHeader().height() + 4
+#         for row in range(table.rowCount()):
+#             total_height += table.rowHeight(row)
+#         table.setFixedHeight(total_height)
+#         total_width = 6
+#         for c in range(table.columnCount()):
+#             total_width += table.columnWidth(c)
+#         table.setFixedWidth(total_width)
+
+#         col.addWidget(table)
+#         col.addStretch(1)
+#         container = QWidget()
+#         container.setLayout(col)
+#         container.setFixedWidth(table.width())
+#         container.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Minimum)
+#         self.tests_row.addWidget(container)
+#         return table
+
+#     def try_accept(self):
+#         if not self.mods or not self.selected_mod:
+#             QMessageBox.warning(self, "Ошибка", "Сначала добавьте модификацию через Настройки.")
+#             return
+
+#         for key, table in self.value_tables.items():
+#             for row in range(table.rowCount()):
+#                 item = table.item(row, 1)
+#                 text = item.text().strip() if item else ""
+#                 if not text:
+#                     QMessageBox.warning(self, "Ошибка", "Заполните все значения результатов испытаний.")
+#                     return
+#                 try:
+#                     float(text)
+#                 except ValueError:
+#                     QMessageBox.warning(self, "Ошибка", f"Некорректное числовое значение: '{text}'.")
+#                     return
+
+#         pressure_text = self.pressure_input.text().strip()
+#         if not pressure_text:
+#             QMessageBox.warning(self, "Ошибка", "Введите значение давления.")
+#             return
+#         try:
+#             float(pressure_text)
+#         except ValueError:
+#             QMessageBox.warning(self, "Ошибка", "Некорректное значение давления.")
+#             return
+
+#         for key, edit in self.seal_inputs.items():
+#             if not edit.text().strip():
+#                 QMessageBox.warning(self, "Ошибка", "Заполните все поля проверки на герметичность.")
+#                 return
+
+#         if not self.password_input.text():
+#             QMessageBox.warning(self, "Ошибка", "Введите пароль.")
+#             return
+
+#         self.accept()
+
+#     def get_data(self):
+#         results = {}
+
+#         def fill(table, start_key):
+#             for i in range(table.rowCount()):
+#                 key = f'g{start_key + i}'
+#                 text = table.item(i, 1).text().strip()
+#                 try:
+#                     results[key] = float(text)
+#                 except ValueError:
+#                     results[key] = None
+
+#         fill(self.value_tables['test1'], 5)
+#         fill(self.value_tables['test2'], 13)
+#         fill(self.value_tables['test3'], 21)
+#         results['g32'] = float(self.pressure_input.text().strip())
+
+#         seal_results = {key: edit.text().strip() for key, edit in self.seal_inputs.items()}
+
+#         return {
+#             'modification_id': self.selected_mod['id'],
+#             'modification_name': self.selected_mod['name'],
+#             'test_date': self.date_input.date().toString('yyyy-MM-dd'),
+#             'test_type': self.type_combo.currentText(),
+#             'order_number': self.order_input.text().strip() or None,
+#             'results': results,
+#             'seal_results': seal_results,
+#             'note': self.note_input.text().strip(),
+#             'password': self.password_input.text(),
+#         }
+
+
 # class EditProtocolDialog(QDialog):
 #     def __init__(self, pump_data, parent=None):
 #         super().__init__(parent)
@@ -939,6 +1239,7 @@ import json
 
 from .. import database as db
 from .. import utils
+from .. import styles
 
 def _clamp_to_screen(widget, width_fraction=0.95, height_fraction=0.92):
     """Если диалог после adjustSize() оказался больше доступной области
@@ -1246,7 +1547,7 @@ class AddModificationDialog(QDialog):
 
     def _section_title(self, text):
         lbl = QLabel(text)
-        lbl.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        lbl.setStyleSheet(styles.DIALOG_SECTION_TITLE_STYLE)
         return lbl
 
     def try_accept(self):
@@ -1569,7 +1870,7 @@ class AddPumpDialog(QDialog):
             f"Испытание 4: давление (норма: {self.selected_mod['pressure_min']} – "
             f"{self.selected_mod['pressure_max']} бар):"
         )
-        pressure_label.setStyleSheet("font-weight: bold;")
+        pressure_label.setStyleSheet(styles.DIALOG_SECTION_TITLE_STYLE_COMPACT)
         pressure_row.addWidget(pressure_label)
         self.pressure_input = QLineEdit()
         self.pressure_input.setFixedWidth(120)
@@ -1580,7 +1881,7 @@ class AddPumpDialog(QDialog):
         # Герметичность - отдельная полноширинная строка ПОД испытанием 4,
         # каждый пункт на своей строке
         seal_label = QLabel("Герметичность:")
-        seal_label.setStyleSheet("font-weight: bold;")
+        seal_label.setStyleSheet(styles.DIALOG_SECTION_TITLE_STYLE_COMPACT)
         self.extra_column.addWidget(seal_label)
         for key in utils.SEAL_KEYS:
             row = QHBoxLayout()
@@ -1607,7 +1908,7 @@ class AddPumpDialog(QDialog):
         col = QVBoxLayout(container)
         col.setContentsMargins(0, 0, 0, 0)
         title_label = QLabel(title)
-        title_label.setStyleSheet("font-weight: bold;")
+        title_label.setStyleSheet(styles.DIALOG_SECTION_TITLE_STYLE_COMPACT)
         title_label.setWordWrap(True)
         col.addWidget(title_label)
 
@@ -1873,7 +2174,7 @@ class EditPumpDialog(QDialog):
             f"Испытание 4: давление (норма: {self.selected_mod['pressure_min']} – "
             f"{self.selected_mod['pressure_max']} бар):"
         )
-        pressure_label.setStyleSheet("font-weight: bold;")
+        pressure_label.setStyleSheet(styles.DIALOG_SECTION_TITLE_STYLE_COMPACT)
         pressure_row.addWidget(pressure_label)
         self.pressure_input = QLineEdit()
         self.pressure_input.setFixedWidth(120)
@@ -1885,7 +2186,7 @@ class EditPumpDialog(QDialog):
         self.extra_column.addLayout(pressure_row)
 
         seal_label = QLabel("Герметичность:")
-        seal_label.setStyleSheet("font-weight: bold;")
+        seal_label.setStyleSheet(styles.DIALOG_SECTION_TITLE_STYLE_COMPACT)
         self.extra_column.addWidget(seal_label)
         seal_grid = QHBoxLayout()
         for key in utils.SEAL_KEYS:
@@ -1912,7 +2213,7 @@ class EditPumpDialog(QDialog):
     def _build_value_table(self, title, x_values, x_label, start_key):
         col = QVBoxLayout()
         title_label = QLabel(title)
-        title_label.setStyleSheet("font-weight: bold;")
+        title_label.setStyleSheet(styles.DIALOG_SECTION_TITLE_STYLE_COMPACT)
         title_label.setWordWrap(True)
         col.addWidget(title_label)
 
