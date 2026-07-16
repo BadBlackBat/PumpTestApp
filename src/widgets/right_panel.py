@@ -28,6 +28,7 @@
 #     def __init__(self, parent=None):
 #         super().__init__(parent)
 #         self.current_data = None
+#         self.current_comparison_items = None
 #         self._graph_toolbars = []
 #         self.setup_ui()
 
@@ -105,6 +106,12 @@
 #         self.seal_layout.setContentsMargins(8, 8, 8, 8)
 #         self.content_layout.addWidget(self.seal_panel)
 
+#         # Примечание и история редактирования - в самом конце, после
+#         # герметичности
+#         self.notes_widget = QWidget()
+#         self.notes_layout = QVBoxLayout(self.notes_widget)
+#         self.content_layout.addWidget(self.notes_widget)
+
 #         scroll.setWidget(content)
 #         layout.addWidget(scroll)
 
@@ -114,6 +121,7 @@
 #         self.export_pdf_btn.hide()
 #         self.legend_label.hide()
 #         self.seal_panel.hide()
+#         self.notes_widget.hide()
 #         self.dynamic_widget.hide()
 #         self.logo_label.show()
 
@@ -157,9 +165,11 @@
 #         label.setStyleSheet("background-color: white; padding: 10px;")
 #         self.tables_column.addWidget(label)
 #         self.current_data = None  # сбрасываем текущий протокол, т.к. показываем статистику
+#         self.current_comparison_items = None
 
 #     def display_protocol(self, data):
 #         self.current_data = data
+#         self.current_comparison_items = None
 #         self._clear_dynamic_content()  # очищаем dynamic_layout
 
 #         # Показываем постоянные виджеты
@@ -587,13 +597,15 @@
 #         """items - список полных данных (с results_json) насосов-дублей:
 #         одинаковый номер + модификация. Показывает сравнительные таблицы
 #         и 2 графика, на каждом - линии всех найденных дублей вместе."""
-#         self.current_data = None  # это не единичный протокол, экспорт PDF недоступен
+#         self.current_data = None  # это не единичный протокол
+#         self.current_comparison_items = items  # для экспорта/печати сравнения
 #         self._clear_dynamic_content()
 
 #         self.logo_label.hide()
 #         self.dynamic_widget.show()
 #         self.header_label.show()
 #         self.clear_btn.show()
+#         self.export_pdf_btn.show()
 #         self.legend_label.show()
 
 #         first = items[0]
@@ -865,8 +877,8 @@
 #         self.graphs_column.addWidget(self._make_graph_widget(fig2))
 
 #     def print_protocol(self):
-#         """Открывает предпросмотр печати текущего протокола."""
-#         if not self.current_data:
+#         """Открывает предпросмотр печати текущего протокола (или сравнения дублей)."""
+#         if not self.current_data and not self.current_comparison_items:
 #             QMessageBox.warning(self, "Печать", "Сначала выберите протокол для печати.")
 #             return
 
@@ -958,14 +970,19 @@
 #                 toolbar.show()
 
 #     def export_to_pdf(self):
-#         """Экспортирует текущий (единичный) протокол в PDF-файл."""
-#         if not self.current_data:
+#         """Экспортирует текущий протокол (или сравнение дублей) в PDF-файл."""
+#         if self.current_data:
+#             pump_number = self.current_data.get('pump_number', 'protocol')
+#             safe_number = str(pump_number).replace('/', '_').replace('\\', '_')
+#             default_name = f"Протокол_{safe_number}.pdf"
+#         elif self.current_comparison_items:
+#             pump_number = self.current_comparison_items[0].get('pump_number', 'comparison')
+#             safe_number = str(pump_number).replace('/', '_').replace('\\', '_')
+#             default_name = f"Сравнение_{safe_number}.pdf"
+#         else:
 #             QMessageBox.warning(self, "Экспорт в PDF", "Сначала выберите протокол для экспорта.")
 #             return
 
-#         pump_number = self.current_data.get('pump_number', 'protocol')
-#         safe_number = str(pump_number).replace('/', '_').replace('\\', '_')
-#         default_name = f"Протокол_{safe_number}.pdf"
 #         file_path, _ = QFileDialog.getSaveFileName(
 #             self, "Сохранить протокол в PDF", default_name, "PDF файлы (*.pdf)"
 #         )
@@ -1018,23 +1035,26 @@
 #         if note:
 #             note_label = QLabel(f"<b>Примечание:</b> {note}")
 #             note_label.setWordWrap(True)
-#             self.tables_column.addWidget(note_label)
+#             self.notes_layout.addWidget(note_label)
 
 #         edit_history = data.get('edit_history', '')
 #         if edit_history:
 #             history_label = QLabel("<b>История редактирования:</b>")
 #             history_label.setWordWrap(True)
-#             self.tables_column.addWidget(history_label)
+#             self.notes_layout.addWidget(history_label)
 
 #             btn_manage = QPushButton("Управлять историей")
 #             btn_manage.clicked.connect(lambda: self.manage_history(data))
-#             self.tables_column.addWidget(btn_manage)
+#             self.notes_layout.addWidget(btn_manage)
 
 #             for line in edit_history.strip().split('\n'):
 #                 if line.strip():
 #                     line_label = QLabel(f"  {line.strip()}")
 #                     line_label.setWordWrap(True)
-#                     self.tables_column.addWidget(line_label)
+#                     self.notes_layout.addWidget(line_label)
+
+#         if note or edit_history:
+#             self.notes_widget.show()
 
 #     def manage_history(self, data):
 #         from ..widgets.dialogs import EditHistoryDialog
@@ -1057,6 +1077,7 @@
 #     def clear_protocol(self):
 #         """Вызывается по кнопке 'Скрыть протокол' - явный сброс просмотра,
 #         уведомляет наружу (MainWindow), чтобы сбросить фильтры/выделение."""
+#         self.current_comparison_items = None
 #         self._clear_dynamic_content()
 #         self.clear_requested.emit()
 
@@ -1067,7 +1088,7 @@
 #         СОДЕРЖИМОЕ колонок tables_column/graphs_column - сама двухколоночная
 #         структура (dynamic_layout) не пересоздаётся."""
 #         self._graph_toolbars = []
-#         for column in (self.tables_column, self.graphs_column, self.seal_layout):
+#         for column in (self.tables_column, self.graphs_column, self.seal_layout, self.notes_layout):
 #             while column.count():
 #                 child = column.takeAt(0)
 #                 if child.widget():
@@ -1080,6 +1101,7 @@
 #         self.export_pdf_btn.hide()
 #         self.legend_label.hide()
 #         self.seal_panel.hide()
+#         self.notes_widget.hide()
 #         self.dynamic_widget.hide()  # иначе видна пустая панель-подложка без содержимого
 #         self.logo_label.show()
 
@@ -1123,6 +1145,7 @@ class RightPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_data = None
+        self.current_comparison_items = None
         self._graph_toolbars = []
         self.setup_ui()
 
@@ -1161,6 +1184,15 @@ class RightPanel(QWidget):
         self.logo_label.setFont(QFont("Arial", 14))
         self.logo_label.setStyleSheet("background-color: #f0f0f0; border: 1px solid #ccc; padding: 20px;")
         self.content_layout.addWidget(self.logo_label)
+
+        self.loading_label = QLabel("")
+        self.loading_label.setAlignment(Qt.AlignCenter)
+        self.loading_label.setFont(QFont("Arial", 14))
+        self.loading_label.setStyleSheet(
+            "background-color: #f0f0f0; border: 1px solid #ccc; padding: 20px; color: #555;"
+        )
+        self.loading_label.hide()
+        self.content_layout.addWidget(self.loading_label)
 
         # Легенда (постоянная)
         self.legend_label = QLabel()
@@ -1259,9 +1291,13 @@ class RightPanel(QWidget):
         label.setStyleSheet("background-color: white; padding: 10px;")
         self.tables_column.addWidget(label)
         self.current_data = None  # сбрасываем текущий протокол, т.к. показываем статистику
+        self.current_comparison_items = None
 
     def display_protocol(self, data):
+        self._show_loading()
+
         self.current_data = data
+        self.current_comparison_items = None
         self._clear_dynamic_content()  # очищаем dynamic_layout
 
         # Показываем постоянные виджеты
@@ -1689,13 +1725,17 @@ class RightPanel(QWidget):
         """items - список полных данных (с results_json) насосов-дублей:
         одинаковый номер + модификация. Показывает сравнительные таблицы
         и 2 графика, на каждом - линии всех найденных дублей вместе."""
-        self.current_data = None  # это не единичный протокол, экспорт PDF недоступен
+        self._show_loading("⏳  Загрузка сравнения протоколов...")
+
+        self.current_data = None  # это не единичный протокол
+        self.current_comparison_items = items  # для экспорта/печати сравнения
         self._clear_dynamic_content()
 
         self.logo_label.hide()
         self.dynamic_widget.show()
         self.header_label.show()
         self.clear_btn.show()
+        self.export_pdf_btn.show()
         self.legend_label.show()
 
         first = items[0]
@@ -1967,8 +2007,8 @@ class RightPanel(QWidget):
         self.graphs_column.addWidget(self._make_graph_widget(fig2))
 
     def print_protocol(self):
-        """Открывает предпросмотр печати текущего протокола."""
-        if not self.current_data:
+        """Открывает предпросмотр печати текущего протокола (или сравнения дублей)."""
+        if not self.current_data and not self.current_comparison_items:
             QMessageBox.warning(self, "Печать", "Сначала выберите протокол для печати.")
             return
 
@@ -2060,14 +2100,19 @@ class RightPanel(QWidget):
                 toolbar.show()
 
     def export_to_pdf(self):
-        """Экспортирует текущий (единичный) протокол в PDF-файл."""
-        if not self.current_data:
+        """Экспортирует текущий протокол (или сравнение дублей) в PDF-файл."""
+        if self.current_data:
+            pump_number = self.current_data.get('pump_number', 'protocol')
+            safe_number = str(pump_number).replace('/', '_').replace('\\', '_')
+            default_name = f"Протокол_{safe_number}.pdf"
+        elif self.current_comparison_items:
+            pump_number = self.current_comparison_items[0].get('pump_number', 'comparison')
+            safe_number = str(pump_number).replace('/', '_').replace('\\', '_')
+            default_name = f"Сравнение_{safe_number}.pdf"
+        else:
             QMessageBox.warning(self, "Экспорт в PDF", "Сначала выберите протокол для экспорта.")
             return
 
-        pump_number = self.current_data.get('pump_number', 'protocol')
-        safe_number = str(pump_number).replace('/', '_').replace('\\', '_')
-        default_name = f"Протокол_{safe_number}.pdf"
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Сохранить протокол в PDF", default_name, "PDF файлы (*.pdf)"
         )
@@ -2162,6 +2207,7 @@ class RightPanel(QWidget):
     def clear_protocol(self):
         """Вызывается по кнопке 'Скрыть протокол' - явный сброс просмотра,
         уведомляет наружу (MainWindow), чтобы сбросить фильтры/выделение."""
+        self.current_comparison_items = None
         self._clear_dynamic_content()
         self.clear_requested.emit()
 
@@ -2187,7 +2233,26 @@ class RightPanel(QWidget):
         self.seal_panel.hide()
         self.notes_widget.hide()
         self.dynamic_widget.hide()  # иначе видна пустая панель-подложка без содержимого
+        self.loading_label.hide()
         self.logo_label.show()
+
+    def _show_loading(self, message="⏳  Загрузка протокола..."):
+        """Показывает индикатор загрузки и СРАЗУ ЖЕ принудительно
+        отрисовывает его на экране (иначе Qt отложил бы отрисовку до
+        конца текущего обработчика, а он ещё построит все таблицы и
+        графики matplotlib - это заметно небыстро). Без этого пользователь
+        мог решить, что программа зависла, а не просто загружает данные."""
+        self.header_label.hide()
+        self.clear_btn.hide()
+        self.export_pdf_btn.hide()
+        self.legend_label.hide()
+        self.seal_panel.hide()
+        self.notes_widget.hide()
+        self.dynamic_widget.hide()
+        self.logo_label.hide()
+        self.loading_label.setText(message)
+        self.loading_label.show()
+        QApplication.processEvents()
 
     def _clear_layout(self, layout):
         """Рекурсивно очищает вложенный layout (используется для контейнеров

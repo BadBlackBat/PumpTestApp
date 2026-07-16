@@ -646,7 +646,9 @@
 #         old_note = pump_data.get('note', '') or ''
 #         history_parts = []
 #         if changed_fields:
-#             history_parts.append(f"изменены поля: {', '.join(changed_fields)}")
+#             description = utils.describe_changed_fields(changed_fields)
+#             if description:
+#                 history_parts.append(description)
 #         if new_note.strip() != old_note.strip():
 #             if new_note.strip() == "" and old_note.strip() != "":
 #                 history_parts.append("примечание удалено")
@@ -914,7 +916,7 @@ class MainWindow(QMainWindow):
         clicked = box.clickedButton()
 
         if clicked == btn_protocol:
-            if self.right_panel.current_data is None:
+            if self.right_panel.current_data is None and self.right_panel.current_comparison_items is None:
                 QMessageBox.information(self, "Печать", "Сначала откройте протокол для просмотра.")
                 return
             self.right_panel.print_protocol()
