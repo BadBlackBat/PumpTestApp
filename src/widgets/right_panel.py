@@ -20,6 +20,7 @@
 # from ..utils import is_value_in_range
 # from ..utils import format_order_number
 # from .dialogs import _clamp_to_screen
+# from .. import styles
 # from datetime import datetime
 
 # class RightPanel(QWidget):
@@ -65,22 +66,20 @@
 #         self.logo_label = QLabel("Здесь будет логотип\nВыберите насос для просмотра протокола")
 #         self.logo_label.setAlignment(Qt.AlignCenter)
 #         self.logo_label.setFont(QFont("Arial", 14))
-#         self.logo_label.setStyleSheet("background-color: #f0f0f0; border: 1px solid #ccc; padding: 20px;")
+#         self.logo_label.setStyleSheet(styles.RIGHT_PANEL_LOGO_STYLE)
 #         self.content_layout.addWidget(self.logo_label)
 
 #         self.loading_label = QLabel("")
 #         self.loading_label.setAlignment(Qt.AlignCenter)
 #         self.loading_label.setFont(QFont("Arial", 14))
-#         self.loading_label.setStyleSheet(
-#             "background-color: #f0f0f0; border: 1px solid #ccc; padding: 20px; color: #555;"
-#         )
+#         self.loading_label.setStyleSheet(styles.RIGHT_PANEL_LOADING_STYLE)
 #         self.loading_label.hide()
 #         self.content_layout.addWidget(self.loading_label)
 
 #         # Легенда (постоянная)
 #         self.legend_label = QLabel()
 #         self.legend_label.setWordWrap(True)
-#         self.legend_label.setStyleSheet("background-color: #f0f0f0; padding: 5px;")
+#         self.legend_label.setStyleSheet(styles.RIGHT_PANEL_LEGEND_STYLE)
 #         self.content_layout.addWidget(self.legend_label)
 
 #         # Динамический контейнер: слева таблицы (на общей панели-подложке),
@@ -91,11 +90,8 @@
 #         self.dynamic_layout = QHBoxLayout(self.dynamic_widget)
 #         self.dynamic_layout.setSpacing(10)
 
-#         panel_style = ("QFrame { background-color: #f2f5f7; "
-#                        "border: 1px solid #d5dbe0; border-radius: 4px; }")
-
 #         self.tables_panel = QFrame()
-#         self.tables_panel.setStyleSheet(panel_style)
+#         self.tables_panel.setStyleSheet(styles.RIGHT_PANEL_CARD_STYLE)
 #         self.tables_column = QVBoxLayout(self.tables_panel)
 #         self.tables_column.setContentsMargins(8, 8, 8, 8)
 #         self.tables_column.setSpacing(8)
@@ -110,7 +106,7 @@
 #         # Отдельная полноширинная панель для таблицы герметичности (тот же
 #         # фон, чтобы визуально выглядело продолжением общей панели)
 #         self.seal_panel = QFrame()
-#         self.seal_panel.setStyleSheet(panel_style)
+#         self.seal_panel.setStyleSheet(styles.RIGHT_PANEL_CARD_STYLE)
 #         self.seal_layout = QVBoxLayout(self.seal_panel)
 #         self.seal_layout.setContentsMargins(8, 8, 8, 8)
 #         self.content_layout.addWidget(self.seal_panel)
@@ -171,7 +167,7 @@
 #         # Создаём QLabel с HTML и добавляем в колонку таблиц
 #         label = QLabel(html)
 #         label.setWordWrap(True)
-#         label.setStyleSheet("background-color: white; padding: 10px;")
+#         label.setStyleSheet(styles.RIGHT_PANEL_STATS_TEXT_STYLE)
 #         self.tables_column.addWidget(label)
 #         self.current_data = None  # сбрасываем текущий протокол, т.к. показываем статистику
 #         self.current_comparison_items = None
@@ -512,9 +508,7 @@
 #         toolbar = NavigationToolbar(canvas, self)
 #         toolbar.setIconSize(QSize(14, 14))
 #         toolbar.setContentsMargins(0, 0, 0, 0)
-#         toolbar.setStyleSheet(
-#             "QToolBar { spacing: 0px; padding: 0px; margin: 0px; border: 0px; }"
-#         )
+#         toolbar.setStyleSheet(styles.RIGHT_PANEL_GRAPH_TOOLBAR_STYLE)
 #         self._graph_toolbars.append(toolbar)  # понадобится скрыть при экспорте в PDF
 #         container = QWidget()
 #         c_layout = QVBoxLayout(container)
@@ -1147,13 +1141,17 @@
 #             elif child.layout():
 #                 self._clear_layout(child.layout())
 
+
+
+import os
+
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
     QTableWidgetItem, QPushButton, QScrollArea, QSizePolicy,
     QFileDialog, QMessageBox, QFrame, QApplication
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer
-from PyQt5.QtGui import QColor, QFont, QPainter
+from PyQt5.QtGui import QColor, QFont, QPainter, QPixmap
 from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintPreviewWidget
 
 import matplotlib
@@ -1171,6 +1169,13 @@ from ..utils import format_order_number
 from .dialogs import _clamp_to_screen
 from .. import styles
 from datetime import datetime
+
+# Логотип - та же картинка, что и значок окна (см. RESOURCES_DIR в gui.py),
+# только полноразмерная версия, не обрезанная под квадрат
+LOGO_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'resources', 'logo.png'
+)
+
 
 class RightPanel(QWidget):
     clear_requested = pyqtSignal()   # сигнал для запроса сброса
@@ -1212,9 +1217,29 @@ class RightPanel(QWidget):
         self.content_layout.addWidget(self.header_label)
 
 
-        self.logo_label = QLabel("Здесь будет логотип\nВыберите насос для просмотра протокола")
-        self.logo_label.setAlignment(Qt.AlignCenter)
-        self.logo_label.setFont(QFont("Arial", 14))
+        # Логотип: картинка + текст-подсказка под ней. self.logo_label -
+        # контейнер (не сам QLabel с картинкой), чтобы весь остальной код
+        # (show()/hide() в разных местах файла) не пришлось переписывать
+        self.logo_label = QWidget()
+        self.logo_label.setObjectName("logoContainer")
+        self.logo_label.setAttribute(Qt.WA_StyledBackground, True)
+        logo_layout = QVBoxLayout(self.logo_label)
+        logo_layout.setAlignment(Qt.AlignCenter)
+
+        logo_image_label = QLabel()
+        logo_image_label.setAlignment(Qt.AlignCenter)
+        if os.path.exists(LOGO_PATH):
+            pixmap = QPixmap(LOGO_PATH)
+            if not pixmap.isNull():
+                pixmap = pixmap.scaledToWidth(220, Qt.SmoothTransformation)
+                logo_image_label.setPixmap(pixmap)
+        logo_layout.addWidget(logo_image_label)
+
+        logo_text_label = QLabel("Выберите насос для просмотра протокола")
+        logo_text_label.setAlignment(Qt.AlignCenter)
+        logo_text_label.setFont(QFont("Arial", 14))
+        logo_layout.addWidget(logo_text_label)
+
         self.logo_label.setStyleSheet(styles.RIGHT_PANEL_LOGO_STYLE)
         self.content_layout.addWidget(self.logo_label)
 

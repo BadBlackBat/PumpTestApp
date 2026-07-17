@@ -572,7 +572,14 @@
 #                 parts.append(f"заказ: №{order_str}")
 #             if filters.get('only_duplicates'):
 #                 parts.append("только дубли")
-#             filters_text = ", ".join(parts)
+#             if parts:
+#                 # Если фильтров много - переносим на 2 строки (примерно
+#                 # поровну), иначе при выборе всех фильтров сразу текст не
+#                 # помещается в отведённое место по центру статус-бара
+#                 mid = (len(parts) + 1) // 2
+#                 line1 = ", ".join(parts[:mid])
+#                 line2 = ", ".join(parts[mid:])
+#                 filters_text = line1 + ("\n" + line2 if line2 else "")
 #         last_update = db.get_last_update_date()
 #         self.status_bar.set_status("Готово", count=count, good_count=good_count, filters=filters_text,
 #                                    selected_pump=selected_pump, last_update=last_update)
@@ -714,20 +721,21 @@
 #         self.showing_stats = False
 
 import sys
+import os
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QMessageBox, QInputDialog, QLineEdit,
     QDialog, QPushButton, QLabel, QTableWidget, QTableWidgetItem,
-    QApplication
+    QApplication, QGraphicsDropShadowEffect, QSizePolicy
 )
 from PyQt5.QtCore import Qt, QTimer, QRectF
 
-from PyQt5.QtGui import QFont, QPainter, QColor
+from PyQt5.QtGui import QFont, QPainter, QColor, QIcon
 from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintPreviewWidget
 
 from .widgets.left_panel import LeftPanel
 from .widgets.right_panel import RightPanel
-from .widgets.status_bar import StatusBar
+from .widgets.status_bar import StatusBar, _GlowLine
 from .widgets.dialogs import PasswordDialog, AddModificationDialog, AddOrderDialog, SettingsDialog, AddPumpDialog, _clamp_to_screen
 from . import database as db
 from . import excel_importer as importer
@@ -738,10 +746,33 @@ from datetime import datetime
 from .widgets.dialogs import EditPumpDialog
 import json
 
+# Папка с изображениями (значок окна, логотип) - лежит рядом с исходниками,
+# в src/resources/
+RESOURCES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
+ICON_PATH = os.path.join(RESOURCES_DIR, 'icon.png')
+
+
+class _TopBar(QWidget):
+    """Верхняя панель - оформлена в стиле статус-бара, только зеркально:
+    скруглены нижние углы, тень уходит вниз, светящаяся полоса-акцент
+    лежит вдоль НИЖНЕГО края (у статус-бара - вдоль верхнего)."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._glow_line = _GlowLine(self)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        h = styles.STATUS_BAR_GLOW_HEIGHT
+        self._glow_line.setGeometry(0, self.height() - h, self.width(), h)
+        self._glow_line.raise_()
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("База данных проверок насосов ГУР")
+        if os.path.exists(ICON_PATH):
+            self.setWindowIcon(QIcon(ICON_PATH))
         self._setup_window_geometry()
 
         self.current_selected_pump = None
@@ -749,19 +780,41 @@ class MainWindow(QMainWindow):
         
         central = QWidget()
         self.setCentralWidget(central)
-        main_layout = QVBoxLayout(central)
+        outer_layout = QVBoxLayout(central)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        # Внутренний контейнер с обычными отступами - сюда идёт всё,
+        # КРОМЕ верхней панели (сплиттер, статус-бар и т.д.). Сама верхняя
+        # панель кладётся прямо во внешний layout без отступов, чтобы
+        # доставать до самых краёв окна - точно как у статус-бара, которым
+        # управляет сам QMainWindow
+        content_widget = QWidget()
+        main_layout = QVBoxLayout(content_widget)
         main_layout.setContentsMargins(5, 5, 5, 5)
 
-        # Верхняя панель с логотипом и кнопками
-        top_layout = QHBoxLayout()
+        # Верхняя панель с логотипом и кнопками - оформлена в стиле
+        # статус-бара (тот же тёмный графит), только зеркально
+        top_bar_widget = _TopBar()
+        top_bar_widget.setObjectName("topBar")
+        # Обычный QWidget (в отличие от QStatusBar/QPushButton/QFrame) не
+        # рисует фон/рамку из QSS без этого атрибута - без него весь
+        # градиент из TOP_BAR_STYLE молча игнорировался бы при отрисовке
+        top_bar_widget.setAttribute(Qt.WA_StyledBackground, True)
+        top_bar_widget.setFixedHeight(styles.TOP_BAR_HEIGHT)
+        top_bar_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        top_bar_widget.setStyleSheet(styles.TOP_BAR_STYLE)
+
+        top_layout = QHBoxLayout(top_bar_widget)
+        top_layout.setContentsMargins(14, 6, 14, 6)
 
         # Добавляем растяжение слева, чтобы центрировать логотип
         top_layout.addStretch()
 
-        # Логотип (текст)
+        # Логотип (текст) - современный светлый шрифт, крупнее прежнего
         logo_label = QLabel("Лаборатория Рулевого Управления")
         logo_label.setAlignment(Qt.AlignCenter)
-        logo_label.setFont(QFont("Arial", 14, QFont.Bold))
+        logo_label.setFont(QFont("Segoe UI", 16, QFont.Bold))
         logo_label.setStyleSheet(styles.TOP_BAR_LOGO_STYLE)
         top_layout.addWidget(logo_label)
 
@@ -790,7 +843,16 @@ class MainWindow(QMainWindow):
         top_layout.addWidget(btn_settings)
         top_layout.addWidget(btn_print)
 
-        main_layout.insertLayout(0, top_layout)
+        # Тень, приподнимающая панель над рабочей областью - зеркально
+        # статус-бару, уходит ВНИЗ (панель как будто нависает над окном)
+        shadow = QGraphicsDropShadowEffect(top_bar_widget)
+        shadow.setBlurRadius(styles.TOP_BAR_SHADOW_BLUR_RADIUS)
+        shadow.setColor(QColor(*styles.TOP_BAR_SHADOW_COLOR))
+        shadow.setOffset(*styles.TOP_BAR_SHADOW_OFFSET)
+        top_bar_widget.setGraphicsEffect(shadow)
+
+        outer_layout.addWidget(top_bar_widget)
+        outer_layout.addWidget(content_widget)
         
         # Сплиттер
         self.splitter = QSplitter(Qt.Horizontal)
