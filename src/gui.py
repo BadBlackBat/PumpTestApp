@@ -1286,7 +1286,14 @@ class MainWindow(QMainWindow):
                 parts.append(f"заказ: №{order_str}")
             if filters.get('only_duplicates'):
                 parts.append("только дубли")
-            filters_text = ", ".join(parts)
+            if parts:
+                # Если фильтров много - переносим на 2 строки (примерно
+                # поровну), иначе при выборе всех фильтров сразу текст не
+                # помещается в отведённое место по центру статус-бара
+                mid = (len(parts) + 1) // 2
+                line1 = ", ".join(parts[:mid])
+                line2 = ", ".join(parts[mid:])
+                filters_text = line1 + ("\n" + line2 if line2 else "")
         last_update = db.get_last_update_date()
         self.status_bar.set_status("Готово", count=count, good_count=good_count, filters=filters_text,
                                    selected_pump=selected_pump, last_update=last_update)
