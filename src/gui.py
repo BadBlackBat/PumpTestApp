@@ -17,6 +17,7 @@
 # from . import database as db
 # from . import excel_importer as importer
 # from . import utils
+# from . import styles
 
 # from datetime import datetime
 # from .widgets.dialogs import EditPumpDialog
@@ -46,7 +47,7 @@
 #         logo_label = QLabel("Лаборатория Рулевого Управления")
 #         logo_label.setAlignment(Qt.AlignCenter)
 #         logo_label.setFont(QFont("Arial", 14, QFont.Bold))
-#         logo_label.setStyleSheet("color: #2c3e50;")
+#         logo_label.setStyleSheet(styles.TOP_BAR_LOGO_STYLE)
 #         top_layout.addWidget(logo_label)
 
 #         # Растяжение между логотипом и кнопками

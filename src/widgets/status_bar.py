@@ -54,7 +54,6 @@
 #             self.update_label.setText(f"Последнее обновление: {last_update}")
 #         else:
 #             self.update_label.setText("")
-
 from PyQt5.QtWidgets import QStatusBar, QLabel, QWidget, QGraphicsDropShadowEffect, QVBoxLayout
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QPainter, QLinearGradient, QBrush
