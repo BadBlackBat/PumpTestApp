@@ -3,7 +3,7 @@ from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QPushButton, QLabel, QCheckBox,
     QDateEdit, QHeaderView, QAbstractItemView, QMenu,
     QStyledItemDelegate, QStyle, QStyleOptionViewItem, QApplication,
-    QFrame, QGraphicsDropShadowEffect
+    QFrame, QGraphicsDropShadowEffect, QGridLayout
 )
 from PyQt5.QtCore import (
     Qt, pyqtSignal, QDate, QPoint, QTimer, QEvent, QEasingCurve,
@@ -14,6 +14,33 @@ from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QPolygon, QLine
 from .. import database as db
 from .. import utils
 from .. import styles
+
+class _ArrowHoverLineEdit(QLineEdit):
+    """Обычный QLineEdit показывает I-образный курсор уже при простом
+    наведении мыши, даже если поле неактивно. Здесь курсор остаётся
+    стрелкой при наведении и меняется на I-образный только при реальном
+    клике/вводе (фокусе)."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setCursor(Qt.ArrowCursor)
+
+    def enterEvent(self, event):
+        if not self.hasFocus():
+            self.setCursor(Qt.ArrowCursor)
+        super().enterEvent(event)
+
+    def mousePressEvent(self, event):
+        self.setCursor(Qt.IBeamCursor)
+        super().mousePressEvent(event)
+
+    def focusInEvent(self, event):
+        self.setCursor(Qt.IBeamCursor)
+        super().focusInEvent(event)
+
+    def focusOutEvent(self, event):
+        self.setCursor(Qt.ArrowCursor)
+        super().focusOutEvent(event)
+
 
 class _GlowFrame(QFrame):
     """Графитовая панель с фирменным бирюзовым свечением по всем четырём
@@ -129,13 +156,81 @@ class LeftPanel(QWidget):
         chip = QFrame()
         chip.setStyleSheet(styles.LEFT_PANEL_CHIP_STYLE)
         chip_layout = QHBoxLayout(chip)
-        chip_layout.setContentsMargins(8, 3, 8, 3)
+        chip_layout.setContentsMargins(8, 0, 8, 0)
         chip_layout.setSpacing(6)
         label = QLabel(label_text)
         label.setStyleSheet(styles.LEFT_PANEL_FILTER_LABEL_STYLE)
         chip_layout.addWidget(label)
         chip_layout.addWidget(control_widget)
         return chip
+
+    def _build_filters_body(self, expanded):
+        """Строит тело фильтров (без строки поиска) - в компактном режиме
+        грид в 2 строки, в расширенном - всё в одну строку (больше места
+        по ширине). Сами контролы (комбобоксы, чекбокс, кнопка) не
+        создаются заново - переиспользуются, только перекладываются в
+        новые чипы-обёртки."""
+        if expanded:
+            body = QHBoxLayout()
+            body.setSpacing(14)
+            body.addWidget(self._make_filter_chip("Вердикт:", self.filter_verdict))
+            body.addWidget(self._make_filter_chip("Тип проверки:", self.filter_test_type))
+            body.addWidget(self._make_filter_chip("Герметичность:", self.filter_sealed))
+            body.addWidget(self._make_filter_chip("Заказ №:", self.filter_order))
+            body.addWidget(self._make_filter_chip("С:", self.date_from))
+            body.addWidget(self._make_filter_chip("По:", self.date_to))
+            body.addWidget(self.only_duplicates)
+            body.addWidget(self.btn_reset_filters)
+            body.addStretch()
+        else:
+            body = QGridLayout()
+            body.setHorizontalSpacing(14)
+            body.setVerticalSpacing(8)
+            body.addWidget(self._make_filter_chip("Вердикт:", self.filter_verdict), 0, 0)
+            body.addWidget(self._make_filter_chip("Тип проверки:", self.filter_test_type), 0, 1)
+            body.addWidget(self._make_filter_chip("Герметичность:", self.filter_sealed), 0, 2)
+            body.addWidget(self.only_duplicates, 0, 3)
+            body.addWidget(self._make_filter_chip("С:", self.date_from), 1, 0)
+            body.addWidget(self._make_filter_chip("По:", self.date_to), 1, 1)
+            body.addWidget(self._make_filter_chip("Заказ №:", self.filter_order), 1, 2)
+            body.addWidget(self.btn_reset_filters, 1, 3)
+            body.setColumnStretch(4, 1)
+        return body
+
+    def _detach_filter_controls(self):
+        """Отсоединяет контролы фильтров от их текущих чипов-обёрток, НЕ
+        уничтожая сами контролы - перед удалением старых чипов, чтобы
+        контролы (self.filter_verdict и т.д.) пережили перестроение."""
+        for w in (self.filter_verdict, self.filter_test_type, self.filter_sealed,
+                  self.filter_order, self.date_from, self.date_to,
+                  self.only_duplicates, self.btn_reset_filters):
+            w.setParent(None)
+
+    def _clear_layout_and_delete(self, layout):
+        """Рекурсивно удаляет все элементы layout (виджеты и вложенные
+        layout) - используется для сноса старых чипов при перестроении.
+        Вызывать ПОСЛЕ _detach_filter_controls(), иначе вместе с чипами
+        удалятся и сами контролы фильтров."""
+        while layout.count():
+            item = layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+            elif item.layout():
+                self._clear_layout_and_delete(item.layout())
+                item.layout().deleteLater()
+
+    def _reflow_filters(self, expanded):
+        """Перестраивает раскладку фильтров под текущий режим просмотра -
+        грид в 2 строки (компактный) или всё в одну строку (расширенный,
+        больше места по ширине). Вызывается из toggle_view()."""
+        self._detach_filter_controls()
+        self._clear_layout_and_delete(self.filters_grid)
+        self.filters_layout.removeItem(self.filters_grid)
+        self.filters_grid.deleteLater()
+
+        self.filters_grid = self._build_filters_body(expanded)
+        self.filters_layout.addLayout(self.filters_grid)
 
     def setup_ui(self):
       layout = QVBoxLayout(self)
@@ -155,7 +250,7 @@ class LeftPanel(QWidget):
       search_label = QLabel("Поиск:")
       search_label.setStyleSheet(styles.LEFT_PANEL_SEARCH_LABEL_STYLE)
       search_label.setFixedWidth(50)
-      self.search_input = QLineEdit()
+      self.search_input = _ArrowHoverLineEdit()
       self.search_input.setObjectName("searchInput")
       self.search_input.setPlaceholderText("Введите номер насоса...")
       self.search_input.setFixedHeight(34)
@@ -165,60 +260,79 @@ class LeftPanel(QWidget):
       search_layout.addWidget(self.search_input)
       filters_layout.addLayout(search_layout)
 
-      # Ряд 2: Фильтры (вердикт, тип, герметичность, заказ) - каждый в
-      # своей плашке-чипе. Вердикт/Тип/Герметичность держатся вместе
-      # слева, Заказ № отдельно прижат к правому краю (растяжка перед
-      # ним) - под ним, в ряду ниже, будет выровнена кнопка сброса
-      filter_layout = QHBoxLayout()
-      filter_layout.setSpacing(14)
+      # Создаём сами виджеты фильтров (раскладка - ниже, через грид)
       self.filter_verdict = QComboBox()
       self.filter_verdict.addItems(["Все", "Годен", "Не годен"])
       self.filter_verdict.currentTextChanged.connect(self.apply_filters)
+      self.filter_verdict.setStyleSheet(styles.LEFT_PANEL_COMBO_STYLE)
+
       self.filter_test_type = QComboBox()
       self.filter_test_type.addItems(["Все", "Первичная", "Повторная"])
       self.filter_test_type.currentTextChanged.connect(self.apply_filters)
+      self.filter_test_type.setStyleSheet(styles.LEFT_PANEL_COMBO_STYLE)
+
       self.filter_sealed = QComboBox()
       self.filter_sealed.addItems(["Все", "Герметичен", "Не герметичен"])
       self.filter_sealed.currentTextChanged.connect(self.apply_filters)
+      self.filter_sealed.setStyleSheet(styles.LEFT_PANEL_COMBO_STYLE)
+
       self.filter_order = QComboBox()
       self.filter_order.addItem("Все заказы")
       self.filter_order.currentTextChanged.connect(self.apply_filters)
+      self.filter_order.setStyleSheet(styles.LEFT_PANEL_COMBO_STYLE)
 
-      filter_layout.addWidget(self._make_filter_chip("Вердикт:", self.filter_verdict))
-      filter_layout.addWidget(self._make_filter_chip("Тип:", self.filter_test_type))
-      filter_layout.addWidget(self._make_filter_chip("Герметичность:", self.filter_sealed))
-      filter_layout.addStretch()
-      filter_layout.addWidget(self._make_filter_chip("Заказ №:", self.filter_order))
-      filters_layout.addLayout(filter_layout)
-
-      # Ряд 3: Дата, дубли и кнопка сброса фильтров - кнопка прижата к
-      # правому краю (та же растяжка-приём, что и для Заказ № выше) -
-      # поэтому она заканчивается ровно по одной вертикали с ним
-      extra_layout = QHBoxLayout()
-      extra_layout.setSpacing(14)
       self.date_from = QDateEdit()
       self.date_from.setCalendarPopup(True)
       self.date_from.setDate(QDate(2000, 1, 1))
       self.date_from.dateChanged.connect(self.apply_filters)
+      self.date_from.setStyleSheet(styles.LEFT_PANEL_COMBO_STYLE)
+      self.date_from.setMinimumWidth(115)  # шире, симметрично с Вердикт/Тип проверки сверху
+      self.date_from.calendarWidget().setStyleSheet(styles.LEFT_PANEL_CALENDAR_STYLE)
+
       self.date_to = QDateEdit()
       self.date_to.setCalendarPopup(True)
       self.date_to.setDate(QDate.currentDate())
       self.date_to.dateChanged.connect(self.apply_filters)
+      self.date_to.setStyleSheet(styles.LEFT_PANEL_COMBO_STYLE)
+      self.date_to.setMinimumWidth(115)
+      self.date_to.calendarWidget().setStyleSheet(styles.LEFT_PANEL_CALENDAR_STYLE)
+
       self.only_duplicates = QCheckBox("Дубли")
       self.only_duplicates.setStyleSheet(styles.LEFT_PANEL_CHECKBOX_STYLE)
       self.only_duplicates.stateChanged.connect(self.apply_filters)
 
       self.btn_reset_filters = QPushButton("Сбросить фильтры")
-      self.btn_reset_filters.setObjectName("resetFiltersBtn")
+      self.btn_reset_filters.setObjectName("chromeButton")
       self.btn_reset_filters.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
       self.btn_reset_filters.clicked.connect(self.reset_filters)
 
-      extra_layout.addWidget(self._make_filter_chip("С:", self.date_from))
-      extra_layout.addWidget(self._make_filter_chip("По:", self.date_to))
-      extra_layout.addWidget(self.only_duplicates)
-      extra_layout.addStretch()
-      extra_layout.addWidget(self.btn_reset_filters)
-      filters_layout.addLayout(extra_layout)
+      # Грид: Вердикт/Тип проверки/Герметичность/Дубли сверху, Заказ № - под
+      # Герметичностью (тот же столбец, та же ширина), Сброс - под Дубли
+      # (тот же столбец). Пустой растянутый столбец справа поглощает
+      # лишнюю ширину при увеличении окна - сами фильтры при этом
+      # остаются компактно слева, не расползаются
+      self.filters_grid = QGridLayout()
+      self.filters_grid.setHorizontalSpacing(14)
+      self.filters_grid.setVerticalSpacing(8)
+
+      # Одинаковая ширина у Герметичность/Заказ № - чтобы смотрелись
+      # симметрично друг под другом
+      self.filter_sealed.setMinimumWidth(130)
+      self.filter_order.setMinimumWidth(130)
+
+      self.filters_grid.addWidget(self._make_filter_chip("Вердикт:", self.filter_verdict), 0, 0)
+      self.filters_grid.addWidget(self._make_filter_chip("Тип проверки:", self.filter_test_type), 0, 1)
+      self.filters_grid.addWidget(self._make_filter_chip("Герметичность:", self.filter_sealed), 0, 2)
+      self.filters_grid.addWidget(self.only_duplicates, 0, 3)
+
+      self.filters_grid.addWidget(self._make_filter_chip("С:", self.date_from), 1, 0)
+      self.filters_grid.addWidget(self._make_filter_chip("По:", self.date_to), 1, 1)
+      self.filters_grid.addWidget(self._make_filter_chip("Заказ №:", self.filter_order), 1, 2)
+      self.filters_grid.addWidget(self.btn_reset_filters, 1, 3)
+
+      self.filters_grid.setColumnStretch(4, 1)  # пустой "хвостовой" столбец - забирает лишнюю ширину
+      filters_layout.addLayout(self.filters_grid)
+      self.filters_layout = filters_layout  # нужна для перестроения при переключении вида (см. _reflow_filters)
 
       layout.addWidget(filters_panel)
 
@@ -271,16 +385,35 @@ class LeftPanel(QWidget):
       # Центрирование таблицы в левой панели
       self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
 
+      # Нижний блок (кнопки управления + пагинация) - в такой же
+      # графитовой панели со свечением, как и фильтры сверху
+      bottom_panel = _GlowFrame()
+      bottom_layout = QVBoxLayout(bottom_panel)
+      bottom_layout.setContentsMargins(14, 10, 14, 10)
+      bottom_layout.setSpacing(8)
+
       # Кнопки управления
       btn_layout = QHBoxLayout()
-      btn_layout.setSpacing(5)
-      self.btn_add = QPushButton("Добавить")
+      btn_layout.setSpacing(8)
+      self.btn_add = QPushButton("Добавить насос")
+      self.btn_add.setObjectName("chromeButton")
+      self.btn_add.setFixedHeight(26)
+      self.btn_add.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
       self.btn_add.clicked.connect(self.request_add.emit)
-      self.btn_delete = QPushButton("Удалить")
+      self.btn_delete = QPushButton("Удалить запись")
+      self.btn_delete.setObjectName("chromeButton")
+      self.btn_delete.setFixedHeight(26)
+      self.btn_delete.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
       self.btn_delete.clicked.connect(self.on_delete_clicked)
-      self.btn_import = QPushButton("Импорт")
+      self.btn_import = QPushButton("Импорт Excel")
+      self.btn_import.setObjectName("chromeButton")
+      self.btn_import.setFixedHeight(26)
+      self.btn_import.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
       self.btn_import.clicked.connect(self.request_import.emit)
       self.btn_view_toggle = QPushButton("Расширить")
+      self.btn_view_toggle.setObjectName("chromeButton")
+      self.btn_view_toggle.setFixedHeight(26)
+      self.btn_view_toggle.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
       self.btn_view_toggle.setCheckable(True)
       self.btn_view_toggle.toggled.connect(self.toggle_view)
 
@@ -288,7 +421,7 @@ class LeftPanel(QWidget):
       btn_layout.addWidget(self.btn_delete)
       btn_layout.addWidget(self.btn_import)
       btn_layout.addWidget(self.btn_view_toggle)
-      layout.addLayout(btn_layout)
+      bottom_layout.addLayout(btn_layout)
 
       # Легенда
       # self.legend_label = QLabel()
@@ -299,23 +432,39 @@ class LeftPanel(QWidget):
 
       # Пагинация
       pagination_layout = QHBoxLayout()
-      pagination_layout.setSpacing(3)
+      pagination_layout.setSpacing(6)
       self.btn_prev = QPushButton("◀")
-      self.btn_prev.setFixedWidth(30)
+      self.btn_prev.setObjectName("chromeButton")
+      self.btn_prev.setFixedSize(30, 22)
+      self.btn_prev.setStyleSheet(styles.LEFT_PANEL_PAGINATION_BTN_STYLE)
       self.btn_prev.clicked.connect(self.prev_page)
       self.btn_next = QPushButton("▶")
-      self.btn_next.setFixedWidth(30)
+      self.btn_next.setObjectName("chromeButton")
+      self.btn_next.setFixedSize(30, 22)
+      self.btn_next.setStyleSheet(styles.LEFT_PANEL_PAGINATION_BTN_STYLE)
       self.btn_next.clicked.connect(self.next_page)
       self.page_label = QLabel("1/1")
       self.page_label.setAlignment(Qt.AlignCenter)
-      self.count_label = QLabel("Всего: 0")
-      self.count_label.setAlignment(Qt.AlignRight)
+      self.page_label.setStyleSheet(styles.LEFT_PANEL_FILTER_LABEL_STYLE)
+      # Пояснение "Группировка по дублям" - по центру панели, между
+      # пагинацией и счётчиком записей. Пусто и скрыто, пока фильтр
+      # "Дубли" не включён (см. update_pagination_label)
+      self.duplicates_note_label = QLabel("")
+      self.duplicates_note_label.setAlignment(Qt.AlignCenter)
+      self.duplicates_note_label.setStyleSheet(styles.LEFT_PANEL_FILTER_LABEL_STYLE)
+      self.count_label = QLabel("Показано записей: 0")
+      self.count_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+      self.count_label.setStyleSheet(styles.LEFT_PANEL_FILTER_LABEL_STYLE)
       pagination_layout.addWidget(self.btn_prev)
       pagination_layout.addWidget(self.page_label)
       pagination_layout.addWidget(self.btn_next)
       pagination_layout.addStretch()
+      pagination_layout.addWidget(self.duplicates_note_label)
+      pagination_layout.addStretch()
       pagination_layout.addWidget(self.count_label)
-      layout.addLayout(pagination_layout)
+      bottom_layout.addLayout(pagination_layout)
+
+      layout.addWidget(bottom_panel)
 
     # def update_legend(self):
     #     legend_text = (
@@ -340,6 +489,7 @@ class LeftPanel(QWidget):
             # Расширенный режим
             self.compact_mode = False
             self.btn_view_toggle.setText("Свернуть список")
+            self._reflow_filters(expanded=True)
             # # Левая 100%, правая 0 (скрываем)
             parent.splitter.setSizes([parent.width(), 0])
             
@@ -350,6 +500,7 @@ class LeftPanel(QWidget):
             # Компактный режим (минимальный)
             self.compact_mode = True
             self.btn_view_toggle.setText("Расширенный вид")
+            self._reflow_filters(expanded=False)
             # Левая 20%, правая 80%
             parent.splitter.setSizes([int(parent.width() * 0.10), int(parent.width() * 0.9)])
             
@@ -979,10 +1130,21 @@ class LeftPanel(QWidget):
             not_sealed_percent = round(not_sealed / total * 100, 1)
             good_first_percent = round(good_first / total * 100, 1)
 
-            text = (f"Для заказа №{order_str} проверено <b>{total}</b> насосов: "
-                    f"годных — <b>{good}</b> ({good_percent}%), "
-                    f"негерметичных — <b>{not_sealed}</b> ({not_sealed_percent}%)<br>"
-                    f"годных с первого предъявления — <b>{good_first}</b> ({good_first_percent}%)")
+            if self.compact_mode:
+                # Компактный (узкий) режим - фраза "годных с первого
+                # предъявления" явно переносится на отдельную строку,
+                # иначе слова разрываются посередине при автопереносе
+                text = (f"Для заказа №{order_str} проверено <b>{total}</b> насосов: "
+                        f"годных — <b>{good}</b> ({good_percent}%), "
+                        f"негерметичных — <b>{not_sealed}</b> ({not_sealed_percent}%)<br>"
+                        f"годных с первого предъявления — <b>{good_first}</b> ({good_first_percent}%)")
+            else:
+                # Расширенный режим - места достаточно, вся статистика в
+                # одну строку без принудительного переноса
+                text = (f"Для заказа №{order_str} проверено <b>{total}</b> насосов: "
+                        f"годных — <b>{good}</b> ({good_percent}%), "
+                        f"негерметичных — <b>{not_sealed}</b> ({not_sealed_percent}%), "
+                        f"годных с первого предъявления — <b>{good_first}</b> ({good_first_percent}%)")
             self.stats_label.setText(text)
             self.stats_label.show()
         else:
@@ -1017,15 +1179,19 @@ class LeftPanel(QWidget):
     def update_pagination_label(self):
         if self.only_duplicates.isChecked():
             # В режиме дублей показываются сразу все найденные группы,
-            # постраничная разбивка не применяется
-            self.page_label.setText("Группировка по дублям")
+            # постраничная разбивка не применяется - саму панель пагинации
+            # не трогаем (просто отключаем кнопки), пояснение показываем
+            # по центру, между пагинацией и счётчиком записей
+            self.page_label.setText("Страница 1 из 1")
             self.btn_prev.setEnabled(False)
             self.btn_next.setEnabled(False)
-            self.count_label.setText(f"Всего записей: {self.total_records}")
+            self.duplicates_note_label.setText("Группировка по дублям")
+            self.count_label.setText(f"Показано записей: {self.total_records}")
             return
 
+        self.duplicates_note_label.setText("")
         total_pages = max(1, (self.total_records + self.page_size - 1) // self.page_size)
         self.page_label.setText(f"Страница {self.current_page + 1} из {total_pages}")
         self.btn_prev.setEnabled(self.current_page > 0)
         self.btn_next.setEnabled((self.current_page + 1) * self.page_size < self.total_records)
-        self.count_label.setText(f"Всего записей: {self.total_records}")
+        self.count_label.setText(f"Показано записей: {self.total_records}")

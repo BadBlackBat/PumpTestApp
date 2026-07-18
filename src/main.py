@@ -1,32 +1,14 @@
-# import sys
-# from PyQt5.QtCore import Qt
-# from PyQt5.QtWidgets import QApplication
-# from .gui import MainWindow
-# from . import database as db
-
-# def main():
-#     db.init_db()
-
-#     # Поддержка масштабирования Windows (125%/150%/200%) и разных DPI -
-#     # флаги обязательно нужно выставить ДО создания QApplication
-#     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-#     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
-
-#     app = QApplication(sys.argv)
-#     window = MainWindow()
-#     window.show()
-#     sys.exit(app.exec_())
-
-# if __name__ == "__main__":
-#     main()
-
 import sys
+import os
 import ctypes
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication
+from PyQt5.QtGui import QFontDatabase
 from .gui import MainWindow
 from . import database as db
 from . import styles
+
+RESOURCES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
 
 
 def _set_dwm_color_attribute(hwnd, attribute, rgb):
@@ -67,6 +49,18 @@ def apply_title_bar_color(window):
         pass
 
 
+def load_custom_fonts():
+    """Регистрирует шрифт из resources/terminator.ttf в приложении - после
+    этого его можно использовать по имени семейства в QFont/QSS (см.
+    styles.TOP_BAR_LOGO_STYLE). Нужно вызывать ПОСЛЕ создания
+    QApplication, но ДО создания MainWindow (иначе верхняя панель
+    построится ещё со старым шрифтом)."""
+    font_path = os.path.join(RESOURCES_DIR, 'terminator.ttf')
+    if not os.path.exists(font_path):
+        return
+    QFontDatabase.addApplicationFont(font_path)
+
+
 def main():
     db.init_db()
 
@@ -76,6 +70,7 @@ def main():
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
     app = QApplication(sys.argv)
+    load_custom_fonts()
     window = MainWindow()
     window.show()
     apply_title_bar_color(window)

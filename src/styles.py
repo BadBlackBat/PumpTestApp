@@ -79,6 +79,72 @@ LEFT_PANEL_CHIP_STYLE = """
     }
 """
 
+# Выпадающие списки фильтров и поля дат - вместо стандартной синей
+# подсветки Qt при наведении/раскрытии используем фирменный бирюзовый
+# (и в самом поле, и в его выпадающем списке - see selection-background)
+LEFT_PANEL_COMBO_STYLE = """
+    QComboBox, QDateEdit {
+        background-color: rgba(255, 255, 255, 15);
+        border: 1px solid #7a7f87;
+        border-radius: 4px;
+        color: #ffffff;
+        padding: 1px 6px;
+    }
+    QComboBox:hover, QDateEdit:hover {
+        border: 1px solid #4fd1ff;
+        background-color: rgba(79, 209, 255, 30);
+    }
+    QComboBox::drop-down, QDateEdit::drop-down {
+        border: none;
+    }
+    QComboBox QAbstractItemView {
+        background-color: #2b2d31;
+        color: #ffffff;
+        selection-background-color: #4fd1ff;
+        selection-color: #1c1e21;
+        outline: none;
+    }
+"""
+
+# Всплывающий календарь QDateEdit - по умолчанию у него получался чёрный
+# фон, на котором не видно чисел (наследовал что-то из общей тёмной темы,
+# но не полностью). Явно красим сам календарь в графит/хром с читаемым
+# светлым текстом и бирюзовым выделением текущего/выбранного дня.
+LEFT_PANEL_CALENDAR_STYLE = """
+    QCalendarWidget QWidget {
+        background-color: #3a3d42;
+        color: #ffffff;
+    }
+    QCalendarWidget QToolButton {
+        background-color: #3a3d42;
+        color: #ffffff;
+        border: none;
+        border-radius: 4px;
+        padding: 4px;
+    }
+    QCalendarWidget QToolButton:hover {
+        background-color: rgba(79, 209, 255, 60);
+    }
+    QCalendarWidget QMenu {
+        background-color: #2b2d31;
+        color: #ffffff;
+    }
+    QCalendarWidget QSpinBox {
+        background-color: #2b2d31;
+        color: #ffffff;
+        selection-background-color: #4fd1ff;
+    }
+    QCalendarWidget QAbstractItemView:enabled {
+        background-color: #2b2d31;
+        color: #ffffff;
+        selection-background-color: #4fd1ff;
+        selection-color: #1c1e21;
+    }
+    QCalendarWidget QAbstractItemView:disabled {
+        color: #6b6f75;
+    }
+"""
+
 # --- Строка поиска: не как обычное поле ввода, а просто нижнее
 # подчёркивание контрастным цветом. При наведении - лёгкая подсветка,
 # в фокусе - явный бирюзовый акцент. Шрифт - жирный моноширинный
@@ -130,15 +196,33 @@ _ALUMINUM_NORMAL = _brushed_metal_gradient("#c9cdd2", "#a6aab0")
 _ALUMINUM_HOVER = _brushed_metal_gradient("#aeb2b8", "#8b8f95")
 
 LEFT_PANEL_RESET_BTN_STYLE = f"""
-    QPushButton#resetFiltersBtn {{
+    QPushButton#chromeButton {{
         background: {_ALUMINUM_NORMAL};
         border: 1px solid #6b6f75;
         border-radius: 4px;
         color: #2b2d31;
         font-weight: bold;
-        padding: 6px 16px;
+        padding: 2px 16px;
     }}
-    QPushButton#resetFiltersBtn:hover {{
+    QPushButton#chromeButton:hover {{
+        background: {_ALUMINUM_HOVER};
+        border: 2px solid #4fd1ff;
+    }}
+"""
+
+# Кнопки пагинации (◀ ▶) - тот же алюминиевый стиль, но сама кнопка
+# компактнее, а стрелка внутри - крупнее, для лучшей читаемости
+LEFT_PANEL_PAGINATION_BTN_STYLE = f"""
+    QPushButton#chromeButton {{
+        background: {_ALUMINUM_NORMAL};
+        border: 1px solid #6b6f75;
+        border-radius: 4px;
+        color: #2b2d31;
+        font-weight: bold;
+        font-size: 13pt;
+        padding: 0px;
+    }}
+    QPushButton#chromeButton:hover {{
         background: {_ALUMINUM_HOVER};
         border: 2px solid #4fd1ff;
     }}
@@ -324,7 +408,7 @@ TOP_BAR_STYLE = """
 # не видно) и лёгкий трекинг букв для более стильного вида
 TOP_BAR_LOGO_STYLE = """
     color: #f2f4f6;
-    font-family: "Segoe UI", Arial, sans-serif;
+    font-family: "Terminator Real NFI RUS", "Segoe UI", Arial, sans-serif;
     letter-spacing: 1.5px;
 """
 

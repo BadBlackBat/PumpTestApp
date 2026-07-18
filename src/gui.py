@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (
     QDialog, QPushButton, QLabel, QTableWidget, QTableWidgetItem,
     QApplication, QGraphicsDropShadowEffect, QSizePolicy
 )
-from PyQt5.QtCore import Qt, QTimer, QRectF
+from PyQt5.QtCore import Qt, QTimer, QRectF, QEvent
 
 from PyQt5.QtGui import QFont, QPainter, QColor, QIcon, QPixmap
 from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintPreviewWidget
@@ -103,7 +103,7 @@ class MainWindow(QMainWindow):
         # Логотип (текст) - современный светлый шрифт, крупнее прежнего
         logo_label = QLabel("Лаборатория Рулевого Управления")
         logo_label.setAlignment(Qt.AlignCenter)
-        logo_label.setFont(QFont("Segoe UI", 16, QFont.Bold))
+        logo_label.setFont(QFont("Terminator Real NFI RUS", 16, QFont.Bold))
         logo_label.setStyleSheet(styles.TOP_BAR_LOGO_STYLE)
         top_layout.addWidget(logo_label)
 
@@ -167,8 +167,10 @@ class MainWindow(QMainWindow):
 
         self.right_panel.clear_requested.connect(self.on_clear_requested)
         
-        # Пропорции
-        self.splitter.setSizes([int(self.width() * 0.4), int(self.width() * 0.6)])
+        # Пропорции - при первом запуске левая панель сжата до минимальной
+        # ширины, нужной блоку фильтров (а не растянута на 40% экрана) -
+        # остальное место отдаётся правой панели с протоколом
+        self._apply_minimal_left_width()
         
         # Статусная строка
         self.status_bar = StatusBar()
@@ -212,6 +214,21 @@ class MainWindow(QMainWindow):
             self.setGeometry(x, y, width, height)
         else:
             self.setGeometry(100, 100, FALLBACK_WIDTH, FALLBACK_HEIGHT)
+
+    def _apply_minimal_left_width(self):
+        """Сжимает левую панель до минимальной ширины, нужной блоку
+        фильтров - вместо фиксированных пропорций 40/60. Используется и
+        при запуске, и при разворачивании/восстановлении окна."""
+        left_width = self.left_panel.sizeHint().width()
+        self.splitter.setSizes([left_width, max(200, self.width() - left_width)])
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.WindowStateChange:
+            # Разворот/восстановление окна - пересчитываем сжатие левой
+            # панели ПОСЛЕ того, как окно реально примет новый размер
+            # (сразу внутри changeEvent размеры ещё старые)
+            QTimer.singleShot(0, self._apply_minimal_left_width)
 
     def toggle_statistics(self):
         if self.showing_stats:
