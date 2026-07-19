@@ -50,19 +50,57 @@ def apply_title_bar_color(window):
 
 
 def load_custom_fonts():
-    """Регистрирует шрифт из resources/terminator.ttf в приложении - после
-    этого его можно использовать по имени семейства в QFont/QSS (см.
-    styles.TOP_BAR_LOGO_STYLE). Нужно вызывать ПОСЛЕ создания
-    QApplication, но ДО создания MainWindow (иначе верхняя панель
-    построится ещё со старым шрифтом)."""
+    """Регистрирует шрифт из resources/terminator.ttf в приложении и
+    сохраняет РЕАЛЬНОЕ имя семейства (то, как его распознал сам Qt - оно
+    не всегда совпадает с тем, что показывают сторонние инструменты) в
+    styles.TERMINATOR_FONT_FAMILY, чтобы gui.py могло его использовать.
+    Нужно вызывать ПОСЛЕ создания QApplication, но ДО создания MainWindow
+    (иначе верхняя панель уже построится со старым шрифтом).
+
+    Печатает в консоль, что именно пошло не так, если шрифт не
+    применился - файл не найден / Qt не смог его загрузить / и т.д."""
+    styles.TERMINATOR_FONT_FAMILY = None
+
     font_path = os.path.join(RESOURCES_DIR, 'terminator.ttf')
     if not os.path.exists(font_path):
+        print(f"[шрифт] Файл не найден: {font_path}")
         return
-    QFontDatabase.addApplicationFont(font_path)
+
+    font_id = QFontDatabase.addApplicationFont(font_path)
+    if font_id == -1:
+        print(f"[шрифт] Qt не смог загрузить файл шрифта: {font_path}")
+        return
+
+    families = QFontDatabase.applicationFontFamilies(font_id)
+    if not families:
+        print("[шрифт] Шрифт загружен, но Qt не сообщил имя семейства")
+        return
+
+    styles.TERMINATOR_FONT_FAMILY = families[0]
+    print(f"[шрифт] Загружен успешно, имя семейства по версии Qt: \"{families[0]}\"")
+
+
+def set_app_user_model_id():
+    """Задаёт Windows отдельный 'Application User Model ID' для этого
+    процесса. Без этого Windows часто группирует окно под системным
+    значком python.exe/pythonw.exe в панели задач - собственный значок
+    окна (setWindowIcon) при этом может так и не появиться в панели
+    задач, даже если корректно показывается в Alt+Tab и в углу заголовка
+    окна. Нужно вызывать ДО создания любых окон. Работает только на
+    Windows - на других ОС просто ничего не делает."""
+    if sys.platform != "win32":
+        return
+    try:
+        app_id = "PumpTestApp.LabRulevogoUpravleniya.1"
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+    except Exception:
+        pass
 
 
 def main():
     db.init_db()
+
+    set_app_user_model_id()
 
     # Поддержка масштабирования Windows (125%/150%/200%) и разных DPI -
     # флаги обязательно нужно выставить ДО создания QApplication

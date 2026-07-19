@@ -27,7 +27,7 @@ import json
 # Папка с изображениями (значок окна, логотип) - лежит рядом с исходниками,
 # в src/resources/
 RESOURCES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
-ICON_PATH = os.path.join(RESOURCES_DIR, 'icon.png')
+ICON_PATH = os.path.join(RESOURCES_DIR, 'icon.ico')
 
 
 class _TopBar(QWidget):
@@ -100,11 +100,18 @@ class MainWindow(QMainWindow):
                 logo_image_label.setPixmap(pixmap)
         top_layout.addWidget(logo_image_label)
 
-        # Логотип (текст) - современный светлый шрифт, крупнее прежнего
+        # Логотип (текст) - современный светлый шрифт, крупнее прежнего.
+        # Имя шрифта берём из того, что реально определил Qt при загрузке
+        # (см. main.py, load_custom_fonts) - если по какой-то причине
+        # кастомный шрифт не загрузился, тихо остаёмся на Segoe UI
         logo_label = QLabel("Лаборатория Рулевого Управления")
         logo_label.setAlignment(Qt.AlignCenter)
-        logo_label.setFont(QFont("Terminator Real NFI RUS", 16, QFont.Bold))
-        logo_label.setStyleSheet(styles.TOP_BAR_LOGO_STYLE)
+        font_family = getattr(styles, 'TERMINATOR_FONT_FAMILY', None) or "Segoe UI"
+        logo_label.setFont(QFont(font_family, 16, QFont.Bold))
+        logo_label.setStyleSheet(
+            styles.TOP_BAR_LOGO_STYLE_BASE
+            + f'font-family: "{font_family}", "Segoe UI", Arial, sans-serif;'
+        )
         top_layout.addWidget(logo_label)
 
         # Растяжение между логотипом и кнопками
@@ -360,9 +367,7 @@ class MainWindow(QMainWindow):
             col_weights = [0.7, 0.8, 1.6, 1.1, 0.9, 0.7, 0.9]
 
         def build_row(p):
-            date_str = p.get('test_date') or ''
-            if date_str and ' ' in date_str:
-                date_str = date_str.split(' ')[0]
+            date_str = utils.format_date_display(p.get('test_date'))
             sealed_text = 'Герметичен' if p.get('is_sealed') else 'Негерметичен'
             if compact:
                 return [
@@ -540,9 +545,10 @@ class MainWindow(QMainWindow):
         # ===== Проверка на дубликат (совпадение номера насоса и даты) =====
         existing_id = db.get_pump_by_number_and_date(data['pump_number'], data['test_date'])
         if existing_id:
+            display_date = utils.format_date_display(data['test_date'])
             reply1 = QMessageBox.warning(
                 self, "Возможный дубликат",
-                f"Протокол для насоса №{data['pump_number']} от {data['test_date']} "
+                f"Протокол для насоса №{data['pump_number']} от {display_date} "
                 "уже есть в базе.\n\nДобавить его ещё раз?",
                 QMessageBox.Yes | QMessageBox.No
             )
@@ -551,7 +557,7 @@ class MainWindow(QMainWindow):
             reply2 = QMessageBox.warning(
                 self, "Подтверждение",
                 f"Вы уверены, что хотите добавить ещё одну запись для насоса "
-                f"№{data['pump_number']} от {data['test_date']}?",
+                f"№{data['pump_number']} от {display_date}?",
                 QMessageBox.Yes | QMessageBox.No
             )
             if reply2 != QMessageBox.Yes:
@@ -664,6 +670,8 @@ class MainWindow(QMainWindow):
                 line2 = ", ".join(parts[mid:])
                 filters_text = line1 + ("\n" + line2 if line2 else "")
         last_update = db.get_last_update_date()
+        if last_update and last_update != "нет данных":
+            last_update = utils.format_date_display(last_update)
         self.status_bar.set_status("Готово", count=count, good_count=good_count, filters=filters_text,
                                    selected_pump=selected_pump, last_update=last_update)
 
@@ -732,7 +740,8 @@ class MainWindow(QMainWindow):
         )
 
         # ===== История правок =====
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        # Только дата, без времени - как и везде в приложении
+        timestamp = datetime.now().strftime('%d-%m-%Y')
         new_note = data['note']
         old_note = pump_data.get('note', '') or ''
         history_parts = []

@@ -186,11 +186,12 @@ def import_excel_file(file_path, parent_widget=None):
             # ===== ПРОВЕРКА НА ДУБЛИКАТ (совпадение номера насоса И даты) =====
             existing_id = db.get_pump_by_number_and_date(data['pump_number'], data['test_date'])
             if existing_id:
+                display_date = utils.format_date_display(data['test_date'])
                 reply1 = QMessageBox.warning(
                     parent_widget,
                     "Возможный дубликат",
                     f"Лист {sheet}: протокол для насоса №{data['pump_number']} от "
-                    f"{data['test_date']} уже есть в базе.\n\n"
+                    f"{display_date} уже есть в базе.\n\n"
                     "Импортировать его ещё раз?",
                     QMessageBox.Yes | QMessageBox.No
                 )
@@ -201,7 +202,7 @@ def import_excel_file(file_path, parent_widget=None):
                     parent_widget,
                     "Подтверждение",
                     f"Вы уверены, что хотите добавить ещё одну запись для насоса "
-                    f"№{data['pump_number']} от {data['test_date']}?",
+                    f"№{data['pump_number']} от {display_date}?",
                     QMessageBox.Yes | QMessageBox.No
                 )
                 if reply2 != QMessageBox.Yes:

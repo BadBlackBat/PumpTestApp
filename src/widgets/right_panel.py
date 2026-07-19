@@ -22,6 +22,7 @@ from .. import utils
 from ..utils import is_value_in_range
 from ..utils import format_order_number
 from .dialogs import _clamp_to_screen
+from .left_panel import _GlowFrame
 from .. import styles
 from datetime import datetime
 
@@ -52,10 +53,14 @@ class RightPanel(QWidget):
         # Постоянные виджеты
         top_btns_layout = QHBoxLayout()
         self.clear_btn = QPushButton("Скрыть протокол")
+        self.clear_btn.setObjectName("chromeButton")
+        self.clear_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
         self.clear_btn.clicked.connect(self.clear_protocol)
         top_btns_layout.addWidget(self.clear_btn)
 
         self.export_pdf_btn = QPushButton("Экспорт в PDF")
+        self.export_pdf_btn.setObjectName("chromeButton")
+        self.export_pdf_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
         self.export_pdf_btn.clicked.connect(self.export_to_pdf)
         top_btns_layout.addWidget(self.export_pdf_btn)
         self.content_layout.addLayout(top_btns_layout)
@@ -133,7 +138,14 @@ class RightPanel(QWidget):
         self.content_layout.addWidget(self.notes_widget)
 
         scroll.setWidget(content)
-        layout.addWidget(scroll)
+        # Оборачиваем область прокрутки в такую же панель со свечением,
+        # что и в левой панели (графитовый контур, бирюзовые вставки по
+        # центру каждой стороны, тень со всех сторон, скруглённые углы)
+        scroll_frame = _GlowFrame()
+        scroll_frame_layout = QVBoxLayout(scroll_frame)
+        scroll_frame_layout.setContentsMargins(6, 6, 6, 6)
+        scroll_frame_layout.addWidget(scroll)
+        layout.addWidget(scroll_frame)
 
         # Начальное состояние: показываем логотип, скрываем остальное
         self.header_label.hide()
@@ -203,9 +215,7 @@ class RightPanel(QWidget):
         self.legend_label.show()
 
         # Заголовок
-        date_str = data['test_date']
-        if date_str and ' ' in date_str:
-            date_str = date_str.split(' ')[0]
+        date_str = utils.format_date_display(data['test_date'])
             
         order_num = data.get('order_number', '—')
         if order_num != '—' and order_num is not None:
@@ -231,10 +241,7 @@ class RightPanel(QWidget):
         )
         edit_date = data.get('edit_date')
         if edit_date:
-            try:
-                edit_date_display = datetime.strptime(edit_date, '%Y-%m-%d').strftime('%d-%m-%Y')
-            except (ValueError, TypeError):
-                edit_date_display = edit_date
+            edit_date_display = utils.format_date_display(edit_date)
             header_html += (
                 f"<br><span style='font-size:8pt; color:{ORANGE};'>"
                 f"Редакция протокола от: {edit_date_display}</span>"
@@ -633,7 +640,7 @@ class RightPanel(QWidget):
         first = items[0]
         mod_name = first.get('mod_name')
         mod = db.get_modification_by_name(mod_name) if mod_name else None
-        dates = [(it['test_date'].split(' ')[0] if it.get('test_date') else '—') for it in items]
+        dates = [(utils.format_date_display(it['test_date']) if it.get('test_date') else '—') for it in items]
 
         header_text = (f"Сравнение дублей\n"
                        f"Идентификационный №: {first['pump_number']}\n"
@@ -677,7 +684,7 @@ class RightPanel(QWidget):
             except (TypeError, ValueError):
                 return str(value)
 
-        dates = [(it['test_date'].split(' ')[0] if it.get('test_date') else f'#{i+1}') for i, it in enumerate(items)]
+        dates = [(utils.format_date_display(it['test_date']) if it.get('test_date') else f'#{i+1}') for i, it in enumerate(items)]
         col_labels = [x_label] + dates + ["Мин. треб.", "Макс. треб."]
 
         table = QTableWidget()
@@ -732,7 +739,7 @@ class RightPanel(QWidget):
         table.setHorizontalHeaderLabels(["Дата", "Давление, бар", "Допустимый диапазон"])
         table.setRowCount(len(items))
         for row, it in enumerate(items):
-            date_str = it['test_date'].split(' ')[0] if it.get('test_date') else f'#{row+1}'
+            date_str = utils.format_date_display(it['test_date']) if it.get('test_date') else f'#{row+1}'
             date_item = QTableWidgetItem(date_str)
             date_item.setTextAlignment(Qt.AlignCenter)
             table.setItem(row, 0, date_item)
@@ -768,7 +775,7 @@ class RightPanel(QWidget):
             'g36': 'Соединение крышки корпуса',
             'g37': 'Масляные образования на уплотнении',
         }
-        dates = [(it['test_date'].split(' ')[0] if it.get('test_date') else f'#{i+1}') for i, it in enumerate(items)]
+        dates = [(utils.format_date_display(it['test_date']) if it.get('test_date') else f'#{i+1}') for i, it in enumerate(items)]
         col_labels = ["Место проверки"] + dates + ["Требование"]
 
         table = QTableWidget()
@@ -838,7 +845,7 @@ class RightPanel(QWidget):
 
         for idx, it in enumerate(items):
             color = colors[idx % len(colors)]
-            date_str = it['test_date'].split(' ')[0] if it.get('test_date') else f'#{idx + 1}'
+            date_str = utils.format_date_display(it['test_date']) if it.get('test_date') else f'#{idx + 1}'
             results = it['results_json']
             y1 = [results.get(f'g{i}') for i in range(5, 13)]
             y2 = [results.get(f'g{i}') for i in range(13, 21)]
@@ -874,7 +881,7 @@ class RightPanel(QWidget):
 
         for idx, it in enumerate(items):
             color = colors[idx % len(colors)]
-            date_str = it['test_date'].split(' ')[0] if it.get('test_date') else f'#{idx + 1}'
+            date_str = utils.format_date_display(it['test_date']) if it.get('test_date') else f'#{idx + 1}'
             results = it['results_json']
             y3 = [results.get(f'g{i}') for i in range(21, 32)]
             n3 = min(len(x_tok), len(y3))

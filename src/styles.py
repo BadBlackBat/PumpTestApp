@@ -184,13 +184,20 @@ LEFT_PANEL_SEARCH_INPUT_STYLE = """
 # с уже устоявшейся графитовой/хромовой палитрой всего приложения
 # (статус-бар, верхняя панель) - карбон выглядел бы отдельным, чужеродным
 # акцентом на их фоне.
-def _brushed_metal_gradient(light, dark, bands=16):
+def _brushed_metal_gradient(light, dark, bands=16, horizontal_bands=False):
+    """direction по умолчанию даёт вертикальные полосы (текстура "растёт"
+    слева направо - как на кнопках). horizontal_bands=True даёт полосы
+    горизонтальные (текстура "растёт" сверху вниз)."""
     stops = []
     for i in range(bands):
         pos = i / (bands - 1)
         color = light if i % 2 == 0 else dark
         stops.append(f"stop:{pos:.3f} {color}")
-    return "qlineargradient(x1:0, y1:0, x2:1, y2:0, " + ", ".join(stops) + ")"
+    if horizontal_bands:
+        coords = "x1:0, y1:0, x2:0, y2:1"
+    else:
+        coords = "x1:0, y1:0, x2:1, y2:0"
+    return f"qlineargradient({coords}, " + ", ".join(stops) + ")"
 
 _ALUMINUM_NORMAL = _brushed_metal_gradient("#c9cdd2", "#a6aab0")
 _ALUMINUM_HOVER = _brushed_metal_gradient("#aeb2b8", "#8b8f95")
@@ -254,8 +261,13 @@ LEFT_PANEL_CHECKBOX_STYLE = """
     }
 """
 
-# Основная таблица списка насосов: центрирование текста в ячейках и
-# жирные заголовки колонок.
+# Основная таблица списка насосов: центрирование текста в ячейках,
+# заголовки колонок оформлены под кнопки (тот же алюминиевый градиент,
+# но горизонтальными полосами и более мягким, размытым переходом), при
+# наведении на заголовок - фирменная бирюзовая подсветка вместо
+# стандартной синей. Пустое пространство таблицы (где нет строк) -
+# светлый алюминий (светлее, чем у кнопок, чтобы не сливаться с ними),
+# тоже горизонтальными полосами.
 #
 # ВАЖНО: сюда сознательно НЕ добавляется правило "QTableWidget::item:selected"
 # - выделение строки реализовано отдельно, через два полупрозрачных
@@ -263,13 +275,75 @@ LEFT_PANEL_CHECKBOX_STYLE = """
 # _NoSelectionPaintDelegate (см. left_panel.py), который отключает
 # штатную заливку выделения Qt. Если добавить сюда фон для :selected -
 # он будет конфликтовать с этой логикой и перекрывать анимированный цвет.
-LEFT_PANEL_TABLE_STYLE = """
-    QTableWidget::item {
+_TABLE_LIGHT_ALUMINUM = _brushed_metal_gradient(
+    "#eef0f2", "#d8dade", bands=20, horizontal_bands=True
+)
+# Заголовки - горизонтальные полосы, мало полос и близкие по тону цвета =
+# более мягкий, размытый переход (меньше полос - каждая шире, границы
+# между ними менее заметны)
+_TABLE_HEADER_ALUMINUM = _brushed_metal_gradient(
+    "#c3c7cc", "#b2b6bb", bands=6, horizontal_bands=True
+)
+
+
+def build_left_panel_table_style(arrow_down_path=None, arrow_up_path=None, header_font_family=None):
+    """Стиль таблицы списка насосов. Стрелки сортировки - отдельными
+    картинками (см. resources/arrow_*_red.png), т.к. одним QSS крупнее и
+    краснее штатную стрелку не сделать - нужна собственная картинка.
+    Если пути не переданы (например, файлы почему-то не найдены) -
+    правила для стрелок просто не добавляются, Qt покажет свою обычную.
+
+    header_font_family - шрифт заголовков ЗАДАЁТСЯ ПРЯМО В QSS (а не
+    только через setFont() в коде) - на практике надёжнее: если
+    полагаться только на setFont(), стилевой лист таблицы иногда
+    перебивает шрифт секции заголовка при повторной перерисовке."""
+    arrow_rules = ""
+    if arrow_down_path and arrow_up_path:
+        arrow_rules = f"""
+    QHeaderView::down-arrow {{
+        image: url({arrow_down_path});
+        width: 12px;
+        height: 12px;
+    }}
+    QHeaderView::up-arrow {{
+        image: url({arrow_up_path});
+        width: 12px;
+        height: 12px;
+    }}
+"""
+    font_rule = ""
+    if header_font_family:
+        font_rule = f'font-family: "{header_font_family}", Arial, sans-serif;'
+
+    return f"""
+    QTableWidget {{
+        background: {_TABLE_LIGHT_ALUMINUM};
+        gridline-color: #b0b4b9;
+        border: 1px solid #c5c8cc;
+        border-radius: 8px;
+    }}
+    QTableWidget::item {{
         text-align: center;
-    }
-    QHeaderView::section {
+    }}
+    QHeaderView::section {{
+        background: {_TABLE_HEADER_ALUMINUM};
+        color: #2b2d31;
         font-weight: bold;
-    }
+        {font_rule}
+        border: 1px solid #6b6f75;
+        padding: 2px 4px;
+    }}
+    QHeaderView::section:first {{
+        border-top-left-radius: 8px;
+    }}
+    QHeaderView::section:last {{
+        border-top-right-radius: 8px;
+    }}
+    QHeaderView::section:hover {{
+        background-color: #4fd1ff;
+        color: #0d1b2a;
+    }}
+{arrow_rules}
 """
 
 
@@ -278,10 +352,12 @@ LEFT_PANEL_TABLE_STYLE = """
 # Просмотр протокола проверки, графики, сравнение дублей
 # ============================================================
 
-# Рамка вокруг всей правой панели (QScrollArea рисует её сама по себе, по
-# умолчанию - блёклым системным серым; перекрашиваем в тон общей
-# графитовой палитры, чтобы не выбивалась на фоне остального оформления)
-RIGHT_PANEL_SCROLL_STYLE = "QScrollArea { border: 1px solid #4a4d52; border-radius: 4px; }"
+# Рамка вокруг области прокрутки правой панели больше не нужна здесь -
+# теперь её обрамляет _GlowFrame (тот же графитовый контур с бирюзовым
+# свечением, что и у левой панели). Собственное скругление у самой
+# QScrollArea оставлено - смягчает переход к внешней скруглённой рамке
+# (тот же приём, что и у таблицы в левой панели)
+RIGHT_PANEL_SCROLL_STYLE = "QScrollArea { border: 1px solid #9a9ea4; border-radius: 8px; }"
 
 # Заглушка-логотип по центру правой панели - показывается, пока не
 # выбран ни один насос (и пока не идёт загрузка протокола). Без фона и
@@ -405,10 +481,16 @@ TOP_BAR_STYLE = """
 # читаемый шрифт (Segoe UI - системный шрифт Windows, гарантированно
 # поддерживает кириллицу, выглядит аккуратнее и современнее Arial),
 # светлый цвет (панель теперь тёмная, тёмно-синий текст на ней было бы
-# не видно) и лёгкий трекинг букв для более стильного вида
-TOP_BAR_LOGO_STYLE = """
+# не видно) и лёгкий трекинг букв для более стильного вида.
+#
+# Само имя семейства шрифта сюда НЕ зашито - оно определяется в рантайме
+# (см. main.py, load_custom_fonts) и подставляется в gui.py, т.к. имя,
+# которое видят сторонние инструменты (например, дизайнер шрифта), не
+# всегда совпадает с тем, как его распознаёт сам Qt после загрузки.
+TERMINATOR_FONT_FAMILY = None  # заполняется в main.py при старте
+
+TOP_BAR_LOGO_STYLE_BASE = """
     color: #f2f4f6;
-    font-family: "Terminator Real NFI RUS", "Segoe UI", Arial, sans-serif;
     letter-spacing: 1.5px;
 """
 

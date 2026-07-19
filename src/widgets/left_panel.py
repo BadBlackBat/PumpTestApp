@@ -14,6 +14,11 @@ from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QPolygon, QLine
 from .. import database as db
 from .. import utils
 from .. import styles
+import os
+
+RESOURCES_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'resources'
+)
 
 class _ArrowHoverLineEdit(QLineEdit):
     """Обычный QLineEdit показывает I-образный курсор уже при простом
@@ -40,6 +45,22 @@ class _ArrowHoverLineEdit(QLineEdit):
     def focusOutEvent(self, event):
         self.setCursor(Qt.ArrowCursor)
         super().focusOutEvent(event)
+
+
+class _DateTableItem(QTableWidgetItem):
+    """Ячейка с датой - отображает ДД-ММ-ГГГГ (единый формат отображения
+    во всём приложении), но сортируется по настоящей хронологии, а не по
+    тексту (иначе строковая сортировка "05-12-2024" vs "20-01-2024" дала
+    бы неверный порядок - хранит оригинальную ISO-дату отдельно для
+    сравнения)."""
+    def __init__(self, display_text, iso_date):
+        super().__init__(display_text)
+        self._iso_date = iso_date or ''
+
+    def __lt__(self, other):
+        if isinstance(other, _DateTableItem):
+            return self._iso_date < other._iso_date
+        return super().__lt__(other)
 
 
 class _GlowFrame(QFrame):
@@ -345,12 +366,22 @@ class LeftPanel(QWidget):
 
       # Таблица
       self.table = QTableWidget()
-      self.table.setStyleSheet(styles.LEFT_PANEL_TABLE_STYLE)
+      arrow_down_path = os.path.join(RESOURCES_DIR, 'arrow_down_red.png').replace('\\', '/')
+      arrow_up_path = os.path.join(RESOURCES_DIR, 'arrow_up_red.png').replace('\\', '/')
+      if not (os.path.exists(arrow_down_path) and os.path.exists(arrow_up_path)):
+          arrow_down_path = arrow_up_path = None
+      # Шрифт Terminator для заголовков таблицы пробовали в качестве
+      # эксперимента - оказался слишком массивным и не вписался, поэтому
+      # здесь остаёмся на обычном системном шрифте. Terminator оставлен
+      # только для надписи "Лаборатория Рулевого Управления" в gui.py
+      self.table.setStyleSheet(
+          styles.build_left_panel_table_style(arrow_down_path, arrow_up_path)
+      )
       # Отключаем штатную заливку выделения Qt - иначе она перекрывает наш
       # собственный (анимированный) цвет ячейки, даже если в QSS задать
       # ":selected { background-color: transparent }"
       self.table.setItemDelegate(_NoSelectionPaintDelegate(self.table))
-      # Жирные заголовки
+      # Жирные заголовки - обычным системным шрифтом
       font = self.table.horizontalHeader().font()
       font.setBold(True)
       self.table.horizontalHeader().setFont(font)
@@ -380,7 +411,13 @@ class LeftPanel(QWidget):
       self.table.entered.connect(self.on_row_hover)
       self.table.viewport().installEventFilter(self)
 
-      layout.addWidget(self.table)
+      # Обёртка таблицы - та же графитовая панель со свечением по контуру,
+      # что и у фильтров/нижнего блока кнопок (см. класс _GlowFrame)
+      table_panel = _GlowFrame()
+      table_panel_layout = QVBoxLayout(table_panel)
+      table_panel_layout.setContentsMargins(8, 8, 8, 8)
+      table_panel_layout.addWidget(self.table)
+      layout.addWidget(table_panel)
 
       # Центрирование таблицы в левой панели
       self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -519,20 +556,20 @@ class LeftPanel(QWidget):
         if compact:
             col_count = 5
             self.table.setColumnCount(col_count)
-            self.table.setHorizontalHeaderLabels(["Номер", "Дата", "Вердикт", "Тип", "Герметичность"])
+            self.table.setHorizontalHeaderLabels(["Номер насоса", "Дата проверки", "Вердикт", "Тип проверки", "Герметичность"])
             for col in range(5, self.table.columnCount()):
                 self.table.setColumnHidden(col, True)
             self.table.verticalHeader().setVisible(False)
-            self.table.setColumnWidth(0, 80)
-            self.table.setColumnWidth(1, 100)
+            self.table.setColumnWidth(0, 100)
+            self.table.setColumnWidth(1, 110)
             self.table.setColumnWidth(2, 100)
-            self.table.setColumnWidth(3, 100)
+            self.table.setColumnWidth(3, 110)
             self.table.setColumnWidth(4, 100)
         else:
             col_count = 7
             self.table.setColumnCount(col_count)
             self.table.setHorizontalHeaderLabels(
-                ["Номер", "Дата", "Модификация", "Герметичность", "Тип", "Заказ", "Вердикт"]
+                ["Номер насоса", "Дата проверки", "Модификация", "Герметичность", "Тип проверки", "Заказ", "Вердикт"]
             )
             for col in range(self.table.columnCount()):
                 self.table.setColumnHidden(col, False)
@@ -556,9 +593,7 @@ class LeftPanel(QWidget):
 
         # ---- Дата ----
         date_str = p['test_date']
-        if date_str and ' ' in date_str:
-            date_str = date_str.split(' ')[0]
-        item_date = QTableWidgetItem(date_str)
+        item_date = _DateTableItem(utils.format_date_display(date_str), date_str)
         item_date.setTextAlignment(Qt.AlignCenter)
         self.table.setItem(row, 1, item_date)
 
