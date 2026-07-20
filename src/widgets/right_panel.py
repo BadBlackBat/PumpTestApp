@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (
     QFileDialog, QMessageBox, QFrame, QApplication
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer
-from PyQt5.QtGui import QColor, QFont, QPainter, QPixmap
+from PyQt5.QtGui import QColor, QFont, QPainter, QPixmap, QTransform
 from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintPreviewWidget
 
 import matplotlib
@@ -24,6 +24,11 @@ from ..utils import format_order_number
 from .dialogs import _clamp_to_screen
 from .left_panel import _GlowFrame
 from .. import styles
+from .. import icon_utils
+
+ICONS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'resources', 'icons'
+)
 from datetime import datetime
 
 
@@ -89,9 +94,39 @@ class RightPanel(QWidget):
         self.logo_label.setStyleSheet(styles.RIGHT_PANEL_LOGO_STYLE)
         self.content_layout.addWidget(self.logo_label)
 
-        self.loading_label = QLabel("")
-        self.loading_label.setAlignment(Qt.AlignCenter)
-        self.loading_label.setFont(QFont("Arial", 14))
+        # Индикатор загрузки: иконка песочных часов (переворачивается по
+        # ходу загрузки протокола - см. _set_loading_progress) + текст.
+        # self.loading_label - КОНТЕЙНЕР (не сам QLabel с текстом), чтобы
+        # весь остальной код файла (show()/hide() в разных местах) не
+        # пришлось переписывать
+        self.loading_label = QWidget()
+        self.loading_label.setObjectName("loadingContainer")
+        loading_layout = QVBoxLayout(self.loading_label)
+        loading_layout.setAlignment(Qt.AlignCenter)
+
+        # Иконка - в лейбле ФИКСИРОВАННОГО размера (с запасом под диагональ
+        # при повороте на промежуточные углы) - иначе при повороте
+        # bounding-box картинки увеличивается, лейбл/панель меняют размер,
+        # и всю правую часть визуально "дёргает"
+        _LOADING_ICON_SIZE = 28
+        self.loading_icon_label = QLabel()
+        self.loading_icon_label.setAlignment(Qt.AlignCenter)
+        self.loading_icon_label.setFixedSize(_LOADING_ICON_SIZE * 2, _LOADING_ICON_SIZE * 2)
+        self._loading_icon_base = None
+        load_svg_path = os.path.join(ICONS_DIR, 'load.svg')
+        if os.path.exists(load_svg_path):
+            self._loading_icon_base = icon_utils.tinted_pixmap(
+                load_svg_path, styles.LOADING_ICON_COLOR, size=_LOADING_ICON_SIZE
+            )
+            self.loading_icon_label.setPixmap(self._loading_icon_base)
+        loading_layout.addWidget(self.loading_icon_label, 0, Qt.AlignHCenter)
+
+        self.loading_text_label = QLabel("")
+        self.loading_text_label.setAlignment(Qt.AlignCenter)
+        self.loading_text_label.setFont(QFont("Arial", 14))
+        self.loading_text_label.setStyleSheet(styles.RIGHT_PANEL_LOADING_TEXT_STYLE)
+        loading_layout.addWidget(self.loading_text_label, 0, Qt.AlignHCenter)
+
         self.loading_label.setStyleSheet(styles.RIGHT_PANEL_LOADING_STYLE)
         self.loading_label.hide()
         self.content_layout.addWidget(self.loading_label)
@@ -206,13 +241,10 @@ class RightPanel(QWidget):
         self.current_comparison_items = None
         self._clear_dynamic_content()  # очищаем dynamic_layout
 
-        # Показываем постоянные виджеты
+        # _clear_dynamic_content() прячет всё, включая индикатор загрузки -
+        # возвращаем его обратно и держим видимым, пока строим содержимое
         self.logo_label.hide()
-        self.dynamic_widget.show()
-        self.header_label.show()
-        self.clear_btn.show()
-        self.export_pdf_btn.show()
-        self.legend_label.show()
+        self.loading_label.show()
 
         # Заголовок
         date_str = utils.format_date_display(data['test_date'])
@@ -258,6 +290,7 @@ class RightPanel(QWidget):
         t3_title, t3_table = self.create_test_table("Тест 3: Зависимость расхода от силы тока ECO",
                                list(range(21, 32)), data['results_json'], data.get('mod_name'), changed_fields)
         p_title, p_table = self.create_pressure_table(data)
+        self._set_loading_progress(35)
 
         # Выравниваем таблицы тестов 1-3 и давления по максимальной ширине
         # (лишняя ширина уходит в последнюю колонку - без пустых полос).
@@ -273,7 +306,7 @@ class RightPanel(QWidget):
             lbl.setFixedWidth(uniform_width)
 
         self.create_seal_table(data)
-        self.seal_panel.show()
+        self._set_loading_progress(55)
 
         # Высоты групп "заголовок + таблица" - чтобы графики визуально
         # вписывались по размеру в соответствующие таблицы слева. Считаем
@@ -295,13 +328,27 @@ class RightPanel(QWidget):
         self.graphs_column.setContentsMargins(0, 9, 0, 0)
 
         self.create_graphs(data, graph1_height, graph2_height)
-        self.create_notes_section(data)
+        self._set_loading_progress(90)
+        show_notes = self.create_notes_section(data)
+        self._set_loading_progress(100)
 
         self.legend_label.setText(
             "<span style='background-color:#ffc8c8; border:1px solid #999;'>"
             "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>"
             "&nbsp;&nbsp;— значение не соответствует техническим требованиям."
         )
+
+        # Всё построено - теперь показываем готовый протокол разом и
+        # прячем индикатор загрузки
+        self.loading_label.hide()
+        self.dynamic_widget.show()
+        self.seal_panel.show()
+        self.header_label.show()
+        self.clear_btn.show()
+        self.export_pdf_btn.show()
+        self.legend_label.show()
+        if show_notes:
+            self.notes_widget.show()
 
     def _compact_table(self, table, fix_width=True):
         """Уменьшает шрифт таблицы и подгоняет высоту (и, если fix_width=True,
@@ -624,18 +671,14 @@ class RightPanel(QWidget):
         """items - список полных данных (с results_json) насосов-дублей:
         одинаковый номер + модификация. Показывает сравнительные таблицы
         и 2 графика, на каждом - линии всех найденных дублей вместе."""
-        self._show_loading("⏳  Загрузка сравнения протоколов...")
+        self._show_loading("Загрузка сравнения протоколов...")
 
         self.current_data = None  # это не единичный протокол
         self.current_comparison_items = items  # для экспорта/печати сравнения
         self._clear_dynamic_content()
 
         self.logo_label.hide()
-        self.dynamic_widget.show()
-        self.header_label.show()
-        self.clear_btn.show()
-        self.export_pdf_btn.show()
-        self.legend_label.show()
+        self.loading_label.show()
 
         first = items[0]
         mod_name = first.get('mod_name')
@@ -665,8 +708,10 @@ class RightPanel(QWidget):
         self._create_comparison_table("Тест 3: расход от силы тока ECO",
                                       list(range(21, 32)), items, norm3_min, norm3_max, norm3_x, "Сила тока, А")
         self._create_comparison_pressure_table(items, mod)
+        self._set_loading_progress(50)
         self._create_comparison_seal_table(items)
         self._create_comparison_graphs(items, mod)
+        self._set_loading_progress(100)
 
         self.legend_label.setText(
             "Сравнение всех найденных дублей выбранного образца. "
@@ -674,6 +719,16 @@ class RightPanel(QWidget):
             "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>"
             "&nbsp;&nbsp;— значение не соответствует техническим требованиям."
         )
+
+        # Всё построено - теперь показываем готовое сравнение разом и
+        # прячем индикатор загрузки
+        self.loading_label.hide()
+        self.dynamic_widget.show()
+        self.seal_panel.show()
+        self.header_label.show()
+        self.clear_btn.show()
+        self.export_pdf_btn.show()
+        self.legend_label.show()
 
     def _create_comparison_table(self, title, indices, items, norm_min, norm_max, x_vals, x_label):
         def format_number(value):
@@ -823,7 +878,6 @@ class RightPanel(QWidget):
         title_label.setFont(QFont("Arial", 9, QFont.Bold))
         self.seal_layout.addWidget(title_label)
         self.seal_layout.addWidget(table)
-        self.seal_panel.show()
 
     def _create_comparison_graphs(self, items, mod):
         if not mod:
@@ -1082,8 +1136,10 @@ class RightPanel(QWidget):
                     line_label.setWordWrap(True)
                     self.notes_layout.addWidget(line_label)
 
-        if note or edit_history:
-            self.notes_widget.show()
+        # Не показываем панель прямо здесь - её видимость выставляется в
+        # финальном блоке display_protocol()/display_comparison(), вместе
+        # со всем остальным содержимым, а не сразу же во время загрузки
+        return bool(note or edit_history)
 
     def manage_history(self, data):
         from ..widgets.dialogs import EditHistoryDialog
@@ -1135,7 +1191,7 @@ class RightPanel(QWidget):
         self.loading_label.hide()
         self.logo_label.show()
 
-    def _show_loading(self, message="⏳  Загрузка протокола..."):
+    def _show_loading(self, message="Загрузка протокола..."):
         """Показывает индикатор загрузки и СРАЗУ ЖЕ принудительно
         отрисовывает его на экране (иначе Qt отложил бы отрисовку до
         конца текущего обработчика, а он ещё построит все таблицы и
@@ -1149,8 +1205,25 @@ class RightPanel(QWidget):
         self.notes_widget.hide()
         self.dynamic_widget.hide()
         self.logo_label.hide()
-        self.loading_label.setText(message)
+        self.loading_text_label.setText(message)
+        self._set_loading_progress(0)
         self.loading_label.show()
+        QApplication.processEvents()
+
+    def _set_loading_progress(self, percent):
+        """Поворачивает иконку песочных часов на угол, соответствующий
+        проценту загрузки (0% - обычное положение, 100% - перевёрнута на
+        180°, как будто часы перевернули). Загрузка протокола - операция
+        синхронная (построение таблиц/графиков блокирует событийный
+        цикл), поэтому НАСТОЯЩЕЙ плавной анимации здесь не получить - это
+        несколько дискретных "щелчков" на контрольных точках прогресса, а
+        не непрерывное вращение."""
+        if self._loading_icon_base is None:
+            return
+        angle = (max(0, min(100, percent)) / 100.0) * 180.0
+        transform = QTransform().rotate(angle)
+        rotated = self._loading_icon_base.transformed(transform, Qt.SmoothTransformation)
+        self.loading_icon_label.setPixmap(rotated)
         QApplication.processEvents()
 
     def _clear_layout(self, layout):

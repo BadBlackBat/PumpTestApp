@@ -390,10 +390,16 @@ RIGHT_PANEL_LOGO_TEXT_STYLE = """
 # Индикатор "Загрузка протокола..." - показывается на время построения
 # таблиц и графиков matplotlib (эта операция синхронная и заметна по
 # времени), чтобы пользователю было очевидно, что идёт загрузка, а не
-# зависание программы
-RIGHT_PANEL_LOADING_STYLE = (
-    "background-color: #f0f0f0; border: 1px solid #ccc; padding: 20px; color: #555;"
-)
+# зависание программы. Без рамки/фона - просто отступ вокруг иконки и
+# текста. Привязан к objectName ("loadingContainer" - см. right_panel.py),
+# чтобы стиль не "протекал" на дочерние иконку и текст по отдельности
+# (та же история, что раньше была с логотипом-заглушкой).
+RIGHT_PANEL_LOADING_STYLE = """
+    QWidget#loadingContainer {
+        padding: 20px;
+    }
+"""
+RIGHT_PANEL_LOADING_TEXT_STYLE = "color: #555;"
 
 # Легенда с пояснением цветовой подсветки несоответствий техническим
 # требованиям (текстовая строка под таблицами протокола)
@@ -463,17 +469,6 @@ TOP_BAR_STYLE = """
         border-bottom-left-radius: 10px;
         border-bottom-right-radius: 10px;
         border-bottom: 1px solid #6a6d73;
-    }
-    QWidget#topBar QPushButton {
-        background-color: transparent;
-        border: none;
-        font-size: 14pt;
-        padding: 2px 6px;
-        color: #e8eaed;
-    }
-    QWidget#topBar QPushButton:hover {
-        background-color: rgba(255, 255, 255, 40);
-        border-radius: 4px;
     }
 """
 
@@ -587,3 +582,25 @@ STATUS_BAR_GLOW_HEIGHT = 2               # толщина полосы, px
 STATUS_BAR_SHADOW_BLUR_RADIUS = 20
 STATUS_BAR_SHADOW_COLOR = (0, 0, 0, 170)   # RGBA
 STATUS_BAR_SHADOW_OFFSET = (0, -3)
+
+
+# ============================================================
+# ИКОНКИ ВЕРХНЕЙ ПАНЕЛИ (SVG, перекрашиваются в рантайме - см. icon_utils.py)
+# ============================================================
+
+# Кнопки "Статистика"/"Настройки"/"Печать" - серые по умолчанию, при
+# наведении заливаются фирменным бирюзовым
+TOP_BAR_ICON_COLOR_NORMAL = "#a8acb2"
+TOP_BAR_ICON_COLOR_HOVER = "#4fd1ff"
+
+# Кнопка смены темы - две иконки на одной кнопке (день/ночь). Активная -
+# бирюзовая, неактивная - тёмно-серая; при наведении именно на
+# неактивную иконку она слегка подсвечивается (промежуточный, более
+# светлый серый - не полный бирюзовый, чтобы не путать с активной)
+THEME_ICON_ACTIVE_COLOR = "#4fd1ff"
+THEME_ICON_INACTIVE_COLOR = "#5a5d63"
+THEME_ICON_INACTIVE_HOVER_COLOR = "#8a8e94"
+
+# Иконка загрузки протокола (песочные часы) - чёрная, без перекраски,
+# как на исходной картинке
+LOADING_ICON_COLOR = "#1c1e21"

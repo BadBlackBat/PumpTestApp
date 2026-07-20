@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (
     QDialog, QPushButton, QLabel, QTableWidget, QTableWidgetItem,
     QApplication, QGraphicsDropShadowEffect, QSizePolicy
 )
-from PyQt5.QtCore import Qt, QTimer, QRectF, QEvent
+from PyQt5.QtCore import Qt, QTimer, QRectF, QEvent, QSize, pyqtSignal
 
 from PyQt5.QtGui import QFont, QPainter, QColor, QIcon, QPixmap
 from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintPreviewWidget
@@ -19,6 +19,7 @@ from . import database as db
 from . import excel_importer as importer
 from . import utils
 from . import styles
+from . import icon_utils
 
 from datetime import datetime
 from .widgets.dialogs import EditPumpDialog
@@ -28,6 +29,99 @@ import json
 # в src/resources/
 RESOURCES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
 ICON_PATH = os.path.join(RESOURCES_DIR, 'icon.ico')
+ICONS_DIR = os.path.join(RESOURCES_DIR, 'icons')
+
+
+class _IconButton(QPushButton):
+    """Кнопка-иконка без рамки и фона - просто картинка. По умолчанию
+    серая, при наведении перекрашивается в фирменный бирюзовый (см.
+    icon_utils.py - перекраска происходит рендером в pixmap, а не через
+    QSS, т.к. QSS не умеет менять цвет содержимого произвольной SVG)."""
+    def __init__(self, svg_path, size=22, tooltip="", parent=None):
+        super().__init__(parent)
+        self._size = size
+        self._normal_icon = icon_utils.tinted_icon(svg_path, styles.TOP_BAR_ICON_COLOR_NORMAL, size)
+        self._hover_icon = icon_utils.tinted_icon(svg_path, styles.TOP_BAR_ICON_COLOR_HOVER, size)
+        self.setIcon(self._normal_icon)
+        self.setIconSize(QSize(size, size))
+        self.setFlat(True)
+        self.setStyleSheet(
+            "QPushButton { border: none; background: transparent; padding: 4px; }"
+        )
+        self.setCursor(Qt.PointingHandCursor)
+        if tooltip:
+            self.setToolTip(tooltip)
+
+    def enterEvent(self, event):
+        self.setIcon(self._hover_icon)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.setIcon(self._normal_icon)
+        super().leaveEvent(event)
+
+
+class _ThemeToggleButton(QWidget):
+    """Кнопка смены темы - две иконки (день/ночь) на одном виджете.
+    Активная (текущая тема) - бирюзовая, вторая - тёмно-серая ("неактивная").
+    Клик меняет их местами. Наведение на НЕАКТИВНУЮ иконку слегка её
+    подсвечивает (промежуточный серый, не полный бирюзовый - чтобы не
+    путать с активной)."""
+    theme_changed = pyqtSignal(bool)  # True - дневная тема, False - ночная
+
+    def __init__(self, day_svg, night_svg, size=20, tooltip="", parent=None):
+        super().__init__(parent)
+        self._day_svg = day_svg
+        self._night_svg = night_svg
+        self._size = size
+        self._is_day = True
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(6)
+
+        self.day_label = QLabel()
+        self.night_label = QLabel()
+        self.day_label.setFixedSize(size, size)
+        self.night_label.setFixedSize(size, size)
+        layout.addWidget(self.day_label)
+        layout.addWidget(self.night_label)
+
+        self.setCursor(Qt.PointingHandCursor)
+        self.setMouseTracking(True)
+        if tooltip:
+            self.setToolTip(tooltip)
+        self._refresh_icons()
+
+    def _refresh_icons(self, day_hover=False, night_hover=False):
+        active = styles.THEME_ICON_ACTIVE_COLOR
+        inactive = styles.THEME_ICON_INACTIVE_COLOR
+        inactive_hover = styles.THEME_ICON_INACTIVE_HOVER_COLOR
+
+        day_color = active if self._is_day else (inactive_hover if day_hover else inactive)
+        night_color = (inactive_hover if night_hover else inactive) if self._is_day else active
+
+        self.day_label.setPixmap(icon_utils.tinted_pixmap(self._day_svg, day_color, self._size))
+        self.night_label.setPixmap(icon_utils.tinted_pixmap(self._night_svg, night_color, self._size))
+
+    def mousePressEvent(self, event):
+        self._is_day = not self._is_day
+        self._refresh_icons()
+        self.theme_changed.emit(self._is_day)
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        # Определяем, над какой из двух иконок сейчас курсор, и слегка
+        # подсвечиваем её, только если она НЕ активная в данный момент
+        over_day = event.x() < self.day_label.width() + 3
+        day_hover = over_day and not self._is_day
+        night_hover = (not over_day) and self._is_day
+        self._refresh_icons(day_hover, night_hover)
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        self._refresh_icons()
+        super().leaveEvent(event)
 
 
 class _TopBar(QWidget):
@@ -117,21 +211,23 @@ class MainWindow(QMainWindow):
         # Растяжение между логотипом и кнопками
         top_layout.addStretch()
 
-        # Кнопки-заглушки
-        btn_stats = QPushButton("📊")
-        btn_stats.setToolTip("Статистика")
+        # Кнопки
+        btn_stats = _IconButton(os.path.join(ICONS_DIR, 'statistics.svg'), tooltip="Статистика")
         btn_stats.clicked.connect(self.toggle_statistics)
         top_layout.addWidget(btn_stats)
 
-        btn_theme = QPushButton("🌙")
-        btn_settings = QPushButton("⚙️")
-        btn_print = QPushButton("🖨️")
-        btn_theme.setToolTip("Смена темы")
-        btn_settings.setToolTip("Настройки")
-        btn_print.setToolTip("Печать")
+        btn_theme = _ThemeToggleButton(
+            os.path.join(ICONS_DIR, 'theme-day.svg'),
+            os.path.join(ICONS_DIR, 'theme-night.svg'),
+            tooltip="Смена темы"
+        )
+        btn_settings = _IconButton(os.path.join(ICONS_DIR, 'settings_2.svg'), tooltip="Настройки")
+        btn_print = _IconButton(os.path.join(ICONS_DIR, 'print.svg'), tooltip="Печать")
 
-        # Подключаем заглушки
-        btn_theme.clicked.connect(lambda: QMessageBox.information(self, "Тема", "Функция будет реализована позже"))
+        # Подключаем
+        btn_theme.theme_changed.connect(
+            lambda is_day: QMessageBox.information(self, "Тема", "Функция будет реализована позже")
+        )
         btn_settings.clicked.connect(self.open_settings)
         btn_print.clicked.connect(self.on_print_requested)
 
