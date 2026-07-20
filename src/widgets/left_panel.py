@@ -527,23 +527,22 @@ class LeftPanel(QWidget):
             self.compact_mode = False
             self.btn_view_toggle.setText("Свернуть список")
             self._reflow_filters(expanded=True)
-            # # Левая 100%, правая 0 (скрываем)
+            # Снимаем ограничение максимальной ширины (см. gui.py,
+            # _apply_minimal_left_width) - иначе панель не может занять
+            # весь экран в расширенном режиме
+            self.setMaximumWidth(16777215)
             parent.splitter.setSizes([parent.width(), 0])
-            
-            # Левая 85%, правая 15% (почти скрыта)
-            # parent.splitter.setSizes([int(parent.width() * 0.85), int(parent.width() * 0.15)])
-            # self.legend_label.hide()
         else:
             # Компактный режим (минимальный)
             self.compact_mode = True
             self.btn_view_toggle.setText("Расширенный вид")
             self._reflow_filters(expanded=False)
-            # Левая 20%, правая 80%
-            parent.splitter.setSizes([int(parent.width() * 0.10), int(parent.width() * 0.9)])
-            
-            # Левая 15%, правая 85%
-            # parent.splitter.setSizes([int(parent.width() * 0.15), int(parent.width() * 0.85)])
-            # self.legend_label.show()
+            # Возвращаем ограничение по минимально нужной ширине - тем же
+            # методом, что применяется при старте/разворачивании окна
+            if hasattr(parent, '_apply_minimal_left_width'):
+                parent._apply_minimal_left_width()
+            else:
+                parent.splitter.setSizes([int(parent.width() * 0.10), int(parent.width() * 0.9)])
         self.apply_filters()
         self.table.clearSelection()
 

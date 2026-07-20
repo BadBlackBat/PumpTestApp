@@ -3,7 +3,7 @@ import os
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
     QTableWidgetItem, QPushButton, QScrollArea, QSizePolicy,
-    QFileDialog, QMessageBox, QFrame, QApplication
+    QFileDialog, QMessageBox, QFrame, QApplication, QHeaderView
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer
 from PyQt5.QtGui import QColor, QFont, QPainter, QPixmap, QTransform
@@ -40,6 +40,16 @@ class RightPanel(QWidget):
         self.current_data = None
         self.current_comparison_items = None
         self._graph_toolbars = []
+        # Ссылки на оси/canvas графиков 1 и 2 - нужны, чтобы при клике на
+        # ячейку в таблице теста 1/2/3 отметить точкой соответствующее
+        # значение на графике (см. _highlight_graph_point). Заполняются в
+        # create_graphs(), сбрасываются при каждой перерисовке протокола.
+        self._graph1_ax = None
+        self._graph1_canvas = None
+        self._graph1_marker = None
+        self._graph2_ax = None
+        self._graph2_canvas = None
+        self._graph2_marker = None
         self.setup_ui()
 
     def setup_ui(self):
@@ -70,11 +80,38 @@ class RightPanel(QWidget):
         top_btns_layout.addWidget(self.export_pdf_btn)
         self.content_layout.addLayout(top_btns_layout)
 
+        # Жирный заголовок "Характеристики образца насоса ГУР" - во всю
+        # ширину, отдельно от остальных деталей протокола
+        self.header_title_label = QLabel("")
+        self.header_title_label.setAlignment(Qt.AlignCenter)
+        self.header_title_label.setFont(QFont("Arial", 12, QFont.Bold))
+        self.content_layout.addWidget(self.header_title_label)
+
         self.header_label = QLabel("Выберите насос для просмотра протокола")
-        self.header_label.setAlignment(Qt.AlignCenter)
+        self.header_label.setAlignment(Qt.AlignLeft)
         self.header_label.setWordWrap(True)
-        self.header_label.setFont(QFont("Arial", 12, QFont.Bold))
-        self.content_layout.addWidget(self.header_label)
+        self.header_label.setFont(QFont("Arial", 12))
+
+        # Поле условий испытаний - под заголовком "Характеристики...",
+        # занимает правую часть под кнопкой "Экспорт в PDF" (та же ширина).
+        # Пока рамка со скруглением и текст-заглушка - содержимое добавим позже.
+        self.test_conditions_box = QFrame()
+        self.test_conditions_box.setStyleSheet(
+            "QFrame { border: 1px solid #9a9ea4; border-radius: 8px; }"
+        )
+        self.test_conditions_box.setFixedWidth(self.export_pdf_btn.sizeHint().width())
+        conditions_layout = QVBoxLayout(self.test_conditions_box)
+        conditions_layout.setContentsMargins(8, 6, 8, 6)
+        self.test_conditions_label = QLabel("Условия проведения испытаний...")
+        self.test_conditions_label.setWordWrap(True)
+        self.test_conditions_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        conditions_layout.addWidget(self.test_conditions_label)
+        conditions_layout.addStretch()
+
+        header_row = QHBoxLayout()
+        header_row.addWidget(self.header_label, 1)
+        header_row.addWidget(self.test_conditions_box)
+        self.content_layout.addLayout(header_row)
 
 
         # Логотип: картинка + текст-подсказка под ней. self.logo_label -
@@ -184,6 +221,8 @@ class RightPanel(QWidget):
 
         # Начальное состояние: показываем логотип, скрываем остальное
         self.header_label.hide()
+        self.header_title_label.hide()
+        self.test_conditions_box.hide()
         self.clear_btn.hide()
         self.export_pdf_btn.hide()
         self.legend_label.hide()
@@ -261,15 +300,22 @@ class RightPanel(QWidget):
                 return f"<span style='color:{ORANGE};'>{text}</span>"
             return text
 
+        verdict_ok = (data['verdict'] == 'годен')
+        verdict_text = "Соответствует" if verdict_ok else "Не соответствует"
+        verdict_color = "#1a7a1a" if verdict_ok else "#8b0000"
+
+        self.header_title_label.setText("Характеристики образца насоса ГУР")
+
         header_html = (
-            "<div align='center'>Характеристики образца насоса ГУР</div>"
             "<div align='left'>"
-            f"Протокол проверки насоса ГУР от: {mark(date_str, 'test_date')}<br>"
-            f"Идентификационный №: {data['pump_number']}  Заказ: {mark(order_num, 'order_number')}<br>"
-            f"Проверка: {mark(data['test_type'], 'test_type')}<br>"
-            f"Модификация: {mark(data.get('mod_name', '—'), 'modification')}<br>"
-            f"Герметичен: {'Да' if data['is_sealed'] else 'Нет'}<br>"
-            f"Вердикт: {data['verdict']}"
+            f"Протокол проверки насоса ГУР от: <b>{mark(date_str, 'test_date')}</b><br>"
+            f"Идентификационный №: <b>{data['pump_number']}</b><br>"
+            f"Заказ №: <b>{mark(order_num, 'order_number')}</b><br>"
+            f"Проверка: <b>{mark(data['test_type'], 'test_type')}</b><br>"
+            f"Модификация: <b>{mark(data.get('mod_name', '—'), 'modification')}</b><br>"
+            f"Герметичен: <b>{'Да' if data['is_sealed'] else 'Нет'}</b><br>"
+            f"Соответствие нормативным требованиям: "
+            f"<b><span style='color:{verdict_color};'>{verdict_text}</span></b>"
         )
         edit_date = data.get('edit_date')
         if edit_date:
@@ -292,16 +338,46 @@ class RightPanel(QWidget):
         p_title, p_table = self.create_pressure_table(data)
         self._set_loading_progress(35)
 
-        # Выравниваем таблицы тестов 1-3 и давления по максимальной ширине
-        # (лишняя ширина уходит в последнюю колонку - без пустых полос).
-        # Заголовки тоже растягиваем на ту же ширину - это нужно, чтобы ниже
-        # точно посчитать их фактическую высоту (с учётом переноса на 2 строки).
-        main_tables = [t1_table, t2_table, t3_table, p_table]
+        # Координируем ширину столбцов между тестами 1-3: каждая колонка
+        # (Х, Расход, Мин.треб, Макс.треб) получает одинаковую ширину во
+        # всех трёх таблицах - по максимальному содержимому среди них
+        # (п.5-6 требований: столбцы "жёстко закреплены", пользователь не
+        # может менять их ширину).
+        test_tables = [t1_table, t2_table, t3_table]
+        col_widths = [
+            max(t.columnWidth(col) for t in test_tables)
+            for col in range(4)
+        ]
+        for t in test_tables:
+            for col, w in enumerate(col_widths):
+                t.setColumnWidth(col, w)
+            t.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
+            t.setFixedWidth(4 + sum(col_widths))
+
+        # Таблица давления (тест 4): "Допустимый диапазон" по ширине равен
+        # сумме столбцов "Мин.треб" + "Макс.треб" остальных таблиц.
+        # "Параметр"/"Значение" делят оставшуюся ширину (Х + Расход)
+        # пропорционально их собственному естественному размеру - без
+        # лишних пустых мест, но и без утраты общей одинаковой ширины
+        # всех четырёх таблиц.
+        range_width = col_widths[2] + col_widths[3]
+        remaining_width = col_widths[0] + col_widths[1]
+        natural_param = p_table.columnWidth(0)
+        natural_value = p_table.columnWidth(1)
+        natural_sum = max(1, natural_param + natural_value)
+        param_width = max(40, int(remaining_width * natural_param / natural_sum))
+        value_width = remaining_width - param_width
+        p_table.setColumnWidth(0, param_width)
+        p_table.setColumnWidth(1, value_width)
+        p_table.setColumnWidth(2, range_width)
+        p_table.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        p_table.setFixedWidth(4 + param_width + value_width + range_width)
+
+        # Все четыре таблицы теперь одной и той же общей ширины - растягиваем
+        # заголовки на неё же (нужно для точного расчёта их высоты ниже,
+        # с учётом возможного переноса текста на 2 строки)
         main_titles = [t1_title, t2_title, t3_title, p_title]
-        uniform_width = max(t.width() for t in main_tables)
-        for t in main_tables:
-            t.horizontalHeader().setStretchLastSection(True)
-            t.setFixedWidth(uniform_width)
+        uniform_width = t1_table.width()
         for lbl in main_titles:
             lbl.setFixedWidth(uniform_width)
 
@@ -334,8 +410,9 @@ class RightPanel(QWidget):
 
         self.legend_label.setText(
             "<span style='background-color:#ffc8c8; border:1px solid #999;'>"
-            "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>"
-            "&nbsp;&nbsp;— значение не соответствует техническим требованиям."
+            "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>"
+            "&nbsp;&nbsp;<span style='font-style:italic; font-size:11pt;'>"
+            "— значение не соответствует техническим требованиям.</span>"
         )
 
         # Всё построено - теперь показываем готовый протокол разом и
@@ -344,6 +421,8 @@ class RightPanel(QWidget):
         self.dynamic_widget.show()
         self.seal_panel.show()
         self.header_label.show()
+        self.header_title_label.show()
+        self.test_conditions_box.show()
         self.clear_btn.show()
         self.export_pdf_btn.show()
         self.legend_label.show()
@@ -419,6 +498,12 @@ class RightPanel(QWidget):
         table.setHorizontalHeaderLabels([x_label, "Расход, л/мин", "Мин. треб.", "Макс. треб."])
         table.setRowCount(len(indices))
 
+        # Шрифты ячеек: нормативные столбцы (Х, мин/макс требования) -
+        # тем же моноширинным шрифтом, что и цифры в статус-баре; столбец
+        # Все ячейки - одним (стандартным) шрифтом; измеренное значение
+        # расхода - жирным, чтобы выделялось на фоне нормативных требований
+        value_font = QFont("Arial", 8, QFont.Bold)
+
         for i, idx in enumerate(indices):
             key = f'g{idx}'
             val = results.get(key)
@@ -431,6 +516,7 @@ class RightPanel(QWidget):
             val_text = format_number(val)
             val_item = QTableWidgetItem(val_text)
             val_item.setTextAlignment(Qt.AlignCenter)
+            val_item.setFont(value_font)
             if key in changed_fields:
                 val_item.setForeground(QColor(179, 92, 0))  # тёмно-оранжевый - значение изменено при редактировании
             # Проверка диапазона (используем исходное значение val, не строку)
@@ -441,7 +527,7 @@ class RightPanel(QWidget):
                 val_item.setBackground(QColor(255, 200, 200))
             table.setItem(i, 1, val_item)
 
-            # Минимальное и максимальное требования с форматированием
+            # Минimальное и максимальное требования с форматированием
             min_val = norm_min[i] if i < len(norm_min) else None
             max_val = norm_max[i] if i < len(norm_max) else None
             min_text = format_number(min_val)
@@ -457,6 +543,15 @@ class RightPanel(QWidget):
         table.resizeColumnsToContents()
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._compact_table(table)
+
+        # Клик по значению расхода или мин./макс. требования - отмечает
+        # точкой соответствующее значение на графике (п.7 требований).
+        # Тесты 1 и 2 рисуются на одном графике (self._graph1_ax), тест 3 -
+        # на втором (self._graph2_ax).
+        which_graph = 1 if indices[0] in (5, 13) else 2
+        table.cellClicked.connect(
+            lambda row, col, xs=list(x_vals), wg=which_graph: self._on_test_cell_clicked(row, col, xs, wg)
+        )
 
         title_label = QLabel(title)
         title_label.setFont(QFont("Arial", 9, QFont.Bold))
@@ -482,6 +577,7 @@ class RightPanel(QWidget):
         table.setItem(0, 0, param_item)
         val_item = QTableWidgetItem(str(pressure_val) if pressure_val is not None else '')
         val_item.setTextAlignment(Qt.AlignCenter)
+        val_item.setFont(QFont("Arial", 8, QFont.Bold))
         if 'g32' in (data.get('changed_fields') or []):
             val_item.setForeground(QColor(179, 92, 0))  # тёмно-оранжевый - значение изменено при редактировании
         if pressure_val is not None and min_p is not None and max_p is not None:
@@ -567,11 +663,57 @@ class RightPanel(QWidget):
         if out_of_range_x:
             ax.plot(out_of_range_x, out_of_range_y, 'o', color='red', markersize=7, zorder=5)
 
+    def _on_test_cell_clicked(self, row, col, x_vals, which_graph):
+        """Клик по значению расхода ("Расход") или норматива ("Мин.треб"/
+        "Макс.треб") в таблице теста 1/2/3 - отмечает лёгкой точкой это
+        значение на соответствующем графике."""
+        if col not in (1, 2, 3):  # только столбцы со значениями, не Х
+            return
+        if row >= len(x_vals):
+            return
+        table = self.sender()
+        if table is None:
+            return
+        item = table.item(row, col)
+        if item is None or not item.text().strip():
+            return
+        try:
+            y = float(item.text())
+        except ValueError:
+            return
+        x = x_vals[row]
+        self._highlight_graph_point(which_graph, x, y)
+
+    def _highlight_graph_point(self, which_graph, x, y):
+        """Рисует (или переставляет, если уже была) лёгкую точку-маркер
+        на графике 1 или 2 в указанных координатах."""
+        if which_graph == 1:
+            ax, canvas, marker_attr = self._graph1_ax, self._graph1_canvas, '_graph1_marker'
+        else:
+            ax, canvas, marker_attr = self._graph2_ax, self._graph2_canvas, '_graph2_marker'
+        if ax is None or canvas is None:
+            return
+
+        old_marker = getattr(self, marker_attr, None)
+        if old_marker is not None:
+            try:
+                old_marker.remove()
+            except (ValueError, NotImplementedError):
+                pass
+
+        marker, = ax.plot(
+            [x], [y], marker='o', markersize=10,
+            markerfacecolor='#ff8c00', markeredgecolor='#663300',
+            markeredgewidth=1.2, alpha=0.6, zorder=10, linestyle='None'
+        )
+        setattr(self, marker_attr, marker)
+        canvas.draw_idle()
+
     def _make_graph_widget(self, fig, height=None):
         """Оборачивает Figure в canvas + тулбар matplotlib (зум/панорама/
-        сброс масштаба кнопкой 'Home') и возвращает готовый контейнер-виджет.
-        Если задана height - контейнер фиксируется по высоте (чтобы график
-        визуально вписывался в размер соответствующих таблиц слева)."""
+        сброс масштаба кнопкой 'Home') и возвращает готовый контейнер-виджет
+        и сам canvas (нужен отдельно, чтобы перерисовать график после клика
+        по ячейке таблицы - см. _highlight_graph_point)."""
         canvas = FigureCanvas(fig)
         canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         toolbar = NavigationToolbar(canvas, self)
@@ -587,7 +729,7 @@ class RightPanel(QWidget):
         c_layout.addWidget(canvas)
         if height:
             container.setFixedHeight(height)
-        return container
+        return container, canvas
 
     def create_graphs(self, data, graph1_height=None, graph2_height=None):
         mod = None
@@ -633,9 +775,14 @@ class RightPanel(QWidget):
         ax1.grid(True, alpha=0.3)
         ax1.legend(loc='best', fontsize=7)
         ax1.set_title('Зависимость расхода от оборотов', fontsize=10)
+        ax1.format_coord = lambda x, y: f"RPM={x:.1f}   Q={y:.2f}"
         fig1.tight_layout(pad=0.4)
 
-        self.graphs_column.addWidget(self._make_graph_widget(fig1, graph1_height))
+        graph1_widget, graph1_canvas = self._make_graph_widget(fig1, graph1_height)
+        self.graphs_column.addWidget(graph1_widget)
+        self._graph1_ax = ax1
+        self._graph1_canvas = graph1_canvas
+        self._graph1_marker = None
 
         # График 2: расход от силы тока ECO
         fig2 = Figure(figsize=(4, 3), dpi=100)
@@ -658,6 +805,7 @@ class RightPanel(QWidget):
         ax2.grid(True, alpha=0.3)
         ax2.legend(loc='best', fontsize=7)
         ax2.set_title('Зависимость расхода от силы тока ECO', fontsize=10)
+        ax2.format_coord = lambda x, y: f"I={x:.2f}   Q={y:.2f}"
         # Оси по умолчанию (масштаб по-прежнему можно менять зумом тулбара)
         ax2.set_xlim(0, 1)
         ax2.set_xticks(np.arange(0, 1.01, 0.1))
@@ -665,7 +813,11 @@ class RightPanel(QWidget):
         ax2.set_yticks(np.arange(4, 18, 1))
         fig2.tight_layout(pad=0.4)
 
-        self.graphs_column.addWidget(self._make_graph_widget(fig2, graph2_height))
+        graph2_widget, graph2_canvas = self._make_graph_widget(fig2, graph2_height)
+        self.graphs_column.addWidget(graph2_widget)
+        self._graph2_ax = ax2
+        self._graph2_canvas = graph2_canvas
+        self._graph2_marker = None
 
     def display_comparison(self, items):
         """items - список полных данных (с results_json) насосов-дублей:
@@ -716,8 +868,9 @@ class RightPanel(QWidget):
         self.legend_label.setText(
             "Сравнение всех найденных дублей выбранного образца. "
             "<span style='background-color:#ffc8c8; border:1px solid #999;'>"
-            "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>"
-            "&nbsp;&nbsp;— значение не соответствует техническим требованиям."
+            "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>"
+            "&nbsp;&nbsp;<span style='font-style:italic; font-size:11pt;'>"
+            "— значение не соответствует техническим требованиям.</span>"
         )
 
         # Всё построено - теперь показываем готовое сравнение разом и
@@ -726,6 +879,7 @@ class RightPanel(QWidget):
         self.dynamic_widget.show()
         self.seal_panel.show()
         self.header_label.show()
+        self.header_title_label.show()
         self.clear_btn.show()
         self.export_pdf_btn.show()
         self.legend_label.show()
@@ -924,7 +1078,8 @@ class RightPanel(QWidget):
         ax1.legend(loc='best', fontsize=6)
         ax1.set_title('Сравнение дублей: расход от оборотов', fontsize=10)
         fig1.tight_layout(pad=0.4)
-        self.graphs_column.addWidget(self._make_graph_widget(fig1))
+        graph1_widget, _ = self._make_graph_widget(fig1)
+        self.graphs_column.addWidget(graph1_widget)
 
         # График 2: расход от силы тока ECO - линии всех дублей вместе
         fig2 = Figure(figsize=(4, 3), dpi=100)
@@ -957,7 +1112,8 @@ class RightPanel(QWidget):
         ax2.set_ylim(4, 17)
         ax2.set_yticks(np.arange(4, 18, 1))
         fig2.tight_layout(pad=0.4)
-        self.graphs_column.addWidget(self._make_graph_widget(fig2))
+        graph2_widget, _ = self._make_graph_widget(fig2)
+        self.graphs_column.addWidget(graph2_widget)
 
     def print_protocol(self):
         """Открывает предпросмотр печати текущего протокола (или сравнения дублей)."""
@@ -1173,6 +1329,12 @@ class RightPanel(QWidget):
         СОДЕРЖИМОЕ колонок tables_column/graphs_column - сама двухколоночная
         структура (dynamic_layout) не пересоздаётся."""
         self._graph_toolbars = []
+        self._graph1_ax = None
+        self._graph1_canvas = None
+        self._graph1_marker = None
+        self._graph2_ax = None
+        self._graph2_canvas = None
+        self._graph2_marker = None
         for column in (self.tables_column, self.graphs_column, self.seal_layout, self.notes_layout):
             while column.count():
                 child = column.takeAt(0)
@@ -1182,6 +1344,8 @@ class RightPanel(QWidget):
                     self._clear_layout(child.layout())
         # Скрываем постоянные виджеты, показываем логотип
         self.header_label.hide()
+        self.header_title_label.hide()
+        self.test_conditions_box.hide()
         self.clear_btn.hide()
         self.export_pdf_btn.hide()
         self.legend_label.hide()
@@ -1198,6 +1362,8 @@ class RightPanel(QWidget):
         графики matplotlib - это заметно небыстро). Без этого пользователь
         мог решить, что программа зависла, а не просто загружает данные."""
         self.header_label.hide()
+        self.header_title_label.hide()
+        self.test_conditions_box.hide()
         self.clear_btn.hide()
         self.export_pdf_btn.hide()
         self.legend_label.hide()
