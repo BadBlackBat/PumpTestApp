@@ -712,9 +712,9 @@ class MainWindow(QMainWindow):
 
         self.left_panel.refresh()
         self.update_status()
-        QMessageBox.information(
+        GlowMessageDialog.show_success(
             self, "Успех",
-            f"Насос №{data['pump_number']} добавлен. Вердикт: {verdict}."
+            f"Насос добавлен.\nВердикт: {verdict}."
         )
     
     def on_delete_requested(self, pump_id):
@@ -725,7 +725,7 @@ class MainWindow(QMainWindow):
             db.delete_pump(pump_id)
             self.left_panel.refresh()
             self.update_status()
-            QMessageBox.information(self, "Удаление", "Запись удалена.")
+            GlowMessageDialog.show_success(self, "Удаление", "Запись удалена.")
         if self.showing_stats: self.toggle_statistics()
 
     # def update_status(self, filters=None, selected_pump=None):
@@ -904,11 +904,11 @@ class MainWindow(QMainWindow):
             updated = db.get_pump_by_id(pump_id)
             if current_selected and current_selected['id'] == pump_id:
                 self.right_panel.display_protocol(updated)
-            QMessageBox.information(self, "Успех", "Протокол обновлён.")
+            GlowMessageDialog.show_success(self, "Успех", "Протокол обновлён.")
         else:
             QMessageBox.information(self, "Информация", "Изменений не обнаружено.")
 
-            QMessageBox.information(self, "Успех", "Примечание обновлено.")
+            GlowMessageDialog.show_success(self, "Успех", "Примечание обновлено.")
     
     def on_clear_requested(self):
         # 1. Вернуть раскладку к исходному виду (компактный список + пропорции 40/60)
