@@ -684,6 +684,28 @@ class RightPanel(QWidget):
         x = x_vals[row]
         self._highlight_graph_point(which_graph, x, y)
 
+    def _on_comparison_cell_clicked(self, row, col, x_vals, which_graph):
+        """То же самое, что _on_test_cell_clicked, но для таблиц сравнения
+        дублей - там количество столбцов переменное (по одному на каждый
+        найденный дубль, плюс Мин./Макс. треб.), поэтому пропускаем только
+        сам столбец Х (col 0), а не проверяем конкретные номера столбцов."""
+        if col == 0:
+            return
+        if row >= len(x_vals):
+            return
+        table = self.sender()
+        if table is None:
+            return
+        item = table.item(row, col)
+        if item is None or not item.text().strip():
+            return
+        try:
+            y = float(item.text())
+        except ValueError:
+            return
+        x = x_vals[row]
+        self._highlight_graph_point(which_graph, x, y)
+
     def _highlight_graph_point(self, which_graph, x, y):
         """Рисует (или переставляет, если уже была) лёгкую точку-маркер
         на графике 1 или 2 в указанных координатах."""
@@ -717,7 +739,7 @@ class RightPanel(QWidget):
         canvas = FigureCanvas(fig)
         canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         toolbar = NavigationToolbar(canvas, self)
-        toolbar.setIconSize(QSize(14, 14))
+        toolbar.setIconSize(QSize(20, 20))
         toolbar.setContentsMargins(0, 0, 0, 0)
         toolbar.setStyleSheet(styles.RIGHT_PANEL_GRAPH_TOOLBAR_STYLE)
         self._graph_toolbars.append(toolbar)  # понадобится скрыть при экспорте в PDF
@@ -760,8 +782,8 @@ class RightPanel(QWidget):
         y1_plot = [v if v is not None else np.nan for v in y1[:n1]]
         y2_plot = [v if v is not None else np.nan for v in y2[:n1]]
 
-        self._plot_series(ax1, x_vals_plot, y1_plot, min1, max1, 'tab:blue', '-', 'ECO выкл.')
-        self._plot_series(ax1, x_vals_plot, y2_plot, min2, max2, 'tab:red', '-', 'ECO вкл.')
+        self._plot_series(ax1, x_vals_plot, y1_plot, min1, max1, 'tab:blue', '-', 'Расход при клапане ECO выкл.')
+        self._plot_series(ax1, x_vals_plot, y2_plot, min2, max2, 'tab:red', '-', 'Расход при клапане ECO вкл.')
         if len(min1) == len(x_vals_plot):
             ax1.plot(x_vals_plot, min1, '--', color='tab:blue', label='Мин./макс. треб. ECO выкл.', alpha=0.5)
             ax1.plot(x_vals_plot, max1, '--', color='tab:blue', alpha=0.5)
@@ -773,10 +795,26 @@ class RightPanel(QWidget):
         ax1.tick_params(axis='both', labelsize=7)
         ax1.yaxis.set_major_locator(MultipleLocator(2))
         ax1.grid(True, alpha=0.3)
-        ax1.legend(loc='best', fontsize=7)
+        # Легенда в 2 строки: сверху - мин./макс. требования, снизу -
+        # расход. Порядок записей переставлен так, чтобы при заполнении
+        # "по столбцам" (поведение matplotlib по умолчанию для ncol=2)
+        # получилась именно такая раскладка по строкам.
+        handles1, labels1 = ax1.get_legend_handles_labels()
+        order1 = [2, 0, 3, 1]
+        ax1.legend([handles1[i] for i in order1], [labels1[i] for i in order1],
+                  loc='upper center', bbox_to_anchor=(0.5, -0.16), ncol=2,
+                  fontsize=7, frameon=False, handlelength=1.4, columnspacing=1.2)
         ax1.set_title('Зависимость расхода от оборотов', fontsize=10)
         ax1.format_coord = lambda x, y: f"RPM={x:.1f}   Q={y:.2f}"
-        fig1.tight_layout(pad=0.4)
+        # rect резервирует место под легенду СНИЗУ за один проход, не
+        # трогая остальные поля отдельным subplots_adjust() - именно он
+        # раньше сбивал правое поле, делая его непредсказуемо большим
+        # Явные фиксированные поля вместо tight_layout(): у tight_layout()
+        # есть известная особенность плохо учитывать легенду, вынесенную
+        # НАРУЖУ осей через bbox_to_anchor - результат непредсказуемый
+        # (то огромные отступы снизу, то справа). Ручные значения дают
+        # стабильный, предсказуемый результат.
+        fig1.subplots_adjust(left=0.14, right=0.97, top=0.90, bottom=0.24)
 
         graph1_widget, graph1_canvas = self._make_graph_widget(fig1, graph1_height)
         self.graphs_column.addWidget(graph1_widget)
@@ -803,7 +841,8 @@ class RightPanel(QWidget):
         ax2.set_ylabel('Расход, л/мин')
         ax2.tick_params(axis='both', labelsize=7)
         ax2.grid(True, alpha=0.3)
-        ax2.legend(loc='best', fontsize=7)
+        ax2.legend(loc='upper center', bbox_to_anchor=(0.5, -0.16), ncol=2,
+                  fontsize=8, frameon=False, handlelength=1.4, columnspacing=1.2)
         ax2.set_title('Зависимость расхода от силы тока ECO', fontsize=10)
         ax2.format_coord = lambda x, y: f"I={x:.2f}   Q={y:.2f}"
         # Оси по умолчанию (масштаб по-прежнему можно менять зумом тулбара)
@@ -811,7 +850,7 @@ class RightPanel(QWidget):
         ax2.set_xticks(np.arange(0, 1.01, 0.1))
         ax2.set_ylim(4, 17)
         ax2.set_yticks(np.arange(4, 18, 1))
-        fig2.tight_layout(pad=0.4)
+        fig2.subplots_adjust(left=0.14, right=0.97, top=0.90, bottom=0.20)
 
         graph2_widget, graph2_canvas = self._make_graph_widget(fig2, graph2_height)
         self.graphs_column.addWidget(graph2_widget)
@@ -837,11 +876,17 @@ class RightPanel(QWidget):
         mod = db.get_modification_by_name(mod_name) if mod_name else None
         dates = [(utils.format_date_display(it['test_date']) if it.get('test_date') else '—') for it in items]
 
-        header_text = (f"Сравнение дублей\n"
-                       f"Идентификационный №: {first['pump_number']}\n"
-                       f"Модификация: {mod_name or '—'}\n"
-                       f"Найдено протоколов: {len(items)} (даты: {', '.join(dates)})")
-        self.header_label.setText(header_text)
+        self.header_title_label.setText("Характеристики образцов насоса ГУР")
+        header_html = (
+            "<div align='left'>"
+            "Сравнение всех найденных дублей выбранного образца<br>"
+            f"Идентификационный №: <b>{first['pump_number']}</b><br>"
+            f"Модификация: <b>{mod_name or '—'}</b><br>"
+            f"Найдено протоколов: <b>{len(items)}</b><br>"
+            f"Проверки от: <b>{', '.join(dates)}</b>"
+            "</div>"
+        )
+        self.header_label.setText(header_html)
 
         norm1_min = mod['norm_graph1_min'] if mod else []
         norm1_max = mod['norm_graph1_max'] if mod else []
@@ -853,20 +898,60 @@ class RightPanel(QWidget):
         norm3_max = mod['norm_graph3_max'] if mod else []
         norm3_x = mod['norm_graph3_x'] if mod else list(utils.DEFAULT_GRAPH3_X)
 
-        self._create_comparison_table("Тест 1: расход от оборотов (ECO выкл.)",
-                                      list(range(5, 13)), items, norm1_min, norm1_max, norm1_x, "Обороты, об/мин")
-        self._create_comparison_table("Тест 2: расход от оборотов (ECO вкл.)",
-                                      list(range(13, 21)), items, norm2_min, norm2_max, norm2_x, "Обороты, об/мин")
-        self._create_comparison_table("Тест 3: расход от силы тока ECO",
-                                      list(range(21, 32)), items, norm3_min, norm3_max, norm3_x, "Сила тока, А")
-        self._create_comparison_pressure_table(items, mod)
+        t1_title, t1_table = self._create_comparison_table(
+            "Тест 1: расход от оборотов (ECO выкл.)",
+            list(range(5, 13)), items, norm1_min, norm1_max, norm1_x, "Обороты, об/мин")
+        t2_title, t2_table = self._create_comparison_table(
+            "Тест 2: расход от оборотов (ECO вкл.)",
+            list(range(13, 21)), items, norm2_min, norm2_max, norm2_x, "Обороты, об/мин")
+        t3_title, t3_table = self._create_comparison_table(
+            "Тест 3: расход от силы тока ECO",
+            list(range(21, 32)), items, norm3_min, norm3_max, norm3_x, "Сила тока, А")
+        p_title, p_table = self._create_comparison_pressure_table(items, mod)
         self._set_loading_progress(50)
+
+        # Координируем ширину столбцов между тестами 1-3 - тот же приём,
+        # что и в одиночном протоколе: одинаковые столбцы (Х, по одному на
+        # каждый найденный дубль, Мин.треб, Макс.треб) получают одинаковую
+        # ширину во всех трёх таблицах, столбцы жёстко зафиксированы
+        test_tables = [t1_table, t2_table, t3_table]
+        n_cols = test_tables[0].columnCount()
+        col_widths = [
+            max(t.columnWidth(col) for t in test_tables)
+            for col in range(n_cols)
+        ]
+        for t in test_tables:
+            for col, w in enumerate(col_widths):
+                t.setColumnWidth(col, w)
+            t.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
+            t.setFixedWidth(4 + sum(col_widths))
+
+        # Таблица давления (тест 4): "Допустимый диапазон" по ширине
+        # соответствует "Мин.треб" + "Макс.треб" остальных таблиц, "Дата"/
+        # "Давление" делят оставшуюся ширину пропорционально своему
+        # естественному размеру - без лишних пустых мест
+        range_width = col_widths[-2] + col_widths[-1]
+        remaining_width = sum(col_widths[:-2])
+        natural_date = p_table.columnWidth(0)
+        natural_value = p_table.columnWidth(1)
+        natural_sum = max(1, natural_date + natural_value)
+        date_width = max(40, int(remaining_width * natural_date / natural_sum))
+        value_width = remaining_width - date_width
+        p_table.setColumnWidth(0, date_width)
+        p_table.setColumnWidth(1, value_width)
+        p_table.setColumnWidth(2, range_width)
+        p_table.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        p_table.setFixedWidth(4 + date_width + value_width + range_width)
+
+        uniform_width = t1_table.width()
+        for lbl in (t1_title, t2_title, t3_title, p_title):
+            lbl.setFixedWidth(uniform_width)
+
         self._create_comparison_seal_table(items)
         self._create_comparison_graphs(items, mod)
         self._set_loading_progress(100)
 
         self.legend_label.setText(
-            "Сравнение всех найденных дублей выбранного образца. "
             "<span style='background-color:#ffc8c8; border:1px solid #999;'>"
             "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>"
             "&nbsp;&nbsp;<span style='font-style:italic; font-size:11pt;'>"
@@ -900,6 +985,7 @@ class RightPanel(QWidget):
         table.setColumnCount(len(col_labels))
         table.setHorizontalHeaderLabels(col_labels)
         table.setRowCount(len(indices))
+        value_font = QFont("Arial", 8, QFont.Bold)
 
         for row, idx in enumerate(indices):
             key = f'g{idx}'
@@ -912,6 +998,7 @@ class RightPanel(QWidget):
                 val = it['results_json'].get(key)
                 val_item = QTableWidgetItem(format_number(val))
                 val_item.setTextAlignment(Qt.AlignCenter)
+                val_item.setFont(value_font)
                 if val is not None and row < len(norm_min) and row < len(norm_max):
                     if not is_value_in_range(val, norm_min[row], norm_max[row]):
                         val_item.setBackground(QColor(255, 200, 200))
@@ -933,11 +1020,19 @@ class RightPanel(QWidget):
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._compact_table(table)
 
+        # Клик по любому значению (кроме самого Х) - отмечает точкой
+        # соответствующее значение на графике, как и в одиночном протоколе
+        which_graph = 1 if indices[0] in (5, 13) else 2
+        table.cellClicked.connect(
+            lambda row, col, xs=list(x_vals), wg=which_graph: self._on_comparison_cell_clicked(row, col, xs, wg)
+        )
+
         title_label = QLabel(title)
         title_label.setFont(QFont("Arial", 9, QFont.Bold))
         title_label.setWordWrap(True)
         self.tables_column.addWidget(title_label)
         self.tables_column.addWidget(table)
+        return title_label, table
 
     def _create_comparison_pressure_table(self, items, mod):
         min_p = mod['pressure_min'] if mod else None
@@ -955,6 +1050,7 @@ class RightPanel(QWidget):
             pressure_val = it['results_json'].get('g32')
             val_item = QTableWidgetItem(str(pressure_val) if pressure_val is not None else '')
             val_item.setTextAlignment(Qt.AlignCenter)
+            val_item.setFont(QFont("Arial", 8, QFont.Bold))
             if pressure_val is not None and min_p is not None and max_p is not None:
                 if not is_value_in_range(pressure_val, min_p, max_p):
                     val_item.setBackground(QColor(255, 200, 200))
@@ -975,6 +1071,7 @@ class RightPanel(QWidget):
         title_label.setFont(QFont("Arial", 9, QFont.Bold))
         self.tables_column.addWidget(title_label)
         self.tables_column.addWidget(table)
+        return title_label, table
 
     def _create_comparison_seal_table(self, items):
         labels = {
@@ -1075,10 +1172,15 @@ class RightPanel(QWidget):
         ax1.tick_params(axis='both', labelsize=7)
         ax1.yaxis.set_major_locator(MultipleLocator(2))
         ax1.grid(True, alpha=0.3)
-        ax1.legend(loc='best', fontsize=6)
+        ax1.legend(loc='upper center', bbox_to_anchor=(0.5, -0.16), ncol=3,
+                  fontsize=8, frameon=False, handlelength=1.4, columnspacing=1.2)
         ax1.set_title('Сравнение дублей: расход от оборотов', fontsize=10)
-        fig1.tight_layout(pad=0.4)
-        graph1_widget, _ = self._make_graph_widget(fig1)
+        ax1.format_coord = lambda x, y: f"RPM={x:.1f}   Q={y:.2f}"
+        fig1.subplots_adjust(left=0.14, right=0.97, top=0.90, bottom=0.26)
+        graph1_widget, graph1_canvas = self._make_graph_widget(fig1)
+        self._graph1_ax = ax1
+        self._graph1_canvas = graph1_canvas
+        self._graph1_marker = None
         self.graphs_column.addWidget(graph1_widget)
 
         # График 2: расход от силы тока ECO - линии всех дублей вместе
@@ -1105,14 +1207,19 @@ class RightPanel(QWidget):
         ax2.set_ylabel('Расход, л/мин')
         ax2.tick_params(axis='both', labelsize=7)
         ax2.grid(True, alpha=0.3)
-        ax2.legend(loc='best', fontsize=6)
+        ax2.legend(loc='upper center', bbox_to_anchor=(0.5, -0.16), ncol=3,
+                  fontsize=8, frameon=False, handlelength=1.4, columnspacing=1.2)
         ax2.set_title('Сравнение дублей: расход от силы тока ECO', fontsize=10)
+        ax2.format_coord = lambda x, y: f"I={x:.2f}   Q={y:.2f}"
         ax2.set_xlim(0, 1)
         ax2.set_xticks(np.arange(0, 1.01, 0.1))
         ax2.set_ylim(4, 17)
         ax2.set_yticks(np.arange(4, 18, 1))
-        fig2.tight_layout(pad=0.4)
-        graph2_widget, _ = self._make_graph_widget(fig2)
+        fig2.subplots_adjust(left=0.14, right=0.97, top=0.90, bottom=0.22)
+        graph2_widget, graph2_canvas = self._make_graph_widget(fig2)
+        self._graph2_ax = ax2
+        self._graph2_canvas = graph2_canvas
+        self._graph2_marker = None
         self.graphs_column.addWidget(graph2_widget)
 
     def print_protocol(self):
