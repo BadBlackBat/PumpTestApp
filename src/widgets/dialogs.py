@@ -5,15 +5,22 @@ from PyQt5.QtWidgets import (
     QPushButton, QTextEdit, QDialogButtonBox, QMessageBox, 
     QListWidget, QListWidgetItem, QComboBox, QDateEdit,
     QTableWidget, QTableWidgetItem, QScrollArea, QWidget, QSizePolicy,
-    QApplication
+    QApplication, QGraphicsOpacityEffect
 )
-from PyQt5.QtCore import Qt, QDate
+from PyQt5.QtCore import Qt, QDate, QPoint, QSize, QPropertyAnimation, QEasingCurve, QTimer
 from PyQt5.QtGui import QFont
 import json
+import os
 
 from .. import database as db
 from .. import utils
 from .. import styles
+from .. import icon_utils
+from .left_panel import _GlowFrame
+
+ICONS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'resources', 'icons'
+)
 
 def _clamp_to_screen(widget, width_fraction=0.95, height_fraction=0.92):
     """Если диалог после adjustSize() оказался больше доступной области
@@ -32,29 +39,331 @@ def _clamp_to_screen(widget, width_fraction=0.95, height_fraction=0.92):
     widget.move(x, y)
 
 
-class PasswordDialog(QDialog):
-    def __init__(self, parent=None, message="Для удаления записи введите пароль:"):
+class _DialogCloseButton(QPushButton):
+    """Крестик закрытия - своя кнопка вместо системной (т.к. у безрамочного
+    окна нет системного заголовка). Серая по умолчанию, бирюзовая при
+    наведении - тот же принцип, что и у иконок верхней панели (см.
+    gui.py, _IconButton) - здесь не переиспользуем тот класс напрямую,
+    чтобы не тянуть импорт из gui.py в dialogs.py (риск цикличного
+    импорта: gui.py и так импортирует диалоги). При наведении иконка не
+    только меняет цвет, но и увеличивается - кнопка сразу имеет
+    фиксированный размер под БОЛЬШИЙ (hover) вариант, чтобы разрастание
+    иконки не сдвигало соседние элементы заголовка."""
+    def __init__(self, size=28, hover_size=36, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Введите пароль")
+        close_path = os.path.join(ICONS_DIR, 'close.svg')
+        self._normal_icon = icon_utils.tinted_icon(close_path, styles.TOP_BAR_ICON_COLOR_NORMAL, size)
+        self._hover_icon = icon_utils.tinted_icon(close_path, "#ff5c5c", hover_size)
+        self._size = size
+        self._hover_size = hover_size
+        self.setIcon(self._normal_icon)
+        self.setIconSize(QSize(size, size))
+        self.setFlat(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedSize(hover_size + 6, hover_size + 6)
+        self.setStyleSheet("QPushButton { border: none; background: transparent; }")
+
+    def enterEvent(self, event):
+        self.setIcon(self._hover_icon)
+        self.setIconSize(QSize(self._hover_size, self._hover_size))
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.setIcon(self._normal_icon)
+        self.setIconSize(QSize(self._size, self._size))
+        super().leaveEvent(event)
+
+
+class _GlowDialog(QDialog):
+    """Базовое безрамочное окно в фирменном стиле - переиспользует ту же
+    графитовую панель со свечением и тенью, что и остальные панели
+    приложения (см. _GlowFrame в left_panel.py). Своя строка заголовка
+    (т.к. системной рамки нет) с крестиком закрытия, перетаскивание окна
+    мышью за заголовок. Наследники добавляют содержимое в self.body_layout,
+    и в конце своего __init__ обязаны вызвать self._lock_size(), которая
+    фиксирует размер окна (не растягивается, resize-рамки нет по
+    определению у безрамочного окна)."""
+    def __init__(self, parent=None, title=""):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setModal(True)
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(message))
+        self._drag_pos = None
+        self._closing_started = False
+
+        outer_layout = QVBoxLayout(self)
+        # Отступ вокруг рамки - тени (QGraphicsDropShadowEffect у
+        # _GlowFrame) нужно место, куда "растекаться" за пределы самой
+        # панели. Без этого запаса тень обрезается ровно по границе окна,
+        # и этот обрезанный край выглядит как слабый квадратный контур.
+        outer_layout.setContentsMargins(18, 18, 18, 18)
+
+        self.glow_frame = _GlowFrame()
+        outer_layout.addWidget(self.glow_frame)
+
+        frame_layout = QVBoxLayout(self.glow_frame)
+        frame_layout.setContentsMargins(16, 12, 16, 16)
+        frame_layout.setSpacing(10)
+        self.frame_layout = frame_layout
+
+        title_row = QHBoxLayout()
+        self.title_label = QLabel(title)
+        self.title_label.setStyleSheet(
+            "color: #f2f4f6; font-weight: bold; font-size: 11pt; background: transparent;"
+        )
+        # Оставляем справа пустое место под будущий крестик (сам он не в
+        # layout - см. ниже), чтобы длинный заголовок на него не наезжал
+        title_row.addWidget(self.title_label)
+        title_row.addStretch()
+        frame_layout.addLayout(title_row)
+
+        self.body_layout = QVBoxLayout()
+        self.body_layout.setSpacing(10)
+        frame_layout.addLayout(self.body_layout)
+
+        # Крестик закрытия - НЕ в layout, а поверх правого верхнего угла
+        # абсолютным позиционированием (родитель - сама рамка glow_frame).
+        # Так при наведении он может увеличиваться, не "раздвигая" соседние
+        # элементы заголовка и не тратя зарезервированное под это место.
+        self.close_btn = _DialogCloseButton(parent=self.glow_frame)
+        self.close_btn.setAutoDefault(False)
+        self.close_btn.setDefault(False)
+        self.close_btn.clicked.connect(self.reject)
+
+    def _lock_size(self):
+        """Фиксирует размер окна по текущему содержимому - вызывать в
+        конце __init__ наследника, после того как весь контент добавлен."""
+        self.adjustSize()
+        self.setFixedSize(self.size())
+        self._position_close_button()
+
+    def _position_close_button(self):
+        """Ставит крестик в правый верхний угол рамки - вызывается после
+        _lock_size(), когда размер окна уже точно известен и больше не
+        поменяется."""
+        margin = 8
+        x = self.glow_frame.width() - self.close_btn.width() - margin
+        y = margin
+        self.close_btn.move(x, y)
+        self.close_btn.raise_()
+
+    # --- Плавное появление/закрытие (fade in/out через прозрачность
+    # окна) - т.к. это модальные диалоги на exec_(), событийный цикл во
+    # время анимации продолжает работать как обычно ---
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.setWindowOpacity(0.0)
+        self._fade_in_anim = QPropertyAnimation(self, b"windowOpacity", self)
+        self._fade_in_anim.setDuration(180)
+        self._fade_in_anim.setStartValue(0.0)
+        self._fade_in_anim.setEndValue(1.0)
+        self._fade_in_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._fade_in_anim.start()
+
+    def _fade_out_then(self, finish_callback):
+        if self._closing_started:
+            return
+        self._closing_started = True
+
+        self._closing_callback = finish_callback
+        self._already_closed = False
+
+        self._fade_out_anim = QPropertyAnimation(self, b"windowOpacity", self)
+        self._fade_out_anim.setDuration(140)
+        self._fade_out_anim.setStartValue(self.windowOpacity())
+        self._fade_out_anim.setEndValue(0.0)
+        self._fade_out_anim.setEasingCurve(QEasingCurve.InCubic)
+        self._fade_out_anim.finished.connect(self._run_closing_callback_once)
+        self._fade_out_anim.start()
+
+        # Подстраховка: если по какой-то причине сигнал finished от
+        # анимации не придёт (редкий сбой аниматора) - всё равно закрываем
+        # окно принудительно через 250мс. Без этой подстраховки диалог
+        # мог остаться "подвешенным" модальным окном навсегда - вся
+        # программа выглядела бы зависшей, и Windows реагировала бы
+        # системным "гонгом" на любой клик по заблокированному окну.
+        QTimer.singleShot(250, self._run_closing_callback_once)
+
+    def _run_closing_callback_once(self):
+        if self._already_closed:
+            return
+        self._already_closed = True
+        self._closing_callback()
+
+    def accept(self):
+        self._fade_out_then(super().accept)
+
+    def reject(self):
+        self._fade_out_then(super().reject)
+
+    # --- Перетаскивание окна мышью за заголовок (нет системной рамки) ---
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and event.y() < 58:
+            self._drag_pos = event.globalPos() - self.frameGeometry().topLeft()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_pos is not None and event.buttons() & Qt.LeftButton:
+            self.move(event.globalPos() - self._drag_pos)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_pos = None
+        super().mouseReleaseEvent(event)
+
+
+class GlowMessageDialog(_GlowDialog):
+    """Информационное/предупреждающее окно в фирменном стиле - иконка
+    слева, текст справа, одна кнопка OK. Используется вместо обычного
+    QMessageBox.warning() там, где нужен единый стиль (например,
+    сообщение о неверном пароле)."""
+    def __init__(self, parent=None, title="Ошибка", message="", icon_name="warning.svg"):
+        super().__init__(parent, title=title)
+
+        content_row = QHBoxLayout()
+        content_row.setSpacing(12)
+        icon_label = QLabel()
+        icon_path = os.path.join(ICONS_DIR, icon_name)
+        if os.path.exists(icon_path):
+            icon_label.setPixmap(icon_utils.plain_pixmap(icon_path, 40))
+        icon_label.setStyleSheet("background: transparent;")
+        content_row.addWidget(icon_label)
+
+        msg_label = QLabel(message)
+        msg_label.setWordWrap(True)
+        msg_label.setStyleSheet("color: #e8eaed; background: transparent;")
+        content_row.addWidget(msg_label, 1)
+        self.body_layout.addLayout(content_row)
+
+        ok_btn = QPushButton("OK")
+        ok_btn.setObjectName("chromeButton")
+        ok_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+        ok_btn.clicked.connect(self.accept)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(ok_btn)
+        btn_row.addStretch()
+        self.body_layout.addLayout(btn_row)
+
+        self.setMinimumWidth(340)
+        self._lock_size()
+
+    @staticmethod
+    def show_error(parent, title, message):
+        """Удобный короткий вызов - GlowMessageDialog.show_error(self, "Ошибка", "текст")
+        вместо QMessageBox.warning(...)."""
+        dlg = GlowMessageDialog(parent, title=title, message=message, icon_name="warning.svg")
+        dlg.exec_()
+
+
+class PrintChoiceDialog(_GlowDialog):
+    """Диалог выбора того, что печатать - иконка принтера сверху, варианты
+    печати кнопками в один ряд (вместо прежнего QMessageBox с кнопками)."""
+    def __init__(self, parent=None):
+        super().__init__(parent, title="Печать")
+        self.choice = None
+
+        top_row = QHBoxLayout()
+        top_row.setSpacing(10)
+        icon_label = QLabel()
+        icon_path = os.path.join(ICONS_DIR, 'print.svg')
+        if os.path.exists(icon_path):
+            icon_label.setPixmap(icon_utils.tinted_pixmap(icon_path, styles.TOP_BAR_ICON_COLOR_NORMAL, 40))
+        icon_label.setStyleSheet("background: transparent;")
+        top_row.addWidget(icon_label)
+        msg_label = QLabel("Что напечатать?")
+        msg_label.setStyleSheet("color: #e8eaed; font-size: 11pt; background: transparent;")
+        top_row.addWidget(msg_label, 1)
+        self.body_layout.addLayout(top_row)
+
+        def make_btn(text, value):
+            btn = QPushButton(text)
+            btn.setObjectName("chromeButton")
+            btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+            btn.clicked.connect(lambda: self._choose(value))
+            return btn
+
+        btn_col = QVBoxLayout()
+        btn_col.setSpacing(8)
+        btn_col.addWidget(make_btn("Текущий протокол", "protocol"))
+        btn_col.addWidget(make_btn("Список насосов (сокращённый)", "list_compact"))
+        btn_col.addWidget(make_btn("Список насосов (расширенный)", "list_expanded"))
+        btn_col.addSpacing(14)
+        btn_col.addWidget(make_btn("Ничего", "cancel"))
+        self.body_layout.addLayout(btn_col)
+
+        self.setMinimumWidth(320)
+        self._lock_size()
+
+    def _choose(self, value):
+        self.choice = value
+        if value == "cancel":
+            self.reject()
+        else:
+            self.accept()
+
+
+class PasswordDialog(_GlowDialog):
+    def __init__(self, parent=None, message="Для удаления записи введите пароль:", correct_password="admin"):
+        super().__init__(parent, title="Введите пароль")
+        self._correct_password = correct_password
+
+        msg_label = QLabel(message)
+        msg_label.setStyleSheet("color: #e8eaed; background: transparent;")
+        msg_label.setWordWrap(True)
+        self.body_layout.addWidget(msg_label)
+
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.Password)
-        layout.addWidget(self.password_input)
+        self.password_input.returnPressed.connect(self.try_accept)
+        self.body_layout.addWidget(self.password_input)
+
+        # Строка ошибки - место под неё зарезервировано СРАЗУ (текст
+        # пустой, но высота уже заложена в _lock_size() ниже), иначе на
+        # фиксированном по размеру окне появление текста после первой
+        # неудачной попытки было бы некуда вставить
+        self.error_label = QLabel("")
+        self.error_label.setStyleSheet(
+            "color: #ff8080; background: transparent; font-size: 9pt;"
+        )
+        self.error_label.setWordWrap(True)
+        self.error_label.setMinimumHeight(18)
+        self.body_layout.addWidget(self.error_label)
+
         btn_layout = QHBoxLayout()
         ok_btn = QPushButton("OK")
-        ok_btn.clicked.connect(self.accept)
+        ok_btn.setObjectName("chromeButton")
+        ok_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+        ok_btn.setAutoDefault(False)
+        ok_btn.setDefault(False)
+        ok_btn.clicked.connect(self.try_accept)
         cancel_btn = QPushButton("Отмена")
+        cancel_btn.setObjectName("chromeButton")
+        cancel_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+        cancel_btn.setAutoDefault(False)
+        cancel_btn.setDefault(False)
         cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(ok_btn)
         btn_layout.addWidget(cancel_btn)
-        layout.addLayout(btn_layout)
-        self.password = ""
+        self.body_layout.addLayout(btn_layout)
 
-    def accept(self):
-        self.password = self.password_input.text()
-        super().accept()
+        self.password = ""
+        self.setMinimumWidth(320)
+        self._lock_size()
+
+    def try_accept(self):
+        """Проверяет пароль ПЕРЕД закрытием окна - и по Enter, и по кнопке
+        OK. Если пароль неверный - окно НЕ закрывается, показывает ошибку
+        внутри и даёт попробовать ещё раз (вместо того чтобы закрыться
+        независимо от результата, а сообщить об ошибке уже после)."""
+        entered = self.password_input.text()
+        if entered != self._correct_password:
+            self.error_label.setText("Неверный пароль. Попробуйте ещё раз.")
+            self.password_input.clear()
+            self.password_input.setFocus()
+            return
+        self.password = entered
+        self.accept()
 
 class PointsEditorWidget(QWidget):
     """Таблица для редактирования точек испытания: X-значение, мин., макс.
@@ -347,8 +656,8 @@ class AddModificationDialog(QDialog):
                 QMessageBox.warning(self, "Ошибка", "Заполните все требования по герметичности.")
                 return
 
-        if not self.password_input.text():
-            QMessageBox.warning(self, "Ошибка", "Введите пароль.")
+        if self.password_input.text() != "admin":
+            QMessageBox.warning(self, "Ошибка", "Неверный пароль.")
             return
 
         self.accept()
@@ -431,34 +740,72 @@ class ViewModificationsDialog(QDialog):
         self.details_label.setText(html)
 
 
-class SettingsDialog(QDialog):
+class SettingsDialog(_GlowDialog):
     """Меню настроек: управление модификациями насосов."""
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Настройки")
-        self.setModal(True)
-        self.resize(320, 180)
+        super().__init__(parent, title="Настройки")
+        # Боковые отступы шире, чем у остальных диалогов - только здесь
+        left, top, right, bottom = self.frame_layout.getContentsMargins()
+        self.frame_layout.setContentsMargins(left + 10, top, right + 10, bottom)
 
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Модификации насосов ГУР:"))
+        label = QLabel("Модификации насосов ГУР:")
+        label.setStyleSheet("color: #e8eaed; background: transparent; font-size: 10.5pt;")
+        self.body_layout.addWidget(label)
 
-        btn_add_mod = QPushButton("Добавить модификацию")
-        btn_add_mod.clicked.connect(self.open_add_modification)
-        layout.addWidget(btn_add_mod)
+        # Крупнее шрифт и отступы кнопок, чем стандартный chromeButton -
+        # добавляем сверху ту же шапку стиля, но с более крупными числами
+        big_button_style = styles.LEFT_PANEL_RESET_BTN_STYLE + """
+            QPushButton#chromeButton {
+                font-size: 10.5pt;
+                padding: 9px 16px;
+            }
+        """
 
-        btn_view_mod = QPushButton("Просмотреть модификации")
-        btn_view_mod.clicked.connect(self.open_view_modifications)
-        layout.addWidget(btn_view_mod)
+        def make_btn(text, slot):
+            btn = QPushButton(text)
+            btn.setObjectName("chromeButton")
+            btn.setStyleSheet(big_button_style)
+            btn.clicked.connect(slot)
+            return btn
 
-        layout.addStretch()
+        # Блок 1: управление модификациями
+        self.body_layout.addWidget(make_btn("Добавить модификацию", self.open_add_modification))
+        self.body_layout.addWidget(make_btn("Просмотреть модификации", self.open_view_modifications))
 
-        btn_instructions = QPushButton("Инструкция")
-        btn_instructions.clicked.connect(self.open_instructions)
-        layout.addWidget(btn_instructions)
+        # Явный разделительный отступ - зрительно отделяет управление
+        # модификациями от служебных действий (инструкция/закрытие)
+        self.body_layout.addSpacing(22)
 
-        btn_close = QPushButton("Закрыть")
-        btn_close.clicked.connect(self.accept)
-        layout.addWidget(btn_close)
+        # Блок 2: служебные действия
+        self.body_layout.addWidget(make_btn("Инструкция", self.open_instructions))
+        self.body_layout.addWidget(make_btn("Закрыть", self.accept))
+
+        self.setMinimumWidth(340)
+        self._lock_size()
+        self._add_watermark(os.path.join(ICONS_DIR, 'settings_2.svg'))
+
+    def _add_watermark(self, svg_path):
+        """Лёгкий силуэт иконки настроек (шестерёнка) на весь фон окна,
+        ПОД кнопками - чисто декоративный элемент, мышь через него
+        "проваливается" к тому, что под ним."""
+        if not os.path.exists(svg_path):
+            return
+        size = int(min(self.glow_frame.width(), self.glow_frame.height()) * 0.8)
+        pixmap = icon_utils.tinted_pixmap(svg_path, "#ffffff", size)
+        watermark = QLabel(self.glow_frame)
+        watermark.setPixmap(pixmap)
+        watermark.setAttribute(Qt.WA_TransparentForMouseEvents)
+        watermark.setStyleSheet("background: transparent;")
+        opacity_effect = QGraphicsOpacityEffect(watermark)
+        opacity_effect.setOpacity(0.06)
+        watermark.setGraphicsEffect(opacity_effect)
+        watermark.resize(pixmap.size())
+        watermark.move(
+            (self.glow_frame.width() - pixmap.width()) // 2,
+            (self.glow_frame.height() - pixmap.height()) // 2
+        )
+        watermark.lower()
+        watermark.show()
 
     def open_instructions(self):
         dialog = QDialog(self)
@@ -476,9 +823,8 @@ class SettingsDialog(QDialog):
         if dialog.exec_() != QDialog.Accepted:
             return
         data = dialog.get_data()
-        if data['password'] != "admin":
-            QMessageBox.warning(self, "Ошибка", "Неверный пароль. Модификация не сохранена.")
-            return
+        # Пароль уже проверен внутри диалога (try_accept) - если дошли
+        # сюда, значит он верный
         db.add_modification(
             name=data['name'],
             norm_graph1_min=json.dumps(data['graph1_min']),
@@ -767,8 +1113,8 @@ class AddPumpDialog(QDialog):
                 QMessageBox.warning(self, "Ошибка", "Заполните все поля проверки на герметичность.")
                 return
 
-        if not self.password_input.text():
-            QMessageBox.warning(self, "Ошибка", "Введите пароль.")
+        if self.password_input.text() != "admin":
+            QMessageBox.warning(self, "Ошибка", "Неверный пароль.")
             return
 
         self.accept()
@@ -1068,8 +1414,8 @@ class EditPumpDialog(QDialog):
                 QMessageBox.warning(self, "Ошибка", "Заполните все поля проверки на герметичность.")
                 return
 
-        if not self.password_input.text():
-            QMessageBox.warning(self, "Ошибка", "Введите пароль.")
+        if self.password_input.text() != "admin":
+            QMessageBox.warning(self, "Ошибка", "Неверный пароль.")
             return
 
         self.accept()
@@ -1139,9 +1485,15 @@ class EditProtocolDialog(QDialog):
         # Кнопки
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.button(QDialogButtonBox.Cancel).setText("Отмена")
-        button_box.accepted.connect(self.accept)
+        button_box.accepted.connect(self.try_accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
+
+    def try_accept(self):
+        if self.password_input.text() != "admin":
+            QMessageBox.warning(self, "Ошибка", "Неверный пароль.")
+            return
+        self.accept()
 
     def get_data(self):
         return {

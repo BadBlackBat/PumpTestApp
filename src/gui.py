@@ -14,7 +14,7 @@ from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintPreviewWid
 from .widgets.left_panel import LeftPanel
 from .widgets.right_panel import RightPanel
 from .widgets.status_bar import StatusBar, _GlowLine
-from .widgets.dialogs import PasswordDialog, AddModificationDialog, AddOrderDialog, SettingsDialog, AddPumpDialog, _clamp_to_screen
+from .widgets.dialogs import PasswordDialog, AddModificationDialog, AddOrderDialog, SettingsDialog, AddPumpDialog, _clamp_to_screen, GlowMessageDialog, PrintChoiceDialog
 from . import database as db
 from . import excel_importer as importer
 from . import utils
@@ -69,12 +69,25 @@ class _ThemeToggleButton(QWidget):
     путать с активной)."""
     theme_changed = pyqtSignal(bool)  # True - дневная тема, False - ночная
 
-    def __init__(self, day_svg, night_svg, size=20, tooltip="", parent=None):
+    def __init__(self, day_svg, night_svg, size=22, inactive_size=16, night_inactive_size=13, tooltip="", parent=None):
         super().__init__(parent)
         self._day_svg = day_svg
         self._night_svg = night_svg
         self._size = size
+        self._inactive_size = inactive_size
+        self._night_inactive_size = night_inactive_size
         self._is_day = True
+
+        # Разные SVG могут иметь разный "запас" пустого поля внутри своего
+        # холста - при одинаковом заявленном размере рендера видимая
+        # картинка выходит разного размера (луна визуально крупнее
+        # солнца). Меряем реальное заполнение каждой иконки один раз и
+        # считаем коэффициент, чтобы это выровнять.
+        day_fill = icon_utils.content_fill_ratio(day_svg)
+        night_fill = icon_utils.content_fill_ratio(night_svg)
+        biggest_fill = max(day_fill, night_fill)
+        self._day_factor = biggest_fill / day_fill
+        self._night_factor = biggest_fill / night_fill
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -84,6 +97,8 @@ class _ThemeToggleButton(QWidget):
         self.night_label = QLabel()
         self.day_label.setFixedSize(size, size)
         self.night_label.setFixedSize(size, size)
+        self.day_label.setAlignment(Qt.AlignCenter)
+        self.night_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.day_label)
         layout.addWidget(self.night_label)
 
@@ -101,8 +116,16 @@ class _ThemeToggleButton(QWidget):
         day_color = active if self._is_day else (inactive_hover if day_hover else inactive)
         night_color = (inactive_hover if night_hover else inactive) if self._is_day else active
 
-        self.day_label.setPixmap(icon_utils.tinted_pixmap(self._day_svg, day_color, self._size))
-        self.night_label.setPixmap(icon_utils.tinted_pixmap(self._night_svg, night_color, self._size))
+        # Активная иконка (текущая тема) рендерится крупнее, неактивная -
+        # заметно мельче; лейблы остаются фиксированного размера (под
+        # активную), меньшая картинка центрируется внутри той же коробки.
+        # Коэффициенты _day_factor/_night_factor компенсируют разницу в
+        # "заполненности" самих исходных SVG.
+        day_size = int((self._size if self._is_day else self._inactive_size) * self._day_factor)
+        night_size = int((self._size if not self._is_day else self._night_inactive_size) * self._night_factor)
+
+        self.day_label.setPixmap(icon_utils.tinted_pixmap(self._day_svg, day_color, day_size))
+        self.night_label.setPixmap(icon_utils.tinted_pixmap(self._night_svg, night_color, night_size))
 
     def mousePressEvent(self, event):
         self._is_day = not self._is_day
@@ -388,24 +411,19 @@ class MainWindow(QMainWindow):
         self.update_status()
 
     def on_print_requested(self):
-        box = QMessageBox(self)
-        box.setWindowTitle("Печать")
-        box.setText("Что напечатать?")
-        btn_protocol = box.addButton("Текущий протокол", QMessageBox.ActionRole)
-        btn_list_compact = box.addButton("Список (сокращённый)", QMessageBox.ActionRole)
-        btn_list_expanded = box.addButton("Список (расширенный)", QMessageBox.ActionRole)
-        box.addButton("Отмена", QMessageBox.RejectRole)
-        box.exec_()
-        clicked = box.clickedButton()
+        dialog = PrintChoiceDialog(self)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        choice = dialog.choice
 
-        if clicked == btn_protocol:
+        if choice == "protocol":
             if self.right_panel.current_data is None and self.right_panel.current_comparison_items is None:
-                QMessageBox.information(self, "Печать", "Сначала откройте протокол для просмотра.")
+                GlowMessageDialog.show_error(self, "Печать", "Сначала откройте протокол для просмотра.")
                 return
             self.right_panel.print_protocol()
-        elif clicked == btn_list_compact:
+        elif choice == "list_compact":
             self.print_pump_list(compact=True)
-        elif clicked == btn_list_expanded:
+        elif choice == "list_expanded":
             self.print_pump_list(compact=False)
 
     def print_pump_list(self, compact=True):
@@ -628,9 +646,7 @@ class MainWindow(QMainWindow):
         pwd_dialog = PasswordDialog(self, message="Для добавления насоса введите пароль:")
         if pwd_dialog.exec_() != QDialog.Accepted:
             return
-        if pwd_dialog.password != "admin":
-            QMessageBox.warning(self, "Ошибка", "Неверный пароль.")
-            return
+        # Пароль уже проверен внутри диалога - если дошли сюда, значит верный
 
         if not db.get_all_modifications():
             QMessageBox.warning(
@@ -644,9 +660,8 @@ class MainWindow(QMainWindow):
         if dialog.exec_() != QDialog.Accepted:
             return
         data = dialog.get_data()
-        if data['password'] != "admin":
-            QMessageBox.warning(self, "Ошибка", "Неверный пароль. Запись не сохранена.")
-            return
+        # Пароль уже проверен внутри диалога (try_accept) - если дошли
+        # сюда, значит он верный
 
         # ===== Проверка на дубликат (совпадение номера насоса и даты) =====
         existing_id = db.get_pump_by_number_and_date(data['pump_number'], data['test_date'])
@@ -707,13 +722,10 @@ class MainWindow(QMainWindow):
         # Запрос пароля
         dialog = PasswordDialog(self)
         if dialog.exec_() == QDialog.Accepted:
-            if dialog.password == "admin":  # временный пароль
-                db.delete_pump(pump_id)
-                self.left_panel.refresh()
-                self.update_status()
-                QMessageBox.information(self, "Удаление", "Запись удалена.")
-            else:
-                QMessageBox.warning(self, "Ошибка", "Неверный пароль.")
+            db.delete_pump(pump_id)
+            self.left_panel.refresh()
+            self.update_status()
+            QMessageBox.information(self, "Удаление", "Запись удалена.")
         if self.showing_stats: self.toggle_statistics()
 
     # def update_status(self, filters=None, selected_pump=None):
@@ -799,9 +811,8 @@ class MainWindow(QMainWindow):
         if dialog.exec_() != QDialog.Accepted:
             return
         data = dialog.get_data()
-        if data['password'] != "admin":
-            QMessageBox.warning(self, "Ошибка", "Неверный пароль. Изменения не сохранены.")
-            return
+        # Пароль уже проверен внутри диалога (try_accept) - если дошли
+        # сюда, значит он верный
 
         # ===== Определяем, какие поля реально изменились =====
         changed_fields = []

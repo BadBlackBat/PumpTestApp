@@ -77,7 +77,6 @@ def load_custom_fonts():
         return
 
     styles.TERMINATOR_FONT_FAMILY = families[0]
-    print(f"[шрифт] Загружен успешно, имя семейства по версии Qt: \"{families[0]}\"")
 
 
 def set_app_user_model_id():
