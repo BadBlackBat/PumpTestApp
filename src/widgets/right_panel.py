@@ -32,6 +32,27 @@ ICONS_DIR = os.path.join(
 from datetime import datetime
 
 
+class _CtrlWheelZoomWidget(QWidget):
+    """Обычный QWidget, который перехватывает Ctrl+колесо мыши и вызывает
+    переданный обработчик - используется для масштабирования обзорного
+    снимка протокола и текста статистики колёсиком мыши (без Ctrl колесо
+    работает как обычно - прокрутка, если она вообще где-то есть)."""
+    def __init__(self, on_ctrl_wheel, parent=None):
+        super().__init__(parent)
+        self._on_ctrl_wheel = on_ctrl_wheel
+        # Обычный QWidget (в отличие от QFrame) не рисует фон, заданный
+        # через QSS, без этого атрибута - без него весь наш тёмно-синий
+        # градиент просто не отрисовывался
+        self.setAttribute(Qt.WA_StyledBackground, True)
+
+    def wheelEvent(self, event):
+        if event.modifiers() & Qt.ControlModifier:
+            self._on_ctrl_wheel(event)
+            event.accept()
+        else:
+            super().wheelEvent(event)
+
+
 class RightPanel(QWidget):
     clear_requested = pyqtSignal()   # сигнал для запроса сброса
 
@@ -78,12 +99,6 @@ class RightPanel(QWidget):
         self.export_pdf_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
         self.export_pdf_btn.clicked.connect(self.export_to_pdf)
         top_btns_layout.addWidget(self.export_pdf_btn)
-
-        self.fit_view_btn = QPushButton("Уместить в высоту")
-        self.fit_view_btn.setObjectName("chromeButton")
-        self.fit_view_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
-        self.fit_view_btn.clicked.connect(self.toggle_fit_view)
-        top_btns_layout.addWidget(self.fit_view_btn)
         self._fit_mode = False
 
         self.content_layout.addLayout(top_btns_layout)
@@ -181,7 +196,7 @@ class RightPanel(QWidget):
         # центру - карточка со свечением (переиспользуем _GlowFrame - тот
         # же приём, что и в остальных панелях: мягкие края, тень,
         # бирюзовая полоса по контуру)
-        self.stats_widget = QWidget()
+        self.stats_widget = _CtrlWheelZoomWidget(self._on_stats_wheel)
         self.stats_widget.setObjectName("statsBackground")
         self.stats_widget.setStyleSheet(styles.RIGHT_PANEL_STATS_BG_STYLE)
         stats_outer_layout = QVBoxLayout(self.stats_widget)
@@ -195,6 +210,8 @@ class RightPanel(QWidget):
         self.stats_label = QLabel()
         self.stats_label.setWordWrap(True)
         self.stats_label.setStyleSheet(styles.RIGHT_PANEL_STATS_TEXT_STYLE)
+        self._stats_base_font_size = self.stats_label.font().pointSize() or 10
+        self._stats_zoom = 1.0
         stats_card_layout.addWidget(self.stats_label)
         stats_center_row.addWidget(self.stats_card)
         stats_center_row.addStretch(1)
@@ -254,13 +271,71 @@ class RightPanel(QWidget):
         scroll_frame = _GlowFrame()
         scroll_frame_layout = QVBoxLayout(scroll_frame)
         scroll_frame_layout.setContentsMargins(6, 6, 6, 6)
+        scroll_frame_layout.setSpacing(4)
+
+        # Кнопка-иконка "уместить в высоту" - ВНЕ прокручиваемой области
+        # (иначе при скрытии scroll_area для показа снимка пряталась бы и
+        # сама кнопка возврата - так и было раньше, это и была ошибка)
+        fit_btn_row = QHBoxLayout()
+        fit_btn_row.addStretch(1)
+
+        # Кнопки масштаба статистики +/- - здесь же, вне прокрутки, чтобы
+        # были доступны всегда, а не уезжали при прокрутке длинной
+        # статистики вниз (тот же результат даёт Ctrl+колесо мыши прямо
+        # на статистике)
+        self.stats_minus_btn = QPushButton("−")
+        self.stats_minus_btn.setObjectName("chromeButton")
+        self.stats_minus_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+        self.stats_minus_btn.setFixedSize(28, 24)
+        self.stats_minus_btn.setToolTip("Уменьшить масштаб статистики")
+        self.stats_minus_btn.clicked.connect(lambda: self._zoom_stats(1 / 1.15))
+        self.stats_plus_btn = QPushButton("+")
+        self.stats_plus_btn.setObjectName("chromeButton")
+        self.stats_plus_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+        self.stats_plus_btn.setFixedSize(28, 24)
+        self.stats_plus_btn.setToolTip("Увеличить масштаб статистики")
+        self.stats_plus_btn.clicked.connect(lambda: self._zoom_stats(1.15))
+        fit_btn_row.addWidget(self.stats_minus_btn)
+        fit_btn_row.addWidget(self.stats_plus_btn)
+
+        self.fit_view_btn = QPushButton()
+        self.fit_view_btn.setObjectName("chromeButton")
+        fit_icon_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'resources', 'icons', 'fit_height.svg'
+        )
+        if os.path.exists(fit_icon_path):
+            self.fit_view_btn.setIcon(icon_utils.tinted_icon(fit_icon_path, "#3a3d42", 16))
+        else:
+            self.fit_view_btn.setText("⇕")
+        self.fit_view_btn.setIconSize(QSize(16, 16))
+        self.fit_view_btn.setFixedSize(28, 24)
+        self.fit_view_btn.setToolTip("Уместить протокол по высоте панели")
+        self.fit_view_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+        self.fit_view_btn.clicked.connect(self.toggle_fit_view)
+        fit_btn_row.addWidget(self.fit_view_btn)
+        scroll_frame_layout.addLayout(fit_btn_row)
+
         scroll_frame_layout.addWidget(scroll)
 
+        # Виджет "обзорного" режима - целиковый уменьшенный снимок
+        # протокола, без прокрутки, для быстрого просмотра одним взглядом
+        # (см. toggle_fit_view). Живёт в той же рамке, что и обычная
+        # область прокрутки - видимость переключается между ними. Фон -
+        # тот же тёмно-синий градиент, что и при загрузке/показе
+        # статистики (п.1) - виден по краям, если снимок уже панели.
+        self.overview_bg = _CtrlWheelZoomWidget(self._on_overview_wheel)
+        self.overview_bg.setObjectName("statsBackground")
+        self.overview_bg.setStyleSheet(styles.RIGHT_PANEL_STATS_BG_STYLE)
+        overview_bg_layout = QVBoxLayout(self.overview_bg)
+        overview_bg_layout.setContentsMargins(0, 0, 0, 0)
         self.overview_label = QLabel()
         self.overview_label.setAlignment(Qt.AlignCenter)
         self.overview_label.setStyleSheet("background: transparent;")
-        self.overview_label.hide()
-        scroll_frame_layout.addWidget(self.overview_label)
+        overview_bg_layout.addWidget(self.overview_label)
+        self.overview_bg.hide()
+        scroll_frame_layout.addWidget(self.overview_bg)
+        self._overview_base_pixmap = None
+        self._overview_zoom = 1.0
 
         layout.addWidget(scroll_frame)
 
@@ -278,9 +353,21 @@ class RightPanel(QWidget):
         self.stats_widget.hide()
         self.logo_label.show()
 
+    def _zoom_stats(self, factor):
+        self._stats_zoom = max(0.5, min(3.0, self._stats_zoom * factor))
+        new_size = max(6, int(self._stats_base_font_size * self._stats_zoom))
+        font = self.stats_label.font()
+        font.setPointSize(new_size)
+        self.stats_label.setFont(font)
+
+    def _on_stats_wheel(self, event):
+        delta = event.angleDelta().y()
+        self._zoom_stats(1.15 if delta > 0 else 1 / 1.15)
+
     def display_statistics(self, stats_data):
         """Отображает сводную статистику в правой панели."""
         self._clear_dynamic_content()  # очищаем динамическую область
+        self._zoom_stats(1.0 / self._stats_zoom)  # сброс масштаба к исходному
         self.logo_label.hide()
         self.header_label.hide()  # скрываем заголовок протокола
         self.test_conditions_box.hide()
@@ -319,7 +406,7 @@ class RightPanel(QWidget):
 
         self.stats_label.setText(html)
         self.stats_widget.show()
-        self.current_data = None
+        self.current_data = None  # сбрасываем текущий протокол, т.к. показываем статистику
         self.current_comparison_items = None
 
     def display_protocol(self, data):
@@ -1368,6 +1455,63 @@ class RightPanel(QWidget):
             for toolbar in self._graph_toolbars:
                 toolbar.show()
 
+    def toggle_fit_view(self):
+        """Переключает между обычным (прокручиваемым) видом протокола и
+        "обзорным" - целиковым снимком, смасштабированным по высоте видимой
+        области, без полос прокрутки, для быстрого просмотра одним взглядом.
+
+        Технически это НЕ живые виджеты, уменьшенные "на лету" (Qt не умеет
+        аккуратно масштабировать таблицы/графики matplotlib целиком), а
+        обычный снимок (QPixmap) текущего отображения - для быстрого
+        визуального обзора этого достаточно, но кликать по ячейкам/
+        графикам в этом режиме нельзя (только смотреть). Снимок можно
+        дополнительно масштабировать колёсиком мыши с зажатым Ctrl."""
+        if self.current_data is None and self.current_comparison_items is None:
+            return
+
+        if not self._fit_mode:
+            self._overview_base_pixmap = self.content_widget.grab()
+            self._overview_zoom = 1.0
+            self._render_overview()
+            self.scroll_area.hide()
+            self.overview_bg.show()
+            self.fit_view_btn.setToolTip("Вернуться к обычному виду протокола")
+            self._fit_mode = True
+        else:
+            self.overview_bg.hide()
+            self.scroll_area.show()
+            self.fit_view_btn.setToolTip("Уместить протокол по высоте панели")
+            self._fit_mode = False
+
+    def _render_overview(self):
+        """Перестраивает картинку обзорного снимка под текущий зум
+        (self._overview_zoom, 1.0 = точно по высоте панели)."""
+        base = self._overview_base_pixmap
+        if base is None or base.height() == 0:
+            return
+        viewport_height = self.scroll_area.viewport().height()
+        if viewport_height <= 0:
+            return
+        fit_scale = viewport_height / base.height()
+        total_scale = fit_scale * self._overview_zoom
+        scaled = base.scaled(
+            max(1, int(base.width() * total_scale)), max(1, int(base.height() * total_scale)),
+            Qt.KeepAspectRatio, Qt.SmoothTransformation
+        )
+        self.overview_label.setPixmap(scaled)
+
+    def _on_overview_wheel(self, event):
+        """Ctrl+колесо мыши на обзорном снимке - масштабирование. Снимок
+        сохранён в исходном (не уменьшенном) разрешении, поэтому умеренное
+        увеличение остаётся чётким; очень сильное - как и с любой
+        картинкой, растровое увеличение всё же начнёт "мылить"."""
+        if not self._fit_mode:
+            return
+        delta = event.angleDelta().y()
+        factor = 1.1 if delta > 0 else (1 / 1.1)
+        self._overview_zoom = max(0.3, min(3.0, self._overview_zoom * factor))
+        self._render_overview()
+
     def export_to_pdf(self):
         """Экспортирует текущий протокол (или сравнение дублей) в PDF-файл."""
         if self.current_data:
@@ -1430,35 +1574,6 @@ class RightPanel(QWidget):
             self.fit_view_btn.show()
             for toolbar in self._graph_toolbars:
                 toolbar.show()
-
-    def toggle_fit_view(self):
-        """Переключает между обычным (прокручиваемым) видом протокола и
-        "обзорным" - целиковым снимком, смасштабированным по высоте видимой
-        области, без полос прокрутки, для быстрого просмотра одним взглядом.
-        Это снимок (QPixmap), а не живые виджеты - кликать по ячейкам/
-        графикам в этом режиме нельзя, только смотреть."""
-        if self.current_data is None and self.current_comparison_items is None:
-            return
-
-        if not self._fit_mode:
-            pixmap = self.content_widget.grab()
-            viewport_height = self.scroll_area.viewport().height()
-            if pixmap.height() > 0 and viewport_height > 0:
-                scale = viewport_height / pixmap.height()
-                scaled = pixmap.scaled(
-                    max(1, int(pixmap.width() * scale)), viewport_height,
-                    Qt.KeepAspectRatio, Qt.SmoothTransformation
-                )
-                self.overview_label.setPixmap(scaled)
-            self.scroll_area.hide()
-            self.overview_label.show()
-            self.fit_view_btn.setText("Обычный вид")
-            self._fit_mode = True
-        else:
-            self.overview_label.hide()
-            self.scroll_area.show()
-            self.fit_view_btn.setText("Уместить в высоту")
-            self._fit_mode = False
 
     def create_notes_section(self, data):
         note = data.get('note', '')
@@ -1536,9 +1651,9 @@ class RightPanel(QWidget):
         # Скрываем постоянные виджеты, показываем логотип
         if self._fit_mode:
             self._fit_mode = False
-            self.overview_label.hide()
+            self.overview_bg.hide()
             self.scroll_area.show()
-            self.fit_view_btn.setText("Уместить в высоту")
+            self.fit_view_btn.setToolTip("Уместить протокол по высоте панели")
         self.header_label.hide()
         self.header_title_label.hide()
         self.test_conditions_box.hide()
