@@ -17,6 +17,7 @@ from .. import utils
 from .. import styles
 from .. import icon_utils
 from .left_panel import _GlowFrame
+from .status_bar import _GlowLine
 
 ICONS_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'resources', 'icons'
@@ -102,8 +103,8 @@ class _GlowDialog(QDialog):
         outer_layout.addWidget(self.glow_frame)
 
         frame_layout = QVBoxLayout(self.glow_frame)
-        frame_layout.setContentsMargins(16, 12, 16, 16)
-        frame_layout.setSpacing(10)
+        frame_layout.setContentsMargins(16, 8, 16, 16)
+        frame_layout.setSpacing(0)
         self.frame_layout = frame_layout
 
         title_row = QHBoxLayout()
@@ -121,6 +122,14 @@ class _GlowDialog(QDialog):
         title_row.addWidget(self.title_label)
         title_row.addStretch()
         frame_layout.addLayout(title_row)
+        frame_layout.addSpacing(2)  # минимальный зазор - полоса ближе к заголовку
+
+        # Светящаяся полоса-подчёркивание под заголовком - тот же приём,
+        # что и в статус-баре/верхней панели (яркая по центру, гаснущая
+        # к краям), просто переиспользуем тот же класс
+        title_underline = _GlowLine()
+        frame_layout.addWidget(title_underline)
+        frame_layout.addSpacing(10)  # обычный зазор перед содержимым диалога
 
         self.body_layout = QVBoxLayout()
         self.body_layout.setSpacing(10)
@@ -215,6 +224,16 @@ class _GlowDialog(QDialog):
 
     def reject(self):
         self._fade_out_then(super().reject)
+
+    def keyPressEvent(self, event):
+        # ESC больше не закрывает окно мгновенно без предупреждения - это
+        # рискованно для диалогов с уже введёнными данными (можно случайно
+        # стереть всю заполненную форму одним нажатием). Закрыть окно
+        # по-прежнему можно явно - крестиком или кнопкой "Отмена".
+        if event.key() == Qt.Key_Escape:
+            event.ignore()
+            return
+        super().keyPressEvent(event)
 
     # --- Перетаскивание окна мышью за заголовок (нет системной рамки) ---
     def mousePressEvent(self, event):
@@ -902,17 +921,25 @@ class AddPumpDialog(_GlowDialog):
 
         # Заголовок в 2 строки, по несколько полей в каждой (п.1):
         # 1я строка - № насоса + Модификация; 2я - № заказа + Дата + Тип.
-        # Подпись - по размеру своего текста (БЕЗ фиксированной ширины -
-        # именно она раньше создавала большое пустое место между текстом
-        # подписи и полем ввода). Поля ввода - со скруглёнными углами.
-        # Обе строки просто прижаты к левому краю (не центрируются каждая
-        # по отдельности) - поэтому их первые поля гарантированно стоят
-        # друг под другом.
-        SPACING = 14
+        # Подпись - по размеру своего текста (без фиксированной ширины -
+        # иначе между текстом и полем остаётся пустое место). Ширину полей
+        # считаем точно через QFontMetrics (не на глаз), чтобы:
+        # - № насоса и Модификация были одной ширины между собой;
+        # - № заказа/Дата/Тип были одной ширины между собой;
+        # - ОБЩАЯ длина строки 1 совпадала с общей длиной строки 2.
+        SPACING = 8
+        CHIP_PAD = 8 * 2 + 4  # внутренние отступы чипа (см. compact_field)
+        arrow_path = os.path.join(ICONS_DIR, 'dropdown_arrow.svg').replace('\\', '/')
         INPUT_STYLE = (
             "QLineEdit, QComboBox, QDateEdit { "
             "background-color: #f0f0f0; color: #1c1e21; "
             "border: 1px solid #6b6f75; border-radius: 4px; padding: 1px 6px; }"
+            "QLineEdit:hover, QComboBox:hover, QDateEdit:hover, "
+            "QLineEdit:focus, QComboBox:focus, QDateEdit:focus { "
+            "border: 1px solid #4fd1ff; }"
+            "QComboBox::drop-down, QDateEdit::drop-down { border: none; }"
+            f"QComboBox::down-arrow, QDateEdit::down-arrow {{ "
+            f"image: url({arrow_path}); width: 10px; height: 10px; }}"
         )
 
         def compact_field(label_text, widget, field_width):
@@ -929,32 +956,69 @@ class AddPumpDialog(_GlowDialog):
             box.addWidget(widget)
             return chip
 
+        # Строим чипы строки 2 (№ заказа/Дата/Тип) первыми и измеряем их
+        # РЕАЛЬНУЮ ширину через sizeHint() - это надёжнее приближённого
+        # расчёта на бумаге, т.к. Qt сам точно знает, сколько места нужно
+        # с учётом всех внутренних отступов рамки/чипа/шрифта. Дальше
+        # считаем ширину поля строки 1 так, чтобы "Модификация" заканчивалась
+        # ровно там же, где заканчивается "Тип проверки" (п.4 требований).
+        FIELD_W_ROW2 = 90  # № заказа/Дата/Тип - одной ширины между собой
+
+        self.order_input = QLineEdit()
+        self.date_input = QDateEdit()
+        self.date_input.setCalendarPopup(True)
+        self.date_input.setDate(QDate.currentDate())
+        self.date_input.calendarWidget().setStyleSheet(styles.LEFT_PANEL_CALENDAR_STYLE)
+        self.type_combo = QComboBox()
+        self.type_combo.addItems(["первичная", "повторная"])
+
+        chip_order = compact_field("№ заказа:", self.order_input, FIELD_W_ROW2)
+        chip_date = compact_field("Дата проверки:", self.date_input, FIELD_W_ROW2)
+        chip_type = compact_field("Тип проверки:", self.type_combo, FIELD_W_ROW2)
+
+        row2_total = (
+            chip_order.sizeHint().width() + chip_date.sizeHint().width()
+            + chip_type.sizeHint().width() + 2 * SPACING
+        )
+
         self.pump_number_input = QLineEdit()
         self.mod_combo = QComboBox()
         for mod_id, name in self.mods:
             self.mod_combo.addItem(name, mod_id)
         self.mod_combo.currentIndexChanged.connect(self.on_modification_changed)
 
+        # Пробная ширина для строки 1 - чип "№ насоса" измеряем при этой
+        # ширине, а недостающую разницу до row2_total целиком отдаём чипу
+        # "Модификация" - так его правый край гарантированно совпадёт с
+        # правым краем "Тип проверки".
+        #
+        # ВАЖНО: накладные расходы самого чипа (рамка, внутренние отступы,
+        # плюс то, что QComboBox может занимать чуть больше места, чем
+        # QLineEdit при той же setFixedWidth) - измеряем НАПРЯМУЮ на
+        # пробной сборке, а не предполагаем константой (CHIP_PAD) - иначе
+        # накапливается небольшая, но заметная погрешность.
+        trial_w = 150
+        chip_pump = compact_field("№ насоса:", self.pump_number_input, trial_w)
+        remaining_for_mod = row2_total - chip_pump.sizeHint().width() - SPACING
+
+        chip_mod = compact_field("Модификация насоса:", self.mod_combo, trial_w)
+        mod_overhead = chip_mod.sizeHint().width() - trial_w
+        mod_field_w = max(80, remaining_for_mod - mod_overhead)
+        self.mod_combo.setFixedWidth(mod_field_w)
+
         row1 = QHBoxLayout()
-        row1.addWidget(compact_field("№ насоса:", self.pump_number_input, 110))
+        row1.addWidget(chip_pump)
         row1.addSpacing(SPACING)
-        row1.addWidget(compact_field("Модификация насоса:", self.mod_combo, 180))
+        row1.addWidget(chip_mod)
         row1.addStretch(1)
         self.body_layout.addLayout(row1)
 
-        self.order_input = QLineEdit()
-        self.date_input = QDateEdit()
-        self.date_input.setCalendarPopup(True)
-        self.date_input.setDate(QDate.currentDate())
-        self.type_combo = QComboBox()
-        self.type_combo.addItems(["первичная", "повторная"])
-
         row2 = QHBoxLayout()
-        row2.addWidget(compact_field("№ заказа:", self.order_input, 90))
+        row2.addWidget(chip_order)
         row2.addSpacing(SPACING)
-        row2.addWidget(compact_field("Дата проверки:", self.date_input, 100))
+        row2.addWidget(chip_date)
         row2.addSpacing(SPACING)
-        row2.addWidget(compact_field("Тип проверки:", self.type_combo, 90))
+        row2.addWidget(chip_type)
         row2.addStretch(1)
         self.body_layout.addLayout(row2)
 
@@ -974,13 +1038,14 @@ class AddPumpDialog(_GlowDialog):
         self.body_layout.addWidget(self.values_widget)
 
         note_row = QHBoxLayout()
-        note_label = QLabel("Примечание:")
-        note_label.setStyleSheet("color: #e8eaed; background: transparent;")
-        note_row.addWidget(note_label)
+        self.note_label = QLabel("Примечание:")
+        self.note_label.setStyleSheet("color: #e8eaed; background: transparent;")
+        note_row.addWidget(self.note_label)
         self.note_input = QLineEdit()
         self.note_input.setStyleSheet(
             "QLineEdit { border: 1px solid #6b6f75; border-radius: 6px; "
             "background-color: #f0f0f0; color: #1c1e21; padding: 2px 6px; }"
+            "QLineEdit:hover, QLineEdit:focus { border: 1px solid #4fd1ff; }"
         )
         note_row.addWidget(self.note_input)
         note_row.addStretch(1)
@@ -1037,17 +1102,17 @@ class AddPumpDialog(_GlowDialog):
             return
 
         _, self.value_tables['test1'] = self._build_value_table(
-            "Испытание 1\nЗависимость объемной подачи от оборотов привода насоса ГУР\n"
+            "Испытание 1:\nЗависимость объемной подачи от оборотов привода насоса ГУР\n"
             "клапан ECO выключен, I = 0 A",
             self.selected_mod['norm_graph1_x'], "Обороты, об/мин"
         )
         _, self.value_tables['test2'] = self._build_value_table(
-            "Испытание 2\nЗависимость объемной подачи от оборотов привода насоса ГУР\n"
+            "Испытание 2:\nЗависимость объемной подачи от оборотов привода насоса ГУР\n"
             "клапан ECO включен, I = 1 A",
             self.selected_mod['norm_graph2_x'], "Обороты, об/мин"
         )
         _, self.value_tables['test3'] = self._build_value_table(
-            "Испытание 3\nЗависимость объемной подачи от управляющего сигнала на клапане ECO\n"
+            "Испытание 3:\nЗависимость объемной подачи от управляющего сигнала на клапане ECO\n"
             "клапан ECO выключен, I = 0 A",
             self.selected_mod['norm_graph3_x'], "Сила тока, А"
         )
@@ -1058,12 +1123,13 @@ class AddPumpDialog(_GlowDialog):
         # тестами 1/2 (п.2) - это заодно уменьшает и минимальную ширину
         # всего окна (п.4), т.к. она считается по самой широкой таблице.
         self._match_table_width(
-            self.value_tables['test3'], self.value_tables['test1'].width()
+            self.value_tables['test3'],
+            self.value_tables['test1'].width(),
+            self.value_tables['test1'].verticalHeader().width()
         )
 
-        # Испытание 4 (давление) - в один ряд с полем ввода, в той же
-        # колонке, что и испытания 1-3 (п.1, п.4 требований); заголовок в
-        # одну строку, без переноса
+        # Испытание 4 (давление) - "Испытание 4:" отдельной строкой сверху,
+        # название испытания вместе с полем ввода - строкой ниже
         table_width = self.value_tables['test1'].width()
 
         pressure_col = QVBoxLayout()
@@ -1072,20 +1138,37 @@ class AddPumpDialog(_GlowDialog):
         test4_prefix.setStyleSheet("color: #e8eaed; font-weight: bold; background: transparent;")
         pressure_col.addWidget(test4_prefix)
 
-        pressure_row = QHBoxLayout()
-        pressure_label = QLabel(
-            "Определение максимального давления срабатывания предохранительного клапана:"
-        )
-        pressure_label.setWordWrap(True)
-        pressure_label.setStyleSheet("color: #e8eaed; font-weight: bold; background: transparent;")
+        line2_text = "Определение максимального давления срабатывания"
+        line2_label = QLabel(line2_text)
+        line2_label.setWordWrap(False)
+        line2_label.setStyleSheet("color: #e8eaed; font-weight: bold; background: transparent;")
+        pressure_col.addWidget(line2_label)
+
+        line3_text = "предохранительного клапана:"
+        line3_label = QLabel(line3_text)
+        line3_label.setWordWrap(False)
+        line3_label.setStyleSheet("color: #e8eaed; font-weight: bold; background: transparent;")
+
+        # Поле ввода считаем так, чтобы 3я строка (подпись + поле)
+        # заканчивалась ровно там же, где заканчивается 2я строка.
+        # Меряем через sizeHint() самих QLabel (а не сырые метрики шрифта) -
+        # это учитывает собственные внутренние отступы QLabel и точнее
+        # совпадает с тем, что реально отрисовывается на экране.
+        line2_w = line2_label.sizeHint().width()
+        line3_label_w = line3_label.sizeHint().width()
+        PRESSURE_SPACING = 8
+        input_w = max(60, line2_w - line3_label_w - PRESSURE_SPACING)
+
         self.pressure_input = QLineEdit()
-        self.pressure_input.setFixedWidth(100)
+        self.pressure_input.setFixedWidth(input_w)
         self.pressure_input.setStyleSheet(
             "QLineEdit { border: 1px solid #6b6f75; border-radius: 6px; "
             "background-color: #f0f0f0; color: #1c1e21; padding: 2px 6px; }"
+            "QLineEdit:hover, QLineEdit:focus { border: 1px solid #4fd1ff; }"
         )
-        pressure_label.setMaximumWidth(max(120, table_width - 100 - 10))
-        pressure_row.addWidget(pressure_label)
+        pressure_row = QHBoxLayout()
+        pressure_row.setSpacing(PRESSURE_SPACING)
+        pressure_row.addWidget(line3_label)
         pressure_row.addWidget(self.pressure_input)
         pressure_row.addStretch()
         pressure_col.addLayout(pressure_row)
@@ -1093,20 +1176,29 @@ class AddPumpDialog(_GlowDialog):
 
         # Примечание - по ширине точно как таблицы испытаний (п.2 и п.3),
         # а не растянуто на всё окно
-        self.note_input.setFixedWidth(table_width)
+        note_label_width = QFontMetrics(self.note_label.font()).horizontalAdvance("Примечание:") + 4
+        self.note_input.setFixedWidth(max(80, table_width - note_label_width - 6))
 
         # Проверка на герметичность - подзаголовок (в одну строку, без
-        # переноса, п.4) и 5 пунктов, каждый со своим выпадающим списком
+        # переноса, п.4) и 5 пунктов, каждый со своим выпадающим списком.
+        # Подписи - без переноса, одной (максимальной среди всех пяти)
+        # ширины - выравнивает и сами выпадающие списки в одну колонку.
         seal_label = QLabel("Проверка на герметичность:")
         seal_label.setWordWrap(False)
         seal_label.setStyleSheet("color: #e8eaed; font-weight: bold; background: transparent;")
         self.extra_column.addWidget(seal_label)
+
+        seal_fm = QFontMetrics(QLabel().font())
+        seal_label_w = max(
+            seal_fm.horizontalAdvance(utils.SEAL_LABELS[k] + ":") for k in utils.SEAL_KEYS
+        ) + 6
+
         for key in utils.SEAL_KEYS:
             row = QHBoxLayout()
             row.setSpacing(6)
             lbl = QLabel(utils.SEAL_LABELS[key] + ":")
-            lbl.setWordWrap(True)
-            lbl.setFixedWidth(220)
+            lbl.setWordWrap(False)
+            lbl.setFixedWidth(seal_label_w)
             lbl.setStyleSheet("color: #e8eaed; background: transparent;")
             row.addWidget(lbl)
             combo = self._make_seal_combo(key, self.selected_mod['seal_rules'].get(key, ''))
@@ -1134,24 +1226,33 @@ class AddPumpDialog(_GlowDialog):
         # части - без этого выпадающий список мог наследовать прозрачность
         # (WA_TranslucentBackground) безрамочного родительского окна, из-за
         # чего при открытии возникало визуальное "задвоение" значения
-        combo.setStyleSheet("""
-            QComboBox {
+        arrow_path = os.path.join(ICONS_DIR, 'dropdown_arrow.svg').replace('\\', '/')
+        combo.setStyleSheet(f"""
+            QComboBox {{
                 background-color: #f0f0f0;
                 color: #1c1e21;
                 border: 1px solid #6b6f75;
                 border-radius: 4px;
                 padding: 2px 6px;
-            }
-            QComboBox::drop-down {
+            }}
+            QComboBox:hover, QComboBox:focus {{
+                border: 1px solid #4fd1ff;
+            }}
+            QComboBox::drop-down {{
                 border: none;
-            }
-            QComboBox QAbstractItemView {
+            }}
+            QComboBox::down-arrow {{
+                image: url({arrow_path});
+                width: 10px;
+                height: 10px;
+            }}
+            QComboBox QAbstractItemView {{
                 background-color: #f0f0f0;
                 color: #1c1e21;
                 selection-background-color: #4fd1ff;
                 selection-color: #1c1e21;
                 outline: none;
-            }
+            }}
         """)
 
         longest = max(self._OIL_OPTIONS + self._LEAK_OPTIONS, key=len)
@@ -1167,24 +1268,36 @@ class AddPumpDialog(_GlowDialog):
             elif child.layout():
                 self._clear_sub_layout(child.layout())
 
-    def _match_table_width(self, table, target_width):
-        """Пропорционально уменьшает ширину столбцов таблицы, чтобы её
-        общая ширина совпала с target_width - используется для теста 3,
-        у которого обычно больше контрольных точек (столбцов), чем у
-        тестов 1/2, из-за чего его таблица иначе получалась бы шире их."""
+    def _match_table_width(self, table, target_width, target_header_width=None):
+        """Пропорционально меняет ширину столбцов таблицы (растягивает
+        ИЛИ сжимает - в любую сторону), чтобы её общая ширина точно
+        совпала с target_width - используется для теста 3, у которого
+        обычно другое количество контрольных точек (столбцов), чем у
+        тестов 1/2, из-за чего его таблица иначе была бы то шире, то
+        уже их. Запас (+2) должен совпадать с тем, что использует
+        _build_value_table - иначе даже "подогнанная" ширина будет чуть
+        отличаться от цели.
+
+        target_header_width - если передан, ширина строкового заголовка
+        (левого столбца с подписями "Обороты, об/мин"/"Сила тока, А" и
+        т.п.) тоже принудительно выравнивается под эталонную таблицу -
+        у теста 3 подпись обычно короче ("Сила тока, А"), из-за чего
+        заголовок сам по себе уже ýже, и без этого выравнивания общая
+        ширина всё равно немного не совпадала бы."""
+        if target_header_width is not None:
+            table.verticalHeader().setFixedWidth(target_header_width)
         header_w = table.verticalHeader().width()
         col_count = table.columnCount()
         if col_count == 0:
             return
         current_cols_width = sum(table.columnWidth(c) for c in range(col_count))
-        current_total = header_w + 8 + current_cols_width
-        if current_total <= target_width:
-            return  # уже не шире цели - трогать не нужно
-        available = max(30 * col_count, target_width - header_w - 8)
+        if current_cols_width == 0:
+            return
+        available = max(30 * col_count, target_width - header_w - 2)
         scale = available / current_cols_width
         for c in range(col_count):
             table.setColumnWidth(c, max(30, int(table.columnWidth(c) * scale)))
-        new_total = header_w + 8 + sum(table.columnWidth(c) for c in range(col_count))
+        new_total = header_w + 2 + sum(table.columnWidth(c) for c in range(col_count))
         table.setFixedWidth(new_total)
 
     def _build_value_table(self, title, x_values, x_label):
@@ -1213,6 +1326,13 @@ class AddPumpDialog(_GlowDialog):
             }
             QTableWidget::item {
                 padding: 1px;
+            }
+            QTableWidget::item:hover {
+                background-color: #d6f3ff;
+            }
+            QTableWidget::item:selected {
+                background-color: #bdeeff;
+                color: #1c1e21;
             }
             QHeaderView::section {
                 background-color: #3a3d42;
@@ -1246,16 +1366,16 @@ class AddPumpDialog(_GlowDialog):
         table.verticalHeader().setFont(small_font)
         table.resizeRowsToContents()
         table.resizeColumnsToContents()
-        min_section = 70
+        min_section = 55
         for c in range(table.columnCount()):
-            table.setColumnWidth(c, max(min_section, table.columnWidth(c) + 16))
+            table.setColumnWidth(c, max(min_section, table.columnWidth(c) + 4))
         table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        total_height = 6
+        total_height = 2
         for row in range(table.rowCount()):
             total_height += table.rowHeight(row)
         table.setFixedHeight(total_height)
-        total_width = table.verticalHeader().width() + 8
+        total_width = table.verticalHeader().width() + 2
         for c in range(table.columnCount()):
             total_width += table.columnWidth(c)
         table.setFixedWidth(total_width)
@@ -1270,8 +1390,7 @@ class AddPumpDialog(_GlowDialog):
         table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
 
         col.addWidget(table)
-        col.addStretch(1)
-        container.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Minimum)
+        container.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.tests_column.addWidget(container)
         return container, table
 
