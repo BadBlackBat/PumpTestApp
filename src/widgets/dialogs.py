@@ -50,7 +50,7 @@ class _DialogCloseButton(QPushButton):
     только меняет цвет, но и увеличивается - кнопка сразу имеет
     фиксированный размер под БОЛЬШИЙ (hover) вариант, чтобы разрастание
     иконки не сдвигало соседние элементы заголовка."""
-    def __init__(self, size=28, hover_size=36, parent=None):
+    def __init__(self, size=24, hover_size=32, parent=None):
         super().__init__(parent)
         close_path = os.path.join(ICONS_DIR, 'close.svg')
         self._normal_icon = icon_utils.tinted_icon(close_path, styles.TOP_BAR_ICON_COLOR_NORMAL, size)
@@ -84,7 +84,7 @@ class _GlowDialog(QDialog):
     и в конце своего __init__ обязаны вызвать self._lock_size(), которая
     фиксирует размер окна (не растягивается, resize-рамки нет по
     определению у безрамочного окна)."""
-    def __init__(self, parent=None, title=""):
+    def __init__(self, parent=None, title="", glow_color=None):
         super().__init__(parent)
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -93,17 +93,13 @@ class _GlowDialog(QDialog):
         self._closing_started = False
 
         outer_layout = QVBoxLayout(self)
-        # Отступ вокруг рамки - тени (QGraphicsDropShadowEffect у
-        # _GlowFrame) нужно место, куда "растекаться" за пределы самой
-        # панели. Без этого запаса тень обрезается ровно по границе окна,
-        # и этот обрезанный край выглядит как слабый квадратный контур.
         outer_layout.setContentsMargins(18, 18, 18, 18)
 
-        self.glow_frame = _GlowFrame()
+        self.glow_frame = _GlowFrame(glow_color=glow_color)
         outer_layout.addWidget(self.glow_frame)
 
         frame_layout = QVBoxLayout(self.glow_frame)
-        frame_layout.setContentsMargins(16, 8, 16, 16)
+        frame_layout.setContentsMargins(16, 5, 16, 16)
         frame_layout.setSpacing(0)
         self.frame_layout = frame_layout
 
@@ -112,33 +108,20 @@ class _GlowDialog(QDialog):
         self.title_label.setStyleSheet(
             "color: #f2f4f6; font-weight: bold; font-size: 11pt; background: transparent;"
         )
-        # Резервируем высоту строки заголовка под размер кнопки-крестика
-        # (она позиционируется абсолютно, а не через layout заголовка) -
-        # иначе для диалогов с коротким заголовком крестик мог "наезжать"
-        # на первый ряд содержимого ниже
-        self.title_label.setMinimumHeight(42)
-        # Оставляем справа пустое место под будущий крестик (сам он не в
-        # layout - см. ниже), чтобы длинный заголовок на него не наезжал
+        self.title_label.setMinimumHeight(38)
         title_row.addWidget(self.title_label)
         title_row.addStretch()
         frame_layout.addLayout(title_row)
-        frame_layout.addSpacing(2)  # минимальный зазор - полоса ближе к заголовку
+        frame_layout.addSpacing(2)
 
-        # Светящаяся полоса-подчёркивание под заголовком - тот же приём,
-        # что и в статус-баре/верхней панели (яркая по центру, гаснущая
-        # к краям), просто переиспользуем тот же класс
-        title_underline = _GlowLine()
+        title_underline = _GlowLine(color=glow_color)
         frame_layout.addWidget(title_underline)
-        frame_layout.addSpacing(10)  # обычный зазор перед содержимым диалога
+        frame_layout.addSpacing(10)
 
         self.body_layout = QVBoxLayout()
         self.body_layout.setSpacing(10)
         frame_layout.addLayout(self.body_layout)
 
-        # Крестик закрытия - НЕ в layout, а поверх правого верхнего угла
-        # абсолютным позиционированием (родитель - сама рамка glow_frame).
-        # Так при наведении он может увеличиваться, не "раздвигая" соседние
-        # элементы заголовка и не тратя зарезервированное под это место.
         self.close_btn = _DialogCloseButton(parent=self.glow_frame)
         self.close_btn.setAutoDefault(False)
         self.close_btn.setDefault(False)
@@ -253,10 +236,9 @@ class _GlowDialog(QDialog):
 
 class GlowMessageDialog(_GlowDialog):
     """Информационное/предупреждающее окно в фирменном стиле - иконка
-    слева, текст справа, одна кнопка OK. Используется вместо обычного
-    QMessageBox.warning() там, где нужен единый стиль (например,
-    сообщение о неверном пароле)."""
-    def __init__(self, parent=None, title="Ошибка", message="", icon_name="warning.svg"):
+    слева, текст справа, одна кнопка OK (или Да/Нет в режиме подтверждения).
+    Используется вместо обычного QMessageBox.warning()."""
+    def __init__(self, parent=None, title="Ошибка", message="", icon_name="warning.svg", confirm_mode=False):
         super().__init__(parent, title=title)
 
         content_row = QHBoxLayout()
@@ -274,13 +256,28 @@ class GlowMessageDialog(_GlowDialog):
         content_row.addWidget(msg_label, 1)
         self.body_layout.addLayout(content_row)
 
-        ok_btn = QPushButton("OK")
-        ok_btn.setObjectName("chromeButton")
-        ok_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
-        ok_btn.clicked.connect(self.accept)
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        btn_row.addWidget(ok_btn)
+        if confirm_mode:
+            yes_btn = QPushButton("Да")
+            yes_btn.setObjectName("chromeButton")
+            yes_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+            yes_btn.setAutoDefault(False)
+            yes_btn.clicked.connect(self.accept)
+            no_btn = QPushButton("Нет")
+            no_btn.setObjectName("chromeButton")
+            no_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+            no_btn.setAutoDefault(False)
+            no_btn.clicked.connect(self.reject)
+            btn_row.addWidget(yes_btn)
+            btn_row.addWidget(no_btn)
+        else:
+            ok_btn = QPushButton("OK")
+            ok_btn.setObjectName("chromeButton")
+            ok_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+            ok_btn.setAutoDefault(False)
+            ok_btn.clicked.connect(self.accept)
+            btn_row.addWidget(ok_btn)
         btn_row.addStretch()
         self.body_layout.addLayout(btn_row)
 
@@ -289,17 +286,19 @@ class GlowMessageDialog(_GlowDialog):
 
     @staticmethod
     def show_error(parent, title, message):
-        """Удобный короткий вызов - GlowMessageDialog.show_error(self, "Ошибка", "текст")
-        вместо QMessageBox.warning(...)."""
         dlg = GlowMessageDialog(parent, title=title, message=message, icon_name="warning.svg")
         dlg.exec_()
 
     @staticmethod
     def show_success(parent, title, message):
-        """То же самое, но с зелёной иконкой-галочкой - вместо
-        QMessageBox.information(...)."""
         dlg = GlowMessageDialog(parent, title=title, message=message, icon_name="success.svg")
         dlg.exec_()
+
+    @staticmethod
+    def confirm(parent, title, message, icon_name="warning.svg"):
+        """Диалог подтверждения (Да/Нет) - возвращает True, если нажали "Да"."""
+        dlg = GlowMessageDialog(parent, title=title, message=message, icon_name=icon_name, confirm_mode=True)
+        return dlg.exec_() == QDialog.Accepted
 
 
 class PrintChoiceDialog(_GlowDialog):
@@ -927,8 +926,8 @@ class AddPumpDialog(_GlowDialog):
         # - № насоса и Модификация были одной ширины между собой;
         # - № заказа/Дата/Тип были одной ширины между собой;
         # - ОБЩАЯ длина строки 1 совпадала с общей длиной строки 2.
-        SPACING = 8
-        CHIP_PAD = 8 * 2 + 4  # внутренние отступы чипа (см. compact_field)
+        SPACING = 7
+        CHIP_PAD = 8 * 2 + 3  # внутренние отступы чипа (см. compact_field)
         arrow_path = os.path.join(ICONS_DIR, 'dropdown_arrow.svg').replace('\\', '/')
         INPUT_STYLE = (
             "QLineEdit, QComboBox, QDateEdit { "
@@ -947,7 +946,7 @@ class AddPumpDialog(_GlowDialog):
             chip.setStyleSheet(styles.LEFT_PANEL_CHIP_STYLE)
             box = QHBoxLayout(chip)
             box.setContentsMargins(8, 3, 8, 3)
-            box.setSpacing(4)
+            box.setSpacing(3)
             lbl = QLabel(label_text)
             lbl.setStyleSheet("color: #e8eaed; background: transparent;")
             widget.setFixedWidth(field_width)
@@ -978,7 +977,7 @@ class AddPumpDialog(_GlowDialog):
 
         row2_total = (
             chip_order.sizeHint().width() + chip_date.sizeHint().width()
-            + chip_type.sizeHint().width() + 2 * SPACING
+            + chip_type.sizeHint().width() + 3 * SPACING
         )
 
         self.pump_number_input = QLineEdit()
@@ -1460,119 +1459,219 @@ class AddPumpDialog(_GlowDialog):
         }
 
 
-class EditPumpDialog(QDialog):
-    """Комплексное редактирование существующего протокола: номер заказа,
-    дата проверки, модификация, тип проверки, герметичность, значения
-    испытаний и примечание. Идентификационный номер насоса не меняется -
-    показывается как справочная информация."""
+class EditPumpDialog(_GlowDialog):
+    """Комплексное редактирование существующего протокола - визуально в
+    том же стиле, что и AddPumpDialog. Изменённые (относительно исходных)
+    значения выделяются жирным оранжевым шрифтом. Идентификационный номер
+    насоса не меняется - показывается как справочная информация."""
+
+    _LEAK_OPTIONS = ["Отсутствуют", "Каплепадение", "Подтекание", "Иное"]
+    _OIL_OPTIONS = [
+        "Отсутствуют", "Присутствуют в допускаемой степени",
+        "Присутствуют в чрезмерном объёме", "Иное"
+    ]
+    _CHANGED_COLOR = QColor("#cc6600")  # жирный оранжевый - изменённое значение
+    _NORMAL_COLOR = QColor("#1c1e21")
+
     def __init__(self, pump_data, parent=None):
-        super().__init__(parent)
+        pump_number = pump_data.get('pump_number')
+        super().__init__(
+            parent, title=f"Редактирование протокола - образец № {pump_number}",
+            glow_color=(255, 140, 0)  # оранжевый вместо стандартного бирюзового (п.1)
+        )
         self.pump_data = pump_data
-        self.setWindowTitle(f"Редактирование протокола - насос № {pump_data.get('pump_number')}")
-        self.setModal(True)
         self.selected_mod = None
         self.value_tables = {}
         self.seal_inputs = {}
+        self._seal_originals = {}
         # Исходные значения - используются при перестроении таблиц (смена
-        # модификации), чтобы не терять уже введённые результаты испытаний
+        # модификации), чтобы не терять уже введённые результаты испытаний,
+        # и как эталон для подсветки изменённых значений
         self.original_results = dict(pump_data.get('results_json') or {})
         self.original_seal = dict(pump_data.get('seal_results_json') or {})
 
-        outer_layout = QVBoxLayout(self)
-
         self.mods = db.get_all_modifications()
 
-        info_row = QHBoxLayout()
-        info_row.addWidget(QLabel(f"Идентификационный № насоса: {pump_data.get('pump_number')}"))
-        outer_layout.addLayout(info_row)
+        info_label = QLabel(f"Идентификационный № насоса: {pump_number}")
+        info_label.setStyleSheet("color: #e8eaed; background: transparent;")
+        self.body_layout.addWidget(info_label)
 
-        def field_row(label_text, widget):
-            row = QHBoxLayout()
+        SPACING = 7
+        CHIP_PAD = 8 * 2 + 3
+        arrow_path = os.path.join(ICONS_DIR, 'dropdown_arrow.svg').replace('\\', '/')
+        # Эффекты наведения здесь оранжевые (не бирюзовые, как в остальных
+        # диалогах) - п.6 требований
+        INPUT_STYLE = (
+            "QLineEdit, QComboBox, QDateEdit { "
+            "background-color: #f0f0f0; color: #1c1e21; "
+            "border: 1px solid #6b6f75; border-radius: 4px; padding: 1px 6px; }"
+            "QLineEdit:hover, QComboBox:hover, QDateEdit:hover, "
+            "QLineEdit:focus, QComboBox:focus, QDateEdit:focus { "
+            "border: 1px solid #ff8c00; }"
+            "QComboBox::drop-down, QDateEdit::drop-down { border: none; }"
+            f"QComboBox::down-arrow, QDateEdit::down-arrow {{ "
+            f"image: url({arrow_path}); width: 10px; height: 10px; }}"
+        )
+
+        def compact_field(label_text, widget, field_width):
+            chip = QFrame()
+            chip.setStyleSheet(styles.LEFT_PANEL_CHIP_STYLE)
+            box = QHBoxLayout(chip)
+            box.setContentsMargins(8, 3, 8, 3)
+            box.setSpacing(3)
             lbl = QLabel(label_text)
-            lbl.setFixedWidth(110)
-            row.addWidget(lbl)
-            row.addWidget(widget)
-            outer_layout.addLayout(row)
+            lbl.setStyleSheet("color: #e8eaed; background: transparent;")
+            widget.setFixedWidth(field_width)
+            widget.setStyleSheet(INPUT_STYLE)
+            box.addWidget(lbl)
+            box.addWidget(widget)
+            return chip
 
+        # Строка 1: № насоса (только чтение, справочно) + Модификация
         self.mod_combo = QComboBox()
         current_index = 0
         for i, (mod_id, name) in enumerate(self.mods):
             self.mod_combo.addItem(name, mod_id)
             if mod_id == pump_data.get('modification_id'):
                 current_index = i
-        field_row("Модификация:", self.mod_combo)
+
+        # Строка 2: № заказа + Дата проверки + Тип проверки
+        FIELD_W_ROW2 = 90
+        self.order_input = QLineEdit()
+        order_num = pump_data.get('order_number')
+        if order_num:
+            self.order_input.setText(str(order_num).replace('.0', ''))
 
         self.date_input = QDateEdit()
         self.date_input.setCalendarPopup(True)
+        self.date_input.calendarWidget().setStyleSheet(styles.LEFT_PANEL_CALENDAR_STYLE)
         existing_date = pump_data.get('test_date') or ''
         if existing_date and ' ' in existing_date:
             existing_date = existing_date.split(' ')[0]
         qdate = QDate.fromString(existing_date, 'yyyy-MM-dd')
         self.date_input.setDate(qdate if qdate.isValid() else QDate.currentDate())
-        field_row("Дата:", self.date_input)
 
         self.type_combo = QComboBox()
         self.type_combo.addItems(["первичная", "повторная"])
         idx = self.type_combo.findText(pump_data.get('test_type') or 'первичная')
         if idx >= 0:
             self.type_combo.setCurrentIndex(idx)
-        field_row("Тип:", self.type_combo)
 
-        self.order_input = QLineEdit()
-        order_num = pump_data.get('order_number')
-        if order_num:
-            self.order_input.setText(str(order_num).replace('.0', ''))
-        field_row("№ заказа:", self.order_input)
+        chip_order = compact_field("№ заказа:", self.order_input, FIELD_W_ROW2)
+        chip_date = compact_field("Дата проверки:", self.date_input, FIELD_W_ROW2)
+        chip_type = compact_field("Тип проверки:", self.type_combo, FIELD_W_ROW2)
+        ROW2_SPACING = 2  # меньше, чем SPACING строки 1 - плотнее группирует 3 поля
+        row2_total = (
+            chip_order.sizeHint().width() + chip_date.sizeHint().width()
+            + chip_type.sizeHint().width() + ROW2_SPACING
+        )
+
+        trial_w = 150
+        chip_pump = compact_field("№ насоса:", QLineEdit(str(pump_number)), trial_w)
+        chip_pump.findChild(QLineEdit).setReadOnly(True)
+        remaining_for_mod = row2_total - chip_pump.sizeHint().width() - SPACING
+
+        chip_mod = compact_field("Модификация насоса:", self.mod_combo, trial_w)
+        mod_overhead = chip_mod.sizeHint().width() - trial_w
+        mod_field_w = max(80, remaining_for_mod - mod_overhead)
+        self.mod_combo.setFixedWidth(mod_field_w)
+
+        row1 = QHBoxLayout()
+        row1.addWidget(chip_pump)
+        row1.addSpacing(SPACING)
+        row1.addWidget(chip_mod)
+        row1.addStretch(1)
+        self.body_layout.addLayout(row1)
+
+        row2 = QHBoxLayout()
+        row2.addWidget(chip_order)
+        row2.addSpacing(ROW2_SPACING)
+        row2.addWidget(chip_date)
+        row2.addSpacing(ROW2_SPACING)
+        row2.addWidget(chip_type)
+        row2.addStretch(1)
+        self.body_layout.addLayout(row2)
 
         self.values_widget = QWidget()
         self.values_main_layout = QVBoxLayout(self.values_widget)
-        self.tests_row = QHBoxLayout()
-        self.tests_row.setSpacing(20)
+        self.values_main_layout.setContentsMargins(0, 0, 0, 0)
+        self.tests_column = QVBoxLayout()
+        self.tests_column.setSpacing(22)
         self.extra_column = QVBoxLayout()
-        centered_tests_row = QHBoxLayout()
-        centered_tests_row.addStretch(1)
-        centered_tests_row.addLayout(self.tests_row)
-        centered_tests_row.addStretch(1)
-        self.values_main_layout.addLayout(centered_tests_row)
+        self.extra_column.setSpacing(4)
+        self.values_main_layout.addLayout(self.tests_column)
+        self.values_main_layout.addSpacing(18)
         self.values_main_layout.addLayout(self.extra_column)
-        outer_layout.addWidget(self.values_widget)
+        self.body_layout.addWidget(self.values_widget)
 
         note_row = QHBoxLayout()
-        note_row.addWidget(QLabel("Примечание:"))
+        self.note_label = QLabel("Примечание:")
+        self.note_label.setStyleSheet("color: #e8eaed; background: transparent;")
+        note_row.addWidget(self.note_label)
         self.note_input = QLineEdit()
         self.note_input.setText(pump_data.get('note', '') or '')
+        self.note_input.setStyleSheet(
+            "QLineEdit { border: 1px solid #6b6f75; border-radius: 6px; "
+            "background-color: #f0f0f0; color: #1c1e21; padding: 2px 6px; }"
+            "QLineEdit:hover, QLineEdit:focus { border: 1px solid #ff8c00; }"
+        )
         note_row.addWidget(self.note_input)
-        outer_layout.addLayout(note_row)
+        note_row.addStretch(1)
+        self.body_layout.addLayout(note_row)
+
+        # Отступ перед паролем, чтобы он визуально не сливался с примечанием (п.3)
+        self.body_layout.addSpacing(16)
 
         password_row = QHBoxLayout()
-        password_row.addWidget(QLabel("Пароль для сохранения:"))
+        password_row.addStretch(1)
+        password_label = QLabel("Пароль для сохранения:")
+        password_label.setStyleSheet(
+            "color: #e8eaed; font-weight: bold; background: transparent;"
+        )
+        password_row.addWidget(password_label)
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.Password)
+        self.password_input.setFixedWidth(120)
+        self.password_input.setStyleSheet(
+            "QLineEdit { background-color: #f0f0f0; color: #1c1e21; "
+            "border: 1px solid #6b6f75; border-radius: 4px; padding: 2px 6px; }"
+            "QLineEdit:hover, QLineEdit:focus { border: 1px solid #ff8c00; }"
+        )
         password_row.addWidget(self.password_input)
-        outer_layout.addLayout(password_row)
+        password_row.addStretch(1)
+        self.body_layout.addLayout(password_row)
 
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.button(QDialogButtonBox.Cancel).setText("Отмена")
-        button_box.accepted.connect(self.try_accept)
-        button_box.rejected.connect(self.reject)
-        outer_layout.addWidget(button_box)
+        btn_layout = QHBoxLayout()
+        ok_btn = QPushButton("Сохранить")
+        ok_btn.setObjectName("chromeButton")
+        ok_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+        ok_btn.setAutoDefault(False)
+        ok_btn.setDefault(False)
+        ok_btn.clicked.connect(self.try_accept)
+        cancel_btn = QPushButton("Отмена")
+        cancel_btn.setObjectName("chromeButton")
+        cancel_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+        cancel_btn.setAutoDefault(False)
+        cancel_btn.setDefault(False)
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(ok_btn)
+        btn_layout.addWidget(cancel_btn)
+        self.body_layout.addLayout(btn_layout)
 
         self.mod_combo.setCurrentIndex(current_index)
         self.mod_combo.currentIndexChanged.connect(self.on_modification_changed)
         if self.mods:
             self.on_modification_changed(current_index)
         else:
-            QMessageBox.warning(
+            GlowMessageDialog.show_error(
                 self, "Нет модификаций",
                 "В базе нет ни одной модификации. Сначала добавьте модификацию через Настройки → Добавить модификацию."
             )
 
-        outer_layout.setSizeConstraint(QVBoxLayout.SetMinimumSize)
-        self.adjustSize()
-        _clamp_to_screen(self)
+        self._lock_size(clamp_to_screen=True)
 
     def on_modification_changed(self, index):
-        self._clear_sub_layout(self.tests_row)
+        self._clear_sub_layout(self.tests_column)
         self._clear_sub_layout(self.extra_column)
         self.value_tables = {}
         self.seal_inputs = {}
@@ -1584,51 +1683,168 @@ class EditPumpDialog(QDialog):
         if not self.selected_mod:
             return
 
-        self.value_tables['test1'] = self._build_value_table(
-            "Испытание 1\nРасход от оборотов\nECO выкл, I=0 A",
-            self.selected_mod['norm_graph1_x'], "Обороты", 5
+        _, self.value_tables['test1'] = self._build_value_table(
+            "Испытание 1:\nЗависимость объемной подачи от оборотов привода насоса ГУР\n"
+            "клапан ECO выключен, I = 0 A",
+            self.selected_mod['norm_graph1_x'], "Обороты, об/мин", 5
         )
-        self.value_tables['test2'] = self._build_value_table(
-            "Испытание 2\nРасход от оборотов\nECO вкл, I=1 A",
-            self.selected_mod['norm_graph2_x'], "Обороты", 13
+        _, self.value_tables['test2'] = self._build_value_table(
+            "Испытание 2:\nЗависимость объемной подачи от оборотов привода насоса ГУР\n"
+            "клапан ECO включен, I = 1 A",
+            self.selected_mod['norm_graph2_x'], "Обороты, об/мин", 13
         )
-        self.value_tables['test3'] = self._build_value_table(
-            "Испытание 3\nРасход от силы тока\nна клапане ECO",
-            self.selected_mod['norm_graph3_x'], "Ток, А", 21
+        _, self.value_tables['test3'] = self._build_value_table(
+            "Испытание 3:\nЗависимость объемной подачи от управляющего сигнала на клапане ECO\n"
+            "клапан ECO выключен, I = 0 A",
+            self.selected_mod['norm_graph3_x'], "Сила тока, А", 21
         )
+        self._match_table_width(
+            self.value_tables['test3'],
+            self.value_tables['test1'].width(),
+            self.value_tables['test1'].verticalHeader().width()
+        )
+
+        table_width = self.value_tables['test1'].width()
+
+        pressure_col = QVBoxLayout()
+        pressure_col.setSpacing(2)
+        test4_prefix = QLabel("Испытание 4:")
+        test4_prefix.setStyleSheet("color: #e8eaed; font-weight: bold; background: transparent;")
+        pressure_col.addWidget(test4_prefix)
+
+        line2_text = "Определение максимального давления срабатывания"
+        line2_label = QLabel(line2_text)
+        line2_label.setWordWrap(False)
+        line2_label.setStyleSheet("color: #e8eaed; font-weight: bold; background: transparent;")
+        pressure_col.addWidget(line2_label)
+
+        line3_text = "предохранительного клапана:"
+        line3_label = QLabel(line3_text)
+        line3_label.setWordWrap(False)
+        line3_label.setStyleSheet("color: #e8eaed; font-weight: bold; background: transparent;")
+
+        line2_w = line2_label.sizeHint().width()
+        line3_label_w = line3_label.sizeHint().width()
+        PRESSURE_SPACING = 8
+        input_w = max(60, line2_w - line3_label_w - PRESSURE_SPACING)
+
+        self.pressure_input = QLineEdit()
+        self.pressure_input.setFixedWidth(input_w)
+        self.pressure_input.setStyleSheet(
+            "QLineEdit { border: 1px solid #6b6f75; border-radius: 6px; "
+            "background-color: #f0f0f0; color: #1c1e21; padding: 2px 6px; }"
+            "QLineEdit:hover, QLineEdit:focus { border: 1px solid #ff8c00; }"
+        )
+        existing_pressure = self.original_results.get('g32')
+        self._pressure_original = (
+            str(int(existing_pressure)) if existing_pressure is not None else ''
+        )
+        if existing_pressure is not None:
+            self.pressure_input.setText(self._pressure_original)
+        self.pressure_input.textChanged.connect(self._on_pressure_changed)
 
         pressure_row = QHBoxLayout()
-        pressure_label = QLabel(
-            f"Испытание 4: давление (норма: {self.selected_mod['pressure_min']} – "
-            f"{self.selected_mod['pressure_max']} бар):"
-        )
-        pressure_label.setStyleSheet(styles.DIALOG_SECTION_TITLE_STYLE_COMPACT)
-        pressure_row.addWidget(pressure_label)
-        self.pressure_input = QLineEdit()
-        self.pressure_input.setFixedWidth(120)
-        existing_pressure = self.original_results.get('g32')
-        if existing_pressure is not None:
-            self.pressure_input.setText(str(existing_pressure))
+        pressure_row.setSpacing(PRESSURE_SPACING)
+        pressure_row.addWidget(line3_label)
         pressure_row.addWidget(self.pressure_input)
         pressure_row.addStretch()
-        self.extra_column.addLayout(pressure_row)
+        pressure_col.addLayout(pressure_row)
+        self.tests_column.addLayout(pressure_col)
 
-        seal_label = QLabel("Герметичность:")
-        seal_label.setStyleSheet(styles.DIALOG_SECTION_TITLE_STYLE_COMPACT)
+        note_label_width = QFontMetrics(self.note_label.font()).horizontalAdvance("Примечание:") + 4
+        self.note_input.setFixedWidth(max(80, table_width - note_label_width - 6))
+
+        # Проверка на герметичность - те же выпадающие списки, что и в
+        # AddPumpDialog (не свободный текст), с выбором исходного значения
+        seal_label = QLabel("Проверка на герметичность:")
+        seal_label.setWordWrap(False)
+        seal_label.setStyleSheet("color: #e8eaed; font-weight: bold; background: transparent;")
         self.extra_column.addWidget(seal_label)
-        seal_grid = QHBoxLayout()
+
+        seal_fm = QFontMetrics(QLabel().font())
+        seal_label_w = max(
+            seal_fm.horizontalAdvance(utils.SEAL_LABELS[k] + ":") for k in utils.SEAL_KEYS
+        ) + 6
+
         for key in utils.SEAL_KEYS:
-            one_col = QVBoxLayout()
+            row = QHBoxLayout()
+            row.setSpacing(6)
             lbl = QLabel(utils.SEAL_LABELS[key] + ":")
-            lbl.setWordWrap(True)
-            lbl.setFixedWidth(140)
-            one_col.addWidget(lbl)
-            edit = QLineEdit(self.original_seal.get(key, self.selected_mod['seal_rules'].get(key, '')))
-            one_col.addWidget(edit)
-            self.seal_inputs[key] = edit
-            seal_grid.addLayout(one_col)
-        seal_grid.addStretch()
-        self.extra_column.addLayout(seal_grid)
+            lbl.setWordWrap(False)
+            lbl.setFixedWidth(seal_label_w)
+            lbl.setStyleSheet("color: #e8eaed; background: transparent;")
+            row.addWidget(lbl)
+            stored_value = self.original_seal.get(key) or self.selected_mod['seal_rules'].get(key, '')
+            combo = self._make_seal_combo(key, stored_value)
+            self._seal_originals[key] = stored_value
+            combo.currentIndexChanged.connect(
+                lambda _idx, k=key, c=combo: self._on_seal_changed(k, c)
+            )
+            row.addWidget(combo)
+            row.addStretch(1)
+            self.seal_inputs[key] = combo
+            self.extra_column.addLayout(row)
+
+    def _make_seal_combo(self, key, stored_value):
+        if key == 'g37':
+            options, default_index = self._OIL_OPTIONS, 1
+        else:
+            options, default_index = self._LEAK_OPTIONS, 0
+        combo = QComboBox()
+        combo.addItems(options)
+        idx = combo.findText(stored_value, Qt.MatchFixedString)
+        combo.setCurrentIndex(idx if idx >= 0 else default_index)
+
+        arrow_path = os.path.join(ICONS_DIR, 'dropdown_arrow.svg').replace('\\', '/')
+        combo.setStyleSheet(f"""
+            QComboBox {{
+                background-color: #f0f0f0;
+                color: #1c1e21;
+                border: 1px solid #6b6f75;
+                border-radius: 4px;
+                padding: 2px 6px;
+            }}
+            QComboBox:hover, QComboBox:focus {{
+                border: 1px solid #ff8c00;
+            }}
+            QComboBox::drop-down {{
+                border: none;
+            }}
+            QComboBox::down-arrow {{
+                image: url({arrow_path});
+                width: 10px;
+                height: 10px;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: #f0f0f0;
+                color: #1c1e21;
+                selection-background-color: #ffcc99;
+                selection-color: #1c1e21;
+                outline: none;
+            }}
+        """)
+        longest = max(self._OIL_OPTIONS + self._LEAK_OPTIONS, key=len)
+        text_width = QFontMetrics(combo.font()).horizontalAdvance(longest)
+        combo.setFixedWidth(text_width + 45)
+
+        return combo
+
+    def _on_seal_changed(self, key, combo):
+        """Подсвечивает выпадающий список жирным оранжевым, если значение
+        отличается от исходного (сохранённого в протоколе)."""
+        changed = combo.currentText() != self._seal_originals.get(key, '')
+        weight = "bold" if changed else "normal"
+        color = "#cc6600" if changed else "#1c1e21"
+        combo.setStyleSheet(combo.styleSheet() + f"\nQComboBox {{ font-weight: {weight}; color: {color}; }}")
+
+    def _on_pressure_changed(self, text):
+        changed = text.strip() != self._pressure_original
+        self.pressure_input.setStyleSheet(
+            "QLineEdit { border: 1px solid #6b6f75; border-radius: 6px; "
+            f"background-color: #f0f0f0; color: {'#cc6600' if changed else '#1c1e21'}; "
+            f"font-weight: {'bold' if changed else 'normal'}; padding: 2px 6px; }}"
+            "QLineEdit:hover, QLineEdit:focus { border: 1px solid #ff8c00; }"
+        )
 
     def _clear_sub_layout(self, layout):
         while layout.count():
@@ -1638,92 +1854,153 @@ class EditPumpDialog(QDialog):
             elif child.layout():
                 self._clear_sub_layout(child.layout())
 
+    def _match_table_width(self, table, target_width, target_header_width=None):
+        if target_header_width is not None:
+            table.verticalHeader().setFixedWidth(target_header_width)
+        header_w = table.verticalHeader().width()
+        col_count = table.columnCount()
+        if col_count == 0:
+            return
+        current_cols_width = sum(table.columnWidth(c) for c in range(col_count))
+        if current_cols_width == 0:
+            return
+        available = max(30 * col_count, target_width - header_w - 2)
+        scale = available / current_cols_width
+        for c in range(col_count):
+            table.setColumnWidth(c, max(30, int(table.columnWidth(c) * scale)))
+        new_total = header_w + 2 + sum(table.columnWidth(c) for c in range(col_count))
+        table.setFixedWidth(new_total)
+
     def _build_value_table(self, title, x_values, x_label, start_key):
-        col = QVBoxLayout()
+        container = QWidget()
+        col = QVBoxLayout(container)
+        col.setContentsMargins(0, 0, 0, 0)
         title_label = QLabel(title)
-        title_label.setStyleSheet(styles.DIALOG_SECTION_TITLE_STYLE_COMPACT)
+        title_label.setStyleSheet("color: #e8eaed; font-weight: bold; background: transparent;")
         title_label.setWordWrap(True)
         col.addWidget(title_label)
 
         table = QTableWidget()
-        table.setColumnCount(2)
-        table.setHorizontalHeaderLabels([x_label, "Результат"])
-        table.setRowCount(len(x_values))
+        table.setRowCount(2)
+        table.setColumnCount(len(x_values))
+        table.setVerticalHeaderLabels([x_label, "Расход, л/мин"])
+        table.horizontalHeader().setVisible(False)
+        arrow_path = os.path.join(ICONS_DIR, 'dropdown_arrow.svg').replace('\\', '/')
+        table.setStyleSheet(f"""
+            QTableWidget {{
+                gridline-color: #b0b4b9;
+                border: 1px solid #6b6f75;
+                border-radius: 4px;
+                background-color: #f0f0f0;
+            }}
+            QTableWidget::item {{
+                padding: 1px;
+            }}
+            QTableWidget::item:hover {{
+                background-color: #ffe0b3;
+            }}
+            QTableWidget::item:selected {{
+                background-color: #ffd699;
+                color: #1c1e21;
+            }}
+            QHeaderView::section {{
+                background-color: #3a3d42;
+                color: #e8eaed;
+                border: 1px solid #6b6f75;
+                padding: 2px 6px;
+            }}
+        """)
+
         for i, x in enumerate(x_values):
             x_item = QTableWidgetItem(str(x))
             x_item.setFlags(Qt.ItemIsEnabled)
             x_item.setTextAlignment(Qt.AlignCenter)
-            table.setItem(i, 0, x_item)
+            x_item.setForeground(self._NORMAL_COLOR)
+            table.setItem(0, i, x_item)
+
             existing_val = self.original_results.get(f'g{start_key + i}')
-            res_item = QTableWidgetItem(str(existing_val) if existing_val is not None else '')
+            display_text = f"{existing_val:.2f}" if existing_val is not None else ''
+            res_item = QTableWidgetItem(display_text)
+            res_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsEditable | Qt.ItemIsSelectable)
             res_item.setTextAlignment(Qt.AlignCenter)
-            table.setItem(i, 1, res_item)
+            res_item.setForeground(self._NORMAL_COLOR)
+            res_item.setData(Qt.UserRole, display_text)  # эталон для подсветки изменений
+            table.setItem(1, i, res_item)
         table.setEditTriggers(QTableWidget.AllEditTriggers)
+        table.itemChanged.connect(self._on_value_item_changed)
 
         small_font = QFont()
         small_font.setPointSize(9)
         table.setFont(small_font)
-        table.horizontalHeader().setFont(small_font)
-        table.verticalHeader().setVisible(False)
-        table.verticalHeader().setDefaultSectionSize(22)
+        table.verticalHeader().setFont(small_font)
         table.resizeRowsToContents()
         table.resizeColumnsToContents()
-        table.horizontalHeader().setMinimumSectionSize(65)
+        min_section = 55
+        for c in range(table.columnCount()):
+            table.setColumnWidth(c, max(min_section, table.columnWidth(c) + 4))
         table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        total_height = table.horizontalHeader().height() + 4
+        total_height = 2
         for row in range(table.rowCount()):
             total_height += table.rowHeight(row)
         table.setFixedHeight(total_height)
-        total_width = 6
+        total_width = table.verticalHeader().width() + 2
         for c in range(table.columnCount()):
             total_width += table.columnWidth(c)
         table.setFixedWidth(total_width)
 
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
+
         col.addWidget(table)
-        col.addStretch(1)
-        container = QWidget()
-        container.setLayout(col)
-        container.setFixedWidth(table.width())
-        container.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Minimum)
-        self.tests_row.addWidget(container)
-        return table
+        container.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.tests_column.addWidget(container)
+        return container, table
+
+    def _on_value_item_changed(self, item):
+        """Подсвечивает жирным оранжевым ячейку измеренного значения
+        (строка 1), если текст отличается от исходного, сохранённого в
+        протоколе (п.3 требований)."""
+        if item.row() != 1:
+            return
+        original = item.data(Qt.UserRole) or ''
+        changed = item.text().strip() != original
+        font = QFont()
+        font.setPointSize(9)
+        font.setBold(changed)
+        item.setFont(font)
+        item.setForeground(self._CHANGED_COLOR if changed else self._NORMAL_COLOR)
 
     def try_accept(self):
         if not self.mods or not self.selected_mod:
-            QMessageBox.warning(self, "Ошибка", "Сначала добавьте модификацию через Настройки.")
+            GlowMessageDialog.show_error(self, "Ошибка", "Сначала добавьте модификацию через Настройки.")
             return
 
         for key, table in self.value_tables.items():
-            for row in range(table.rowCount()):
-                item = table.item(row, 1)
+            for col in range(table.columnCount()):
+                item = table.item(1, col)
                 text = item.text().strip() if item else ""
                 if not text:
-                    QMessageBox.warning(self, "Ошибка", "Заполните все значения результатов испытаний.")
+                    GlowMessageDialog.show_error(self, "Ошибка", "Заполните все значения результатов испытаний.")
                     return
                 try:
                     float(text)
                 except ValueError:
-                    QMessageBox.warning(self, "Ошибка", f"Некорректное числовое значение: '{text}'.")
+                    GlowMessageDialog.show_error(self, "Ошибка", f"Некорректное числовое значение: '{text}'.")
                     return
 
         pressure_text = self.pressure_input.text().strip()
         if not pressure_text:
-            QMessageBox.warning(self, "Ошибка", "Введите значение давления.")
+            GlowMessageDialog.show_error(self, "Ошибка", "Введите значение давления.")
             return
         try:
-            float(pressure_text)
+            int(float(pressure_text))
         except ValueError:
-            QMessageBox.warning(self, "Ошибка", "Некорректное значение давления.")
+            GlowMessageDialog.show_error(self, "Ошибка", "Некорректное значение давления.")
             return
 
-        for key, edit in self.seal_inputs.items():
-            if not edit.text().strip():
-                QMessageBox.warning(self, "Ошибка", "Заполните все поля проверки на герметичность.")
-                return
-
         if self.password_input.text() != "admin":
-            QMessageBox.warning(self, "Ошибка", "Неверный пароль.")
+            GlowMessageDialog.show_error(self, "Ошибка", "Неверный пароль.")
             return
 
         self.accept()
@@ -1732,9 +2009,9 @@ class EditPumpDialog(QDialog):
         results = {}
 
         def fill(table, start_key):
-            for i in range(table.rowCount()):
-                key = f'g{start_key + i}'
-                text = table.item(i, 1).text().strip()
+            for col in range(table.columnCount()):
+                key = f'g{start_key + col}'
+                text = table.item(1, col).text().strip()
                 try:
                     results[key] = float(text)
                 except ValueError:
@@ -1743,9 +2020,9 @@ class EditPumpDialog(QDialog):
         fill(self.value_tables['test1'], 5)
         fill(self.value_tables['test2'], 13)
         fill(self.value_tables['test3'], 21)
-        results['g32'] = float(self.pressure_input.text().strip())
+        results['g32'] = int(float(self.pressure_input.text().strip()))
 
-        seal_results = {key: edit.text().strip() for key, edit in self.seal_inputs.items()}
+        seal_results = {key: combo.currentText() for key, combo in self.seal_inputs.items()}
 
         return {
             'modification_id': self.selected_mod['id'],
@@ -1756,9 +2033,7 @@ class EditPumpDialog(QDialog):
             'results': results,
             'seal_results': seal_results,
             'note': self.note_input.text().strip(),
-            'password': self.password_input.text(),
         }
-
 
 class EditProtocolDialog(QDialog):
     def __init__(self, pump_data, parent=None):

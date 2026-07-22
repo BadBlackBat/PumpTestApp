@@ -718,37 +718,20 @@ class MainWindow(QMainWindow):
         )
     
     def on_delete_requested(self, pump_id):
-        """Удаление записи с паролем."""
+        """Удаление записи с паролем и подтверждением."""
         # Запрос пароля
         dialog = PasswordDialog(self)
         if dialog.exec_() == QDialog.Accepted:
+            if not GlowMessageDialog.confirm(
+                self, "Подтверждение удаления",
+                "Вы уверены, что хотите удалить эту запись? Это действие необратимо."
+            ):
+                return
             db.delete_pump(pump_id)
             self.left_panel.refresh()
             self.update_status()
             GlowMessageDialog.show_success(self, "Удаление", "Запись удалена.")
         if self.showing_stats: self.toggle_statistics()
-
-    # def update_status(self, filters=None, selected_pump=None):
-    #     all_pumps = db.get_all_pumps()
-    #     count = len(all_pumps)
-    #     filters_text = ""
-    #     if filters:
-    #         parts = []
-    #         if filters.get('pump_number'):
-    #             parts.append(f"поиск: {filters['pump_number']}")
-    #         if filters.get('verdict'):
-    #             parts.append(f"вердикт: {filters['verdict']}")
-    #         if filters.get('test_type'):
-    #             parts.append(f"тип: {filters['test_type']}")
-    #         if filters.get('is_sealed') is not None:
-    #             parts.append(f"герметичность: {'Да' if filters['is_sealed'] else 'Нет'}")
-    #         if filters.get('date_from') or filters.get('date_to'):
-    #             parts.append(f"дата: {filters.get('date_from', '')} - {filters.get('date_to', '')}")
-    #         if filters.get('only_duplicates'):
-    #             parts.append("только дубли")
-    #         filters_text = ", ".join(parts)
-    #     last_update = db.get_last_update_date()
-    #     self.status_bar.set_status("Готово", count=count, filters=filters_text, selected_pump=selected_pump, last_update=last_update)
 
     def update_status(self, filters=None, selected_pump=None):
         # Если фильтры не переданы, берём из левой панели

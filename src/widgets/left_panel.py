@@ -71,23 +71,24 @@ class _GlowFrame(QFrame):
     QPainter (в QSS такого эффекта нет). Тень добавляется отдельным
     QGraphicsDropShadowEffect с нулевым смещением - равномерно со всех
     сторон, а не в одну сторону."""
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, glow_color=None):
         super().__init__(parent)
         self.setObjectName("filtersPanel")
         self.setStyleSheet(styles.LEFT_PANEL_FILTER_PANEL_STYLE)
+        # Цвет свечения - по умолчанию фирменный бирюзовый (styles.LEFT_PANEL_GLOW_COLOR),
+        # но можно переопределить для конкретного окна (например, оранжевый для EditPumpDialog)
+        self._glow_color = glow_color or styles.LEFT_PANEL_GLOW_COLOR
 
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(styles.LEFT_PANEL_GLOW_SHADOW_BLUR)
         shadow.setColor(QColor(0, 0, 0, 150))
-        shadow.setOffset(0, 0)
-        self.setGraphicsEffect(shadow)
 
     def paintEvent(self, event):
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         w, h = self.width(), self.height()
-        r, g, b = styles.LEFT_PANEL_GLOW_COLOR
+        r, g, b = self._glow_color
         t = styles.LEFT_PANEL_GLOW_THICKNESS
 
         grad_h = QLinearGradient(0, 0, w, 0)
