@@ -235,6 +235,23 @@ class MainWindow(QMainWindow):
         top_layout.addStretch()
 
         # Кнопки
+        self.btn_fit_view = _IconButton(os.path.join(ICONS_DIR, 'fit_view.svg'), tooltip="Уместить протокол по высоте")
+        self.btn_fit_view.clicked.connect(self.on_fit_view_clicked)
+        self.btn_fit_view.hide()
+        top_layout.addWidget(self.btn_fit_view)
+
+        self.btn_stats_minus = _IconButton(os.path.join(ICONS_DIR, 'zoom_out.svg'), tooltip="Уменьшить масштаб статистики")
+        self.btn_stats_minus.clicked.connect(lambda: self.right_panel._zoom_stats(1 / 1.15))
+        self.btn_stats_minus.hide()
+        top_layout.addWidget(self.btn_stats_minus)
+
+        self.btn_stats_plus = _IconButton(os.path.join(ICONS_DIR, 'zoom_in.svg'), tooltip="Увеличить масштаб статистики")
+        self.btn_stats_plus.clicked.connect(lambda: self.right_panel._zoom_stats(1.15))
+        self.btn_stats_plus.hide()
+        top_layout.addWidget(self.btn_stats_plus)
+
+        top_layout.addSpacing(8)  # небольшой отступ перед статистикой
+
         btn_stats = _IconButton(os.path.join(ICONS_DIR, 'statistics.svg'), tooltip="Статистика")
         btn_stats.clicked.connect(self.toggle_statistics)
         top_layout.addWidget(btn_stats)
@@ -292,6 +309,7 @@ class MainWindow(QMainWindow):
         self.showing_stats = False
 
         self.right_panel.clear_requested.connect(self.on_clear_requested)
+        self.right_panel.mode_changed.connect(self.on_right_panel_mode_changed)
         
         # Пропорции - при первом запуске левая панель сжата до минимальной
         # ширины, нужной блоку фильтров (а не растянута на 40% экрана) -
@@ -733,6 +751,28 @@ class MainWindow(QMainWindow):
             GlowMessageDialog.show_success(self, "Удаление", "Запись удалена.")
         if self.showing_stats: self.toggle_statistics()
 
+    # def update_status(self, filters=None, selected_pump=None):
+    #     all_pumps = db.get_all_pumps()
+    #     count = len(all_pumps)
+    #     filters_text = ""
+    #     if filters:
+    #         parts = []
+    #         if filters.get('pump_number'):
+    #             parts.append(f"поиск: {filters['pump_number']}")
+    #         if filters.get('verdict'):
+    #             parts.append(f"вердикт: {filters['verdict']}")
+    #         if filters.get('test_type'):
+    #             parts.append(f"тип: {filters['test_type']}")
+    #         if filters.get('is_sealed') is not None:
+    #             parts.append(f"герметичность: {'Да' if filters['is_sealed'] else 'Нет'}")
+    #         if filters.get('date_from') or filters.get('date_to'):
+    #             parts.append(f"дата: {filters.get('date_from', '')} - {filters.get('date_to', '')}")
+    #         if filters.get('only_duplicates'):
+    #             parts.append("только дубли")
+    #         filters_text = ", ".join(parts)
+    #     last_update = db.get_last_update_date()
+    #     self.status_bar.set_status("Готово", count=count, filters=filters_text, selected_pump=selected_pump, last_update=last_update)
+
     def update_status(self, filters=None, selected_pump=None):
         # Если фильтры не переданы, берём из левой панели
         if filters is None:
@@ -893,6 +933,18 @@ class MainWindow(QMainWindow):
 
             GlowMessageDialog.show_success(self, "Успех", "Примечание обновлено.")
     
+    def on_fit_view_clicked(self):
+        self.right_panel.toggle_fit_view()
+
+    def on_right_panel_mode_changed(self, mode):
+        """Показывает нужные кнопки верхней панели в зависимости от того,
+        что сейчас отображается в правой панели - протокол/сравнение
+        показывают кнопку "уместить по высоте", статистика - кнопки
+        масштаба, в остальных случаях (пусто) - ничего из этого."""
+        self.btn_fit_view.setVisible(mode in ('protocol', 'comparison'))
+        self.btn_stats_minus.setVisible(mode == 'stats')
+        self.btn_stats_plus.setVisible(mode == 'stats')
+
     def on_clear_requested(self):
         # 1. Вернуть раскладку к исходному виду (компактный список + пропорции 40/60)
         self.reset_layout_to_default()

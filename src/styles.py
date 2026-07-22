@@ -357,7 +357,16 @@ def build_left_panel_table_style(arrow_down_path=None, arrow_up_path=None, heade
 # свечением, что и у левой панели). Собственное скругление у самой
 # QScrollArea оставлено - смягчает переход к внешней скруглённой рамке
 # (тот же приём, что и у таблицы в левой панели)
-RIGHT_PANEL_SCROLL_STYLE = "QScrollArea { border: 1px solid #9a9ea4; border-radius: 8px; }"
+RIGHT_PANEL_SCROLL_STYLE = """
+    QScrollArea {
+        background-color: #f0f0f0;
+        border: 1px solid #9a9ea4;
+        border-radius: 8px;
+    }
+    QScrollArea > QWidget#qt_scrollarea_viewport {
+        background-color: #f0f0f0;
+    }
+"""
 
 # Заглушка-логотип по центру правой панели - показывается, пока не
 # выбран ни один насос (и пока не идёт загрузка протокола). Без фона и

@@ -3,10 +3,11 @@ import os
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
     QTableWidgetItem, QPushButton, QScrollArea, QSizePolicy,
-    QFileDialog, QMessageBox, QFrame, QApplication, QHeaderView
+    QFileDialog, QMessageBox, QFrame, QApplication, QHeaderView,
+    QScrollBar, QStyle, QStyleOptionSlider
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer
-from PyQt5.QtGui import QColor, QFont, QPainter, QPixmap, QTransform
+from PyQt5.QtCore import Qt, pyqtSignal, pyqtProperty, QSize, QTimer, QPropertyAnimation, QRectF
+from PyQt5.QtGui import QColor, QFont, QPainter, QPixmap, QTransform, QLinearGradient, QBrush
 from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintPreviewWidget
 
 import matplotlib
@@ -53,8 +54,138 @@ class _CtrlWheelZoomWidget(QWidget):
             super().wheelEvent(event)
 
 
+class _GlowScrollBar(QScrollBar):
+    """Полоса прокрутки в фирменном стиле - собственная отрисовка (QSS не
+    умеет ни плавную анимацию ширины, ни "бегущую" динамическую подсветку).
+
+    Желоб не рисуется вовсе (полностью прозрачный) - виден только сам
+    бегунок. В состоянии покоя - тонкая бирюзовая линия. При наведении
+    мыши плавно расширяется СИММЕТРИЧНО в обе стороны от центра (не
+    только в одну) до полного вида со скруглёнными краями (35% от
+    ширины) и настоящим свечением (ярче по центру бегунка, гаснет к его
+    краям - тот же приём, что и у _GlowFrame/_GlowLine). Такое же
+    временное раскрытие происходит и просто при прокрутке колесом мыши,
+    даже если курсор не касается самой полосы - и плавно гаснет обратно
+    через небольшую паузу после того, как прокрутка прекратилась."""
+
+    THIN_WIDTH = 3
+    FULL_WIDTH = 8
+    MARGIN_TOP = 4
+    MARGIN_BOTTOM = 4
+    MARGIN_RIGHT = 5          # отступ справа - ощущение "парящей" полосы
+    SCROLL_ACTIVITY_LEVEL = 0.65  # насколько раскрывается при прокрутке колесом (без наведения)
+    SCROLL_ACTIVITY_HOLD_MS = 700  # сколько ждать после остановки прокрутки перед затуханием
+
+    def __init__(self, parent=None):
+        super().__init__(Qt.Vertical, parent)
+        self._hover_progress = 0.0  # 0 - состояние покоя, 1 - полностью раскрыта
+        self._is_hovering = False
+        self.setStyleSheet("QScrollBar { background: transparent; border: none; }")
+        # Без этого атрибута Qt рисует собственный фон виджета (из
+        # палитры/стиля) ДО нашего paintEvent
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+
+        self._anim = QPropertyAnimation(self, b"hoverProgress", self)
+        self._anim.setDuration(160)
+
+        self._activity_timer = QTimer(self)
+        self._activity_timer.setSingleShot(True)
+        self._activity_timer.timeout.connect(self._on_activity_timeout)
+
+        self.valueChanged.connect(self._on_value_changed)
+
+    def getHoverProgress(self):
+        return self._hover_progress
+
+    def setHoverProgress(self, value):
+        self._hover_progress = value
+        self.update()
+
+    hoverProgress = pyqtProperty(float, getHoverProgress, setHoverProgress)
+
+    def enterEvent(self, event):
+        self._is_hovering = True
+        self._animate_to(1.0)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._is_hovering = False
+        if not self._activity_timer.isActive():
+            self._animate_to(0.0)
+        super().leaveEvent(event)
+
+    def _on_value_changed(self, _value):
+        """Прокрутка колесом мыши - временно раскрывает полосу, даже если
+        курсор её не касается, и держит раскрытой, пока прокрутка активна."""
+        if not self._is_hovering:
+            self._animate_to(self.SCROLL_ACTIVITY_LEVEL)
+        self._activity_timer.start(self.SCROLL_ACTIVITY_HOLD_MS)
+
+    def _on_activity_timeout(self):
+        if not self._is_hovering:
+            self._animate_to(0.0)
+
+    def _animate_to(self, target):
+        self._anim.stop()
+        self._anim.setStartValue(self._hover_progress)
+        self._anim.setEndValue(target)
+        self._anim.start()
+
+    def sizeHint(self):
+        base = super().sizeHint()
+        return QSize(self.FULL_WIDTH + self.MARGIN_RIGHT, base.height())
+
+    def _handle_rect(self):
+        opt = QStyleOptionSlider()
+        self.initStyleOption(opt)
+        return self.style().subControlRect(QStyle.CC_ScrollBar, opt, QStyle.SC_ScrollBarSlider, self)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        current_width = self.THIN_WIDTH + (self.FULL_WIDTH - self.THIN_WIDTH) * self._hover_progress
+        radius = current_width * 0.35
+
+        # Центр полосы фиксирован (по максимальной ширине) - при
+        # раскрытии она растёт СИММЕТРИЧНО в обе стороны от этого центра,
+        # а не только влево
+        center_x = self.width() - self.MARGIN_RIGHT - self.FULL_WIDTH / 2
+        track_x = center_x - current_width / 2
+
+        handle_qrect = self._handle_rect()
+        handle_top = handle_qrect.top()
+        handle_h = max(1, handle_qrect.height())
+        handle_rect = QRectF(track_x, handle_top, current_width, handle_h)
+
+        # Лёгкая тень - слегка смещённый затемнённый дубликат формы прямо
+        # под самой полосой (для контраста на светлом фоне)
+        shadow_rect = handle_rect.translated(0.6, 1.2)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 50))
+        painter.drawRoundedRect(shadow_rect, radius, radius)
+
+        r, g, b = 79, 209, 255
+        if self._hover_progress < 0.05:
+            # Состояние покоя - просто тонкая бирюзовая линия, без свечения
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(r, g, b, 220))
+            painter.drawRoundedRect(handle_rect, radius, radius)
+        else:
+            # При раскрытии - настоящее свечение: ярче по центру бегунка,
+            # гаснет к его собственным краям (тот же приём, что и у рамок)
+            handle_gradient = QLinearGradient(0, handle_top, 0, handle_top + handle_h)
+            handle_gradient.setColorAt(0.0, QColor(r, g, b, 50))
+            handle_gradient.setColorAt(0.5, QColor(r, g, b, 235))
+            handle_gradient.setColorAt(1.0, QColor(r, g, b, 50))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(handle_gradient))
+            painter.drawRoundedRect(handle_rect, radius, radius)
+
+
 class RightPanel(QWidget):
     clear_requested = pyqtSignal()   # сигнал для запроса сброса
+    mode_changed = pyqtSignal(str)   # 'protocol' / 'comparison' / 'stats' / 'empty'
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -80,6 +211,7 @@ class RightPanel(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setStyleSheet(styles.RIGHT_PANEL_SCROLL_STYLE)
+        scroll.setVerticalScrollBar(_GlowScrollBar())
         self.scroll_area = scroll  # нужна для временной фиксации ширины при печати
 
         content = QWidget()
@@ -273,48 +405,6 @@ class RightPanel(QWidget):
         scroll_frame_layout.setContentsMargins(6, 6, 6, 6)
         scroll_frame_layout.setSpacing(4)
 
-        # Кнопка-иконка "уместить в высоту" - ВНЕ прокручиваемой области
-        # (иначе при скрытии scroll_area для показа снимка пряталась бы и
-        # сама кнопка возврата - так и было раньше, это и была ошибка)
-        fit_btn_row = QHBoxLayout()
-        fit_btn_row.addStretch(1)
-
-        # Кнопки масштаба статистики +/- - здесь же, вне прокрутки, чтобы
-        # были доступны всегда, а не уезжали при прокрутке длинной
-        # статистики вниз (тот же результат даёт Ctrl+колесо мыши прямо
-        # на статистике)
-        self.stats_minus_btn = QPushButton("−")
-        self.stats_minus_btn.setObjectName("chromeButton")
-        self.stats_minus_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
-        self.stats_minus_btn.setFixedSize(28, 24)
-        self.stats_minus_btn.setToolTip("Уменьшить масштаб статистики")
-        self.stats_minus_btn.clicked.connect(lambda: self._zoom_stats(1 / 1.15))
-        self.stats_plus_btn = QPushButton("+")
-        self.stats_plus_btn.setObjectName("chromeButton")
-        self.stats_plus_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
-        self.stats_plus_btn.setFixedSize(28, 24)
-        self.stats_plus_btn.setToolTip("Увеличить масштаб статистики")
-        self.stats_plus_btn.clicked.connect(lambda: self._zoom_stats(1.15))
-        fit_btn_row.addWidget(self.stats_minus_btn)
-        fit_btn_row.addWidget(self.stats_plus_btn)
-
-        self.fit_view_btn = QPushButton()
-        self.fit_view_btn.setObjectName("chromeButton")
-        fit_icon_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'resources', 'icons', 'fit_height.svg'
-        )
-        if os.path.exists(fit_icon_path):
-            self.fit_view_btn.setIcon(icon_utils.tinted_icon(fit_icon_path, "#3a3d42", 16))
-        else:
-            self.fit_view_btn.setText("⇕")
-        self.fit_view_btn.setIconSize(QSize(16, 16))
-        self.fit_view_btn.setFixedSize(28, 24)
-        self.fit_view_btn.setToolTip("Уместить протокол по высоте панели")
-        self.fit_view_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
-        self.fit_view_btn.clicked.connect(self.toggle_fit_view)
-        fit_btn_row.addWidget(self.fit_view_btn)
-        scroll_frame_layout.addLayout(fit_btn_row)
-
         scroll_frame_layout.addWidget(scroll)
 
         # Виджет "обзорного" режима - целиковый уменьшенный снимок
@@ -345,7 +435,6 @@ class RightPanel(QWidget):
         self.test_conditions_box.hide()
         self.clear_btn.hide()
         self.export_pdf_btn.hide()
-        self.fit_view_btn.hide()
         self.legend_label.hide()
         self.seal_panel.hide()
         self.notes_widget.hide()
@@ -373,7 +462,6 @@ class RightPanel(QWidget):
         self.test_conditions_box.hide()
         self.clear_btn.hide()
         self.export_pdf_btn.hide()
-        self.fit_view_btn.hide()
 
         # Строим HTML-отчёт
         html = "<h2>Сводная статистика по базе данных</h2>"
@@ -408,6 +496,7 @@ class RightPanel(QWidget):
         self.stats_widget.show()
         self.current_data = None  # сбрасываем текущий протокол, т.к. показываем статистику
         self.current_comparison_items = None
+        self.mode_changed.emit('stats')
 
     def display_protocol(self, data):
         self._show_loading()
@@ -561,10 +650,10 @@ class RightPanel(QWidget):
         self.test_conditions_box.show()
         self.clear_btn.show()
         self.export_pdf_btn.show()
-        self.fit_view_btn.show()
         self.legend_label.show()
         if show_notes:
             self.notes_widget.show()
+        self.mode_changed.emit('protocol')
 
     def _compact_table(self, table, fix_width=True):
         """Уменьшает шрифт таблицы и подгоняет высоту (и, если fix_width=True,
@@ -1104,8 +1193,8 @@ class RightPanel(QWidget):
         self.header_title_label.show()
         self.clear_btn.show()
         self.export_pdf_btn.show()
-        self.fit_view_btn.show()
         self.legend_label.show()
+        self.mode_changed.emit('comparison')
 
     def _create_comparison_table(self, title, indices, items, norm_min, norm_max, x_vals, x_label):
         def format_number(value):
@@ -1407,7 +1496,6 @@ class RightPanel(QWidget):
         рендера временно фиксируем эталонную ширину."""
         self.clear_btn.hide()
         self.export_pdf_btn.hide()
-        self.fit_view_btn.hide()
         for toolbar in self._graph_toolbars:
             toolbar.hide()
 
@@ -1451,7 +1539,6 @@ class RightPanel(QWidget):
 
             self.clear_btn.show()
             self.export_pdf_btn.show()
-            self.fit_view_btn.show()
             for toolbar in self._graph_toolbars:
                 toolbar.show()
 
@@ -1475,12 +1562,10 @@ class RightPanel(QWidget):
             self._render_overview()
             self.scroll_area.hide()
             self.overview_bg.show()
-            self.fit_view_btn.setToolTip("Вернуться к обычному виду протокола")
             self._fit_mode = True
         else:
             self.overview_bg.hide()
             self.scroll_area.show()
-            self.fit_view_btn.setToolTip("Уместить протокол по высоте панели")
             self._fit_mode = False
 
     def _render_overview(self):
@@ -1538,7 +1623,6 @@ class RightPanel(QWidget):
         # документе элементы управления зумом неуместны
         self.clear_btn.hide()
         self.export_pdf_btn.hide()
-        self.fit_view_btn.hide()
         for toolbar in self._graph_toolbars:
             toolbar.hide()
 
@@ -1571,7 +1655,6 @@ class RightPanel(QWidget):
         finally:
             self.clear_btn.show()
             self.export_pdf_btn.show()
-            self.fit_view_btn.show()
             for toolbar in self._graph_toolbars:
                 toolbar.show()
 
@@ -1626,6 +1709,7 @@ class RightPanel(QWidget):
         уведомляет наружу (MainWindow), чтобы сбросить фильтры/выделение."""
         self.current_comparison_items = None
         self._clear_dynamic_content()
+        self.mode_changed.emit('empty')
         self.clear_requested.emit()
 
     def _clear_dynamic_content(self):
@@ -1653,13 +1737,11 @@ class RightPanel(QWidget):
             self._fit_mode = False
             self.overview_bg.hide()
             self.scroll_area.show()
-            self.fit_view_btn.setToolTip("Уместить протокол по высоте панели")
         self.header_label.hide()
         self.header_title_label.hide()
         self.test_conditions_box.hide()
         self.clear_btn.hide()
         self.export_pdf_btn.hide()
-        self.fit_view_btn.hide()
         self.legend_label.hide()
         self.seal_panel.hide()
         self.notes_widget.hide()
@@ -1679,7 +1761,6 @@ class RightPanel(QWidget):
         self.test_conditions_box.hide()
         self.clear_btn.hide()
         self.export_pdf_btn.hide()
-        self.fit_view_btn.hide()
         self.legend_label.hide()
         self.seal_panel.hide()
         self.notes_widget.hide()
