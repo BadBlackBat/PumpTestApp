@@ -416,7 +416,19 @@ RIGHT_PANEL_CARD_STYLE = (
 
 # Подложка текстового блока сводной статистики по базе (кнопка "📊" в
 # верхней панели, метод display_statistics)
-RIGHT_PANEL_STATS_TEXT_STYLE = "background-color: white; padding: 10px;"
+RIGHT_PANEL_STATS_TEXT_STYLE = "background: transparent; color: #e8eaed; padding: 4px;"
+
+# Тёмно-синий фон на весь блок статистики - тот же градиент, что и у
+# логотипа-заглушки при запуске программы (просто на большую область)
+RIGHT_PANEL_STATS_BG_STYLE = """
+    QWidget#statsBackground {
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+            stop:0 #05050d,
+            stop:0.5 #0d1b3e,
+            stop:1 #1b0f3e);
+        border-radius: 12px;
+    }
+"""
 
 # Тулбар matplotlib (зум/панорама/сброс масштаба кнопкой "Home") над
 # каждым графиком - убираем внутренние отступы/рамку, чтобы тулбар не

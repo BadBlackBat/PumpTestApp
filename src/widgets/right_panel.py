@@ -78,6 +78,14 @@ class RightPanel(QWidget):
         self.export_pdf_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
         self.export_pdf_btn.clicked.connect(self.export_to_pdf)
         top_btns_layout.addWidget(self.export_pdf_btn)
+
+        self.fit_view_btn = QPushButton("Уместить в высоту")
+        self.fit_view_btn.setObjectName("chromeButton")
+        self.fit_view_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+        self.fit_view_btn.clicked.connect(self.toggle_fit_view)
+        top_btns_layout.addWidget(self.fit_view_btn)
+        self._fit_mode = False
+
         self.content_layout.addLayout(top_btns_layout)
 
         # Жирный заголовок "Характеристики образца насоса ГУР" - во всю
@@ -168,6 +176,36 @@ class RightPanel(QWidget):
         self.loading_label.hide()
         self.content_layout.addWidget(self.loading_label)
 
+        # Сводная статистика - тёмно-синий фон на всю ширину/высоту области
+        # (тот же градиент, что и у логотипа-заглушки при запуске), по
+        # центру - карточка со свечением (переиспользуем _GlowFrame - тот
+        # же приём, что и в остальных панелях: мягкие края, тень,
+        # бирюзовая полоса по контуру)
+        self.stats_widget = QWidget()
+        self.stats_widget.setObjectName("statsBackground")
+        self.stats_widget.setStyleSheet(styles.RIGHT_PANEL_STATS_BG_STYLE)
+        stats_outer_layout = QVBoxLayout(self.stats_widget)
+        stats_outer_layout.setContentsMargins(20, 20, 20, 20)
+
+        stats_center_row = QHBoxLayout()
+        stats_center_row.addStretch(1)
+        self.stats_card = _GlowFrame()
+        stats_card_layout = QVBoxLayout(self.stats_card)
+        stats_card_layout.setContentsMargins(24, 20, 24, 20)
+        self.stats_label = QLabel()
+        self.stats_label.setWordWrap(True)
+        self.stats_label.setStyleSheet(styles.RIGHT_PANEL_STATS_TEXT_STYLE)
+        stats_card_layout.addWidget(self.stats_label)
+        stats_center_row.addWidget(self.stats_card)
+        stats_center_row.addStretch(1)
+
+        stats_outer_layout.addStretch(1)
+        stats_outer_layout.addLayout(stats_center_row)
+        stats_outer_layout.addStretch(1)
+
+        self.stats_widget.hide()
+        self.content_layout.addWidget(self.stats_widget)
+
         # Легенда (постоянная)
         self.legend_label = QLabel()
         self.legend_label.setWordWrap(True)
@@ -217,6 +255,13 @@ class RightPanel(QWidget):
         scroll_frame_layout = QVBoxLayout(scroll_frame)
         scroll_frame_layout.setContentsMargins(6, 6, 6, 6)
         scroll_frame_layout.addWidget(scroll)
+
+        self.overview_label = QLabel()
+        self.overview_label.setAlignment(Qt.AlignCenter)
+        self.overview_label.setStyleSheet("background: transparent;")
+        self.overview_label.hide()
+        scroll_frame_layout.addWidget(self.overview_label)
+
         layout.addWidget(scroll_frame)
 
         # Начальное состояние: показываем логотип, скрываем остальное
@@ -225,20 +270,23 @@ class RightPanel(QWidget):
         self.test_conditions_box.hide()
         self.clear_btn.hide()
         self.export_pdf_btn.hide()
+        self.fit_view_btn.hide()
         self.legend_label.hide()
         self.seal_panel.hide()
         self.notes_widget.hide()
         self.dynamic_widget.hide()
+        self.stats_widget.hide()
         self.logo_label.show()
 
     def display_statistics(self, stats_data):
         """Отображает сводную статистику в правой панели."""
         self._clear_dynamic_content()  # очищаем динамическую область
-        self.dynamic_widget.show()
         self.logo_label.hide()
         self.header_label.hide()  # скрываем заголовок протокола
+        self.test_conditions_box.hide()
         self.clear_btn.hide()
         self.export_pdf_btn.hide()
+        self.fit_view_btn.hide()
 
         # Строим HTML-отчёт
         html = "<h2>Сводная статистика по базе данных</h2>"
@@ -253,8 +301,12 @@ class RightPanel(QWidget):
             html += "<h3>Статистика по заказам:</h3>"
             for order in stats_data['orders']:
                 order_num = format_order_number(order['order_number'])
-                html += f"<p><b>Заказ №{order_num}:</b></p>"
-                # html += f"<p><b>Заказ №{order['order_number']}:</b></p>"
+                html += f"<p><b>Заказ №{order_num}:</b>"
+                date_min = utils.format_date_display(order.get('date_min'))
+                date_max = utils.format_date_display(order.get('date_max'))
+                if date_min and date_max:
+                    html += f"<br> период проверки с <b>{date_min}</b> по <b>{date_max}</b>"
+                html += "</p>"
                 html += f"<ul>"
                 html += f"<li>Всего проверено: {order['total']} шт</li>"
                 html += f"<li>Годных: {order['good']} шт</li>"
@@ -265,12 +317,9 @@ class RightPanel(QWidget):
         else:
             html += "<p>Нет данных по заказам.</p>"
 
-        # Создаём QLabel с HTML и добавляем в колонку таблиц
-        label = QLabel(html)
-        label.setWordWrap(True)
-        label.setStyleSheet(styles.RIGHT_PANEL_STATS_TEXT_STYLE)
-        self.tables_column.addWidget(label)
-        self.current_data = None  # сбрасываем текущий протокол, т.к. показываем статистику
+        self.stats_label.setText(html)
+        self.stats_widget.show()
+        self.current_data = None
         self.current_comparison_items = None
 
     def display_protocol(self, data):
@@ -425,6 +474,7 @@ class RightPanel(QWidget):
         self.test_conditions_box.show()
         self.clear_btn.show()
         self.export_pdf_btn.show()
+        self.fit_view_btn.show()
         self.legend_label.show()
         if show_notes:
             self.notes_widget.show()
@@ -967,6 +1017,7 @@ class RightPanel(QWidget):
         self.header_title_label.show()
         self.clear_btn.show()
         self.export_pdf_btn.show()
+        self.fit_view_btn.show()
         self.legend_label.show()
 
     def _create_comparison_table(self, title, indices, items, norm_min, norm_max, x_vals, x_label):
@@ -1269,6 +1320,7 @@ class RightPanel(QWidget):
         рендера временно фиксируем эталонную ширину."""
         self.clear_btn.hide()
         self.export_pdf_btn.hide()
+        self.fit_view_btn.hide()
         for toolbar in self._graph_toolbars:
             toolbar.hide()
 
@@ -1312,6 +1364,7 @@ class RightPanel(QWidget):
 
             self.clear_btn.show()
             self.export_pdf_btn.show()
+            self.fit_view_btn.show()
             for toolbar in self._graph_toolbars:
                 toolbar.show()
 
@@ -1341,6 +1394,7 @@ class RightPanel(QWidget):
         # документе элементы управления зумом неуместны
         self.clear_btn.hide()
         self.export_pdf_btn.hide()
+        self.fit_view_btn.hide()
         for toolbar in self._graph_toolbars:
             toolbar.hide()
 
@@ -1373,8 +1427,38 @@ class RightPanel(QWidget):
         finally:
             self.clear_btn.show()
             self.export_pdf_btn.show()
+            self.fit_view_btn.show()
             for toolbar in self._graph_toolbars:
                 toolbar.show()
+
+    def toggle_fit_view(self):
+        """Переключает между обычным (прокручиваемым) видом протокола и
+        "обзорным" - целиковым снимком, смасштабированным по высоте видимой
+        области, без полос прокрутки, для быстрого просмотра одним взглядом.
+        Это снимок (QPixmap), а не живые виджеты - кликать по ячейкам/
+        графикам в этом режиме нельзя, только смотреть."""
+        if self.current_data is None and self.current_comparison_items is None:
+            return
+
+        if not self._fit_mode:
+            pixmap = self.content_widget.grab()
+            viewport_height = self.scroll_area.viewport().height()
+            if pixmap.height() > 0 and viewport_height > 0:
+                scale = viewport_height / pixmap.height()
+                scaled = pixmap.scaled(
+                    max(1, int(pixmap.width() * scale)), viewport_height,
+                    Qt.KeepAspectRatio, Qt.SmoothTransformation
+                )
+                self.overview_label.setPixmap(scaled)
+            self.scroll_area.hide()
+            self.overview_label.show()
+            self.fit_view_btn.setText("Обычный вид")
+            self._fit_mode = True
+        else:
+            self.overview_label.hide()
+            self.scroll_area.show()
+            self.fit_view_btn.setText("Уместить в высоту")
+            self._fit_mode = False
 
     def create_notes_section(self, data):
         note = data.get('note', '')
@@ -1450,15 +1534,22 @@ class RightPanel(QWidget):
                 elif child.layout():
                     self._clear_layout(child.layout())
         # Скрываем постоянные виджеты, показываем логотип
+        if self._fit_mode:
+            self._fit_mode = False
+            self.overview_label.hide()
+            self.scroll_area.show()
+            self.fit_view_btn.setText("Уместить в высоту")
         self.header_label.hide()
         self.header_title_label.hide()
         self.test_conditions_box.hide()
         self.clear_btn.hide()
         self.export_pdf_btn.hide()
+        self.fit_view_btn.hide()
         self.legend_label.hide()
         self.seal_panel.hide()
         self.notes_widget.hide()
         self.dynamic_widget.hide()  # иначе видна пустая панель-подложка без содержимого
+        self.stats_widget.hide()
         self.loading_label.hide()
         self.logo_label.show()
 
@@ -1473,10 +1564,12 @@ class RightPanel(QWidget):
         self.test_conditions_box.hide()
         self.clear_btn.hide()
         self.export_pdf_btn.hide()
+        self.fit_view_btn.hide()
         self.legend_label.hide()
         self.seal_panel.hide()
         self.notes_widget.hide()
         self.dynamic_widget.hide()
+        self.stats_widget.hide()
         self.logo_label.hide()
         self.loading_text_label.setText(message)
         self._set_loading_progress(0)
