@@ -22,8 +22,8 @@ from .. import database as db
 from .. import utils
 from ..utils import is_value_in_range
 from ..utils import format_order_number
-from .dialogs import _clamp_to_screen
-from .left_panel import _GlowFrame
+from .dialogs import _clamp_to_screen, GlowMessageDialog
+from .left_panel import _GlowFrame, _CtrlWheelZoomWidget, _GlowScrollBar
 from .. import styles
 from .. import icon_utils
 
@@ -33,154 +33,50 @@ ICONS_DIR = os.path.join(
 from datetime import datetime
 
 
-class _CtrlWheelZoomWidget(QWidget):
-    """Обычный QWidget, который перехватывает Ctrl+колесо мыши и вызывает
-    переданный обработчик - используется для масштабирования обзорного
-    снимка протокола и текста статистики колёсиком мыши (без Ctrl колесо
-    работает как обычно - прокрутка, если она вообще где-то есть)."""
-    def __init__(self, on_ctrl_wheel, parent=None):
-        super().__init__(parent)
-        self._on_ctrl_wheel = on_ctrl_wheel
-        # Обычный QWidget (в отличие от QFrame) не рисует фон, заданный
-        # через QSS, без этого атрибута - без него весь наш тёмно-синий
-        # градиент просто не отрисовывался
-        self.setAttribute(Qt.WA_StyledBackground, True)
+class _OverlayScrollArea(QScrollArea):
+    """QScrollArea с overlay-полосой прокрутки в фирменном стиле.
 
-    def wheelEvent(self, event):
-        if event.modifiers() & Qt.ControlModifier:
-            self._on_ctrl_wheel(event)
-            event.accept()
-        else:
-            super().wheelEvent(event)
+    Встроенная полоса Qt здесь ПОЛНОСТЬЮ отключена (ScrollBarAlwaysOff) -
+    поэтому QAbstractScrollArea никогда не резервирует под неё место, и
+    бороться с её внутренней логикой (как в предыдущей версии - через
+    переопределение resizeEvent) не нужно вовсе: фон гарантированно
+    всегда занимает полную ширину, без пустот и без "дёргания" при
+    появлении/исчезновении полосы.
 
-
-class _GlowScrollBar(QScrollBar):
-    """Полоса прокрутки в фирменном стиле - собственная отрисовка (QSS не
-    умеет ни плавную анимацию ширины, ни "бегущую" динамическую подсветку).
-
-    Желоб не рисуется вовсе (полностью прозрачный) - виден только сам
-    бегунок. В состоянии покоя - тонкая бирюзовая линия. При наведении
-    мыши плавно расширяется СИММЕТРИЧНО в обе стороны от центра (не
-    только в одну) до полного вида со скруглёнными краями (35% от
-    ширины) и настоящим свечением (ярче по центру бегунка, гаснет к его
-    краям - тот же приём, что и у _GlowFrame/_GlowLine). Такое же
-    временное раскрытие происходит и просто при прокрутке колесом мыши,
-    даже если курсор не касается самой полосы - и плавно гаснет обратно
-    через небольшую паузу после того, как прокрутка прекратилась."""
-
-    THIN_WIDTH = 3
-    FULL_WIDTH = 8
-    MARGIN_TOP = 4
-    MARGIN_BOTTOM = 4
-    MARGIN_RIGHT = 5          # отступ справа - ощущение "парящей" полосы
-    SCROLL_ACTIVITY_LEVEL = 0.65  # насколько раскрывается при прокрутке колесом (без наведения)
-    SCROLL_ACTIVITY_HOLD_MS = 700  # сколько ждать после остановки прокрутки перед затуханием
-
+    Вместо встроенной полосы работает наша собственная _GlowScrollBar -
+    независимый виджет-оверлей поверх правого края содержимого,
+    синхронизированный по значению и диапазону с (скрытым) встроенным
+    скроллбаром через сигналы rangeChanged/valueChanged."""
     def __init__(self, parent=None):
-        super().__init__(Qt.Vertical, parent)
-        self._hover_progress = 0.0  # 0 - состояние покоя, 1 - полностью раскрыта
-        self._is_hovering = False
-        self.setStyleSheet("QScrollBar { background: transparent; border: none; }")
-        # Без этого атрибута Qt рисует собственный фон виджета (из
-        # палитры/стиля) ДО нашего paintEvent
-        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        super().__init__(parent)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
-        self._anim = QPropertyAnimation(self, b"hoverProgress", self)
-        self._anim.setDuration(160)
+        self.overlay_bar = _GlowScrollBar(self.viewport())
+        real_bar = self.verticalScrollBar()
+        real_bar.rangeChanged.connect(self._sync_overlay_range)
+        real_bar.valueChanged.connect(self.overlay_bar.setValue)
+        self.overlay_bar.valueChanged.connect(real_bar.setValue)
+        self._sync_overlay_range(real_bar.minimum(), real_bar.maximum())
 
-        self._activity_timer = QTimer(self)
-        self._activity_timer.setSingleShot(True)
-        self._activity_timer.timeout.connect(self._on_activity_timeout)
+    def _sync_overlay_range(self, minimum, maximum):
+        self.overlay_bar.setRange(minimum, maximum)
+        self.overlay_bar.setPageStep(self.verticalScrollBar().pageStep())
+        # Полосу вообще не показываем, если прокручивать нечего - как и у
+        # обычной "по необходимости", но без резервирования места
+        self.overlay_bar.setVisible(maximum > minimum)
+        self._reposition_overlay()
 
-        self.valueChanged.connect(self._on_value_changed)
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reposition_overlay()
 
-    def getHoverProgress(self):
-        return self._hover_progress
-
-    def setHoverProgress(self, value):
-        self._hover_progress = value
-        self.update()
-
-    hoverProgress = pyqtProperty(float, getHoverProgress, setHoverProgress)
-
-    def enterEvent(self, event):
-        self._is_hovering = True
-        self._animate_to(1.0)
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        self._is_hovering = False
-        if not self._activity_timer.isActive():
-            self._animate_to(0.0)
-        super().leaveEvent(event)
-
-    def _on_value_changed(self, _value):
-        """Прокрутка колесом мыши - временно раскрывает полосу, даже если
-        курсор её не касается, и держит раскрытой, пока прокрутка активна."""
-        if not self._is_hovering:
-            self._animate_to(self.SCROLL_ACTIVITY_LEVEL)
-        self._activity_timer.start(self.SCROLL_ACTIVITY_HOLD_MS)
-
-    def _on_activity_timeout(self):
-        if not self._is_hovering:
-            self._animate_to(0.0)
-
-    def _animate_to(self, target):
-        self._anim.stop()
-        self._anim.setStartValue(self._hover_progress)
-        self._anim.setEndValue(target)
-        self._anim.start()
-
-    def sizeHint(self):
-        base = super().sizeHint()
-        return QSize(self.FULL_WIDTH + self.MARGIN_RIGHT, base.height())
-
-    def _handle_rect(self):
-        opt = QStyleOptionSlider()
-        self.initStyleOption(opt)
-        return self.style().subControlRect(QStyle.CC_ScrollBar, opt, QStyle.SC_ScrollBarSlider, self)
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        current_width = self.THIN_WIDTH + (self.FULL_WIDTH - self.THIN_WIDTH) * self._hover_progress
-        radius = current_width * 0.35
-
-        # Центр полосы фиксирован (по максимальной ширине) - при
-        # раскрытии она растёт СИММЕТРИЧНО в обе стороны от этого центра,
-        # а не только влево
-        center_x = self.width() - self.MARGIN_RIGHT - self.FULL_WIDTH / 2
-        track_x = center_x - current_width / 2
-
-        handle_qrect = self._handle_rect()
-        handle_top = handle_qrect.top()
-        handle_h = max(1, handle_qrect.height())
-        handle_rect = QRectF(track_x, handle_top, current_width, handle_h)
-
-        # Лёгкая тень - слегка смещённый затемнённый дубликат формы прямо
-        # под самой полосой (для контраста на светлом фоне)
-        shadow_rect = handle_rect.translated(0.6, 1.2)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(0, 0, 0, 60))
-        painter.drawRoundedRect(shadow_rect, radius, radius)
-
-        r, g, b = 79, 209, 255
-        if self._hover_progress < 0.05:
-            # Состояние покоя - просто тонкая бирюзовая линия, без свечения
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(QColor(r, g, b, 220))
-            painter.drawRoundedRect(handle_rect, radius, radius)
-        else:
-            # При раскрытии - настоящее свечение: ярче по центру бегунка,
-            # гаснет к его собственным краям (тот же приём, что и у рамок)
-            handle_gradient = QLinearGradient(0, handle_top, 0, handle_top + handle_h)
-            handle_gradient.setColorAt(0.0, QColor(r, g, b, 50))
-            handle_gradient.setColorAt(0.5, QColor(r, g, b, 235))
-            handle_gradient.setColorAt(1.0, QColor(r, g, b, 50))
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(QBrush(handle_gradient))
-            painter.drawRoundedRect(handle_rect, radius, radius)
+    def _reposition_overlay(self):
+        bar_width = self.overlay_bar.sizeHint().width()
+        vp = self.viewport()
+        margin = int(vp.height() * 0.01)  # по 1% сверху и снизу - крайнее положение полосы короче
+        bar_height = max(1, vp.height() - 2 * margin)
+        self.overlay_bar.setGeometry(vp.width() - bar_width, margin, bar_width, bar_height)
+        self.overlay_bar.raise_()
 
 
 class RightPanel(QWidget):
@@ -206,12 +102,10 @@ class RightPanel(QWidget):
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
-        scroll = QScrollArea()
+        scroll = _OverlayScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setStyleSheet(styles.RIGHT_PANEL_SCROLL_STYLE)
-        scroll.setVerticalScrollBar(_GlowScrollBar())
         self.scroll_area = scroll  # нужна для временной фиксации ширины при печати
 
         content = QWidget()
@@ -543,12 +437,30 @@ class RightPanel(QWidget):
             w = max(widget.width(), 1)
             h = max(widget.height(), 1)
             page_rect = printer.pageRect()
+
+            # Рендерим виджет в изображение с повышенной плотностью
+            # пикселей (не полагаясь на QPrinter.HighResolution напрямую в
+            # связке с painter.scale()+render() - на некоторых системах
+            # это давало неверные пропорции страницы). Чёткость печати
+            # контролируем сами, независимо от того, как QPrinter
+            # трактует разрешение.
+            density = 3
+            high_res = QPixmap(int(w * density), int(h * density))
+            high_res.fill(Qt.white)
+            hr_painter = QPainter(high_res)
+            hr_painter.scale(density, density)
+            widget.render(hr_painter)
+            hr_painter.end()
+
             scale_x = (page_rect.width() / w) * 0.98
             scale_y = scale_x * 1.12
+            target_rect = QRectF(0, 0, w * scale_x, h * scale_y)
+
             painter = QPainter()
             painter.begin(printer)
-            painter.scale(scale_x, scale_y)
-            widget.render(painter)
+            painter.fillRect(printer.pageRect(), Qt.white)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+            painter.drawPixmap(target_rect, high_res, QRectF(high_res.rect()))
             painter.end()
         except Exception as e:
             QMessageBox.critical(self, "Ошибка печати", f"Не удалось напечатать:\n{e}")
@@ -1563,6 +1475,18 @@ class RightPanel(QWidget):
             w = max(widget_to_print.width(), 1)
             h = max(widget_to_print.height(), 1)
             page_rect = printer.pageRect()
+
+            # Рендерим в изображение повышенной плотности пикселей - иначе
+            # печать/предпросмотр выглядят заметно хуже экрана (см. тот же
+            # приём в _render_widget_to_printer)
+            density = 3
+            high_res = QPixmap(int(w * density), int(h * density))
+            high_res.fill(Qt.white)
+            hr_painter = QPainter(high_res)
+            hr_painter.scale(density, density)
+            widget_to_print.render(hr_painter)
+            hr_painter.end()
+
             # Масштабируем по ширине - протокол должен заполнять всю ширину
             # листа; высота при необходимости просто продолжается за
             # пределы одной "видимой" страницы (постраничная разбивка не
@@ -1572,11 +1496,13 @@ class RightPanel(QWidget):
             # заполняет лист по высоте лучше, чем строго пропорциональный
             # масштаб от ширины)
             scale_y = scale_x * 1.12
+            target_rect = QRectF(0, 0, w * scale_x, h * scale_y)
 
             painter = QPainter()
             painter.begin(printer)
-            painter.scale(scale_x, scale_y)
-            widget_to_print.render(painter)
+            painter.fillRect(printer.pageRect(), Qt.white)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+            painter.drawPixmap(target_rect, high_res, QRectF(high_res.rect()))
             painter.end()
         except Exception as e:
             QMessageBox.critical(self, "Ошибка печати", f"Не удалось напечатать протокол:\n{e}")
@@ -1674,11 +1600,12 @@ class RightPanel(QWidget):
 
             painter = QPainter()
             painter.begin(printer)
+            painter.fillRect(printer.pageRect(), Qt.white)
             painter.scale(scale, scale)
             print_label.render(painter)
             painter.end()
 
-            QMessageBox.information(self, "Экспорт в PDF", f"Статистика сохранена:\n{file_path}")
+            GlowMessageDialog.show_success(self, "Экспорт в PDF", f"Статистика сохранена:\n{file_path}")
         except Exception as e:
             QMessageBox.critical(self, "Ошибка экспорта", f"Не удалось сохранить PDF:\n{e}")
 
@@ -1733,11 +1660,12 @@ class RightPanel(QWidget):
 
             painter = QPainter()
             painter.begin(printer)
+            painter.fillRect(printer.pageRect(), Qt.white)
             painter.scale(scale, scale)
             widget_to_print.render(painter)
             painter.end()
 
-            QMessageBox.information(self, "Экспорт в PDF", f"Протокол сохранён:\n{file_path}")
+            GlowMessageDialog.show_success(self, "Экспорт в PDF", f"Протокол сохранён:\n{file_path}")
         except Exception as e:
             QMessageBox.critical(self, "Ошибка экспорта", f"Не удалось сохранить PDF:\n{e}")
         finally:
@@ -1797,6 +1725,17 @@ class RightPanel(QWidget):
         self._clear_dynamic_content()
         self.mode_changed.emit('empty')
         self.clear_requested.emit()
+
+    def hide_content_only(self):
+        """Визуально скрывает текущий протокол/статистику (и кнопки для
+        них в верхней панели, через mode_changed) - БЕЗ clear_requested.
+        Используется при переходе в расширенный режим списка насосов:
+        полноценный clear_protocol() сбросил бы раскладку сплиттера
+        обратно к компактному виду, что здесь совсем не нужно."""
+        self.current_data = None
+        self.current_comparison_items = None
+        self._clear_dynamic_content()
+        self.mode_changed.emit('empty')
 
     def _clear_dynamic_content(self):
         """Внутренняя очистка динамической области перед перерисовкой нового

@@ -51,13 +51,22 @@ class _IconButton(QPushButton):
         self.setCursor(Qt.PointingHandCursor)
         if tooltip:
             self.setToolTip(tooltip)
+        self._active = False  # принудительно подсвечена (не зависит от наведения мыши)
+
+    def set_active(self, active):
+        """Держит иконку подсвеченной (как при наведении), пока active=True,
+        независимо от того, где сейчас курсор мыши - используется, чтобы
+        показать, что связанное с кнопкой окно/режим сейчас открыто."""
+        self._active = active
+        self.setIcon(self._hover_icon if active else self._normal_icon)
 
     def enterEvent(self, event):
         self.setIcon(self._hover_icon)
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        self.setIcon(self._normal_icon)
+        if not self._active:
+            self.setIcon(self._normal_icon)
         super().leaveEvent(event)
 
 
@@ -262,27 +271,27 @@ class MainWindow(QMainWindow):
 
         top_layout.addSpacing(8)  # небольшой отступ перед статистикой
 
-        btn_stats = _IconButton(os.path.join(ICONS_DIR, 'statistics.svg'), tooltip="Статистика")
-        btn_stats.clicked.connect(self.toggle_statistics)
-        top_layout.addWidget(btn_stats)
+        self.btn_stats = _IconButton(os.path.join(ICONS_DIR, 'statistics.svg'), tooltip="Статистика")
+        self.btn_stats.clicked.connect(self.toggle_statistics)
+        top_layout.addWidget(self.btn_stats)
 
         btn_theme = _ThemeToggleButton(
             os.path.join(ICONS_DIR, 'theme-day.svg'),
             os.path.join(ICONS_DIR, 'theme-night.svg'),
             tooltip="Смена темы"
         )
-        btn_settings = _IconButton(os.path.join(ICONS_DIR, 'settings_2.svg'), tooltip="Настройки")
+        self.btn_settings = _IconButton(os.path.join(ICONS_DIR, 'settings_2.svg'), tooltip="Настройки")
         btn_print = _IconButton(os.path.join(ICONS_DIR, 'print.svg'), tooltip="Печать")
 
         # Подключаем
         btn_theme.theme_changed.connect(
             lambda is_day: QMessageBox.information(self, "Тема", "Функция будет реализована позже")
         )
-        btn_settings.clicked.connect(self.open_settings)
+        self.btn_settings.clicked.connect(self.open_settings)
         btn_print.clicked.connect(self.on_print_requested)
 
         top_layout.addWidget(btn_theme)
-        top_layout.addWidget(btn_settings)
+        top_layout.addWidget(self.btn_settings)
         top_layout.addWidget(btn_print)
 
         # Тень, приподнимающая панель над рабочей областью - зеркально
@@ -668,8 +677,10 @@ class MainWindow(QMainWindow):
         if self.showing_stats: self.toggle_statistics()
 
     def open_settings(self):
+        self.btn_settings.set_active(True)
         dialog = SettingsDialog(self)
         dialog.exec_()
+        self.btn_settings.set_active(False)
 
     def on_add_requested(self):
         """Ручное добавление записи (модификация, номер, дата, результаты испытаний)."""
@@ -965,6 +976,7 @@ class MainWindow(QMainWindow):
         self.btn_fit_view.setVisible(mode in ('protocol', 'comparison'))
         self.btn_stats_minus.setVisible(mode == 'stats')
         self.btn_stats_plus.setVisible(mode == 'stats')
+        self.btn_stats.set_active(mode == 'stats')
 
     def on_clear_requested(self):
         # 1. Вернуть раскладку к исходному виду (компактный список + пропорции 40/60)

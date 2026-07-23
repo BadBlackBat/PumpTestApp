@@ -3,13 +3,13 @@ from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QPushButton, QLabel, QCheckBox,
     QDateEdit, QHeaderView, QAbstractItemView, QMenu,
     QStyledItemDelegate, QStyle, QStyleOptionViewItem, QApplication,
-    QFrame, QGraphicsDropShadowEffect, QGridLayout
+    QFrame, QGraphicsDropShadowEffect, QGridLayout, QScrollBar, QStyleOptionSlider
 )
 from PyQt5.QtCore import (
     Qt, pyqtSignal, QDate, QPoint, QTimer, QEvent, QEasingCurve,
-    QRect, QRectF, pyqtProperty, QPropertyAnimation
+    QRect, QRectF, pyqtProperty, QPropertyAnimation, QSize
 )
-from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QPolygon, QLinearGradient
+from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QPolygon, QLinearGradient, QBrush
 
 from .. import database as db
 from .. import utils
@@ -63,6 +63,161 @@ class _DateTableItem(QTableWidgetItem):
         return super().__lt__(other)
 
 
+class _CtrlWheelZoomWidget(QWidget):
+    """Обычный QWidget, который перехватывает Ctrl+колесо мыши и вызывает
+    переданный обработчик - используется для масштабирования обзорного
+    снимка протокола и текста статистики колёсиком мыши (без Ctrl колесо
+    работает как обычно - прокрутка, если она вообще где-то есть)."""
+    def __init__(self, on_ctrl_wheel, parent=None):
+        super().__init__(parent)
+        self._on_ctrl_wheel = on_ctrl_wheel
+        # Обычный QWidget (в отличие от QFrame) не рисует фон, заданный
+        # через QSS, без этого атрибута - без него весь наш тёмно-синий
+        # градиент просто не отрисовывался
+        self.setAttribute(Qt.WA_StyledBackground, True)
+
+    def wheelEvent(self, event):
+        if event.modifiers() & Qt.ControlModifier:
+            self._on_ctrl_wheel(event)
+            event.accept()
+        else:
+            super().wheelEvent(event)
+
+
+class _GlowScrollBar(QScrollBar):
+    """Полоса прокрутки в фирменном стиле - собственная отрисовка (QSS не
+    умеет ни плавную анимацию ширины, ни "бегущую" динамическую подсветку).
+
+    Желоб не рисуется вовсе (полностью прозрачный) - виден только сам
+    бегунок. В состоянии покоя - тонкая линия акцентного цвета. При
+    наведении мыши плавно расширяется СИММЕТРИЧНО в обе стороны от центра
+    до полного вида со скруглёнными краями (35% от ширины) и настоящим
+    свечением (ярче по центру бегунка, гаснет к его краям - тот же приём,
+    что и у _GlowFrame/_GlowLine). Такое же временное раскрытие
+    происходит и просто при прокрутке колесом мыши, даже если курсор не
+    касается самой полосы - и плавно гаснет обратно через небольшую паузу
+    после того, как прокрутка прекратилась.
+
+    color - RGB кортеж акцентного цвета (по умолчанию фирменный
+    бирюзовый) - можно задать другой (зелёный/оранжевый) для диалогов с
+    другой акцентной подсветкой."""
+
+    THIN_WIDTH = 3
+    FULL_WIDTH = 8
+    MARGIN_TOP = 4
+    MARGIN_BOTTOM = 4
+    MARGIN_RIGHT = 5          # отступ справа - ощущение "парящей" полосы
+    SCROLL_ACTIVITY_LEVEL = 0.65  # насколько раскрывается при прокрутке колесом (без наведения)
+    SCROLL_ACTIVITY_HOLD_MS = 700  # сколько ждать после остановки прокрутки перед затуханием
+
+    def __init__(self, parent=None, color=None):
+        super().__init__(Qt.Vertical, parent)
+        self._color = color or (79, 209, 255)
+        self._hover_progress = 0.0  # 0 - состояние покоя, 1 - полностью раскрыта
+        self._is_hovering = False
+        self.setStyleSheet("QScrollBar { background: transparent; border: none; }")
+        # Без этого атрибута Qt рисует собственный фон виджета (из
+        # палитры/стиля) ДО нашего paintEvent
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+
+        self._anim = QPropertyAnimation(self, b"hoverProgress", self)
+        self._anim.setDuration(160)
+
+        self._activity_timer = QTimer(self)
+        self._activity_timer.setSingleShot(True)
+        self._activity_timer.timeout.connect(self._on_activity_timeout)
+
+        self.valueChanged.connect(self._on_value_changed)
+
+    def getHoverProgress(self):
+        return self._hover_progress
+
+    def setHoverProgress(self, value):
+        self._hover_progress = value
+        self.update()
+
+    hoverProgress = pyqtProperty(float, getHoverProgress, setHoverProgress)
+
+    def enterEvent(self, event):
+        self._is_hovering = True
+        self._animate_to(1.0)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._is_hovering = False
+        if not self._activity_timer.isActive():
+            self._animate_to(0.0)
+        super().leaveEvent(event)
+
+    def _on_value_changed(self, _value):
+        """Прокрутка колесом мыши - временно раскрывает полосу, даже если
+        курсор её не касается, и держит раскрытой, пока прокрутка активна."""
+        if not self._is_hovering:
+            self._animate_to(self.SCROLL_ACTIVITY_LEVEL)
+        self._activity_timer.start(self.SCROLL_ACTIVITY_HOLD_MS)
+
+    def _on_activity_timeout(self):
+        if not self._is_hovering:
+            self._animate_to(0.0)
+
+    def _animate_to(self, target):
+        self._anim.stop()
+        self._anim.setStartValue(self._hover_progress)
+        self._anim.setEndValue(target)
+        self._anim.start()
+
+    def sizeHint(self):
+        base = super().sizeHint()
+        return QSize(self.FULL_WIDTH + self.MARGIN_RIGHT, base.height())
+
+    def _handle_rect(self):
+        opt = QStyleOptionSlider()
+        self.initStyleOption(opt)
+        return self.style().subControlRect(QStyle.CC_ScrollBar, opt, QStyle.SC_ScrollBarSlider, self)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        current_width = self.THIN_WIDTH + (self.FULL_WIDTH - self.THIN_WIDTH) * self._hover_progress
+        radius = current_width * 0.35
+
+        # Центр полосы фиксирован (по максимальной ширине) - при
+        # раскрытии она растёт СИММЕТРИЧНО в обе стороны от этого центра,
+        # а не только влево
+        center_x = self.width() - self.MARGIN_RIGHT - self.FULL_WIDTH / 2
+        track_x = center_x - current_width / 2
+
+        handle_qrect = self._handle_rect()
+        handle_top = handle_qrect.top()
+        handle_h = max(1, handle_qrect.height())
+        handle_rect = QRectF(track_x, handle_top, current_width, handle_h)
+
+        # Лёгкая тень - слегка смещённый затемнённый дубликат формы прямо
+        # под самой полосой (для контраста на светлом фоне)
+        shadow_rect = handle_rect.translated(0.6, 1.2)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 60))
+        painter.drawRoundedRect(shadow_rect, radius, radius)
+
+        r, g, b = self._color
+        if self._hover_progress < 0.05:
+            # Состояние покоя - просто тонкая линия акцентного цвета, без свечения
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(r, g, b, 220))
+            painter.drawRoundedRect(handle_rect, radius, radius)
+        else:
+            # При раскрытии - настоящее свечение: ярче по центру бегунка,
+            # гаснет к его собственным краям (тот же приём, что и у рамок)
+            handle_gradient = QLinearGradient(0, handle_top, 0, handle_top + handle_h)
+            handle_gradient.setColorAt(0.0, QColor(r, g, b, 50))
+            handle_gradient.setColorAt(0.5, QColor(r, g, b, 235))
+            handle_gradient.setColorAt(1.0, QColor(r, g, b, 50))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(handle_gradient))
+            painter.drawRoundedRect(handle_rect, radius, radius)
+
+
 class _GlowFrame(QFrame):
     """Графитовая панель с фирменным бирюзовым свечением по всем четырём
     сторонам - яркое по центру каждой стороны, гаснущее к углам. Основа
@@ -76,12 +231,15 @@ class _GlowFrame(QFrame):
         self.setObjectName("filtersPanel")
         self.setStyleSheet(styles.LEFT_PANEL_FILTER_PANEL_STYLE)
         # Цвет свечения - по умолчанию фирменный бирюзовый (styles.LEFT_PANEL_GLOW_COLOR),
-        # но можно переопределить для конкретного окна (например, оранжевый для EditPumpDialog)
+        # но можно переопределить для конкретного окна (например, оранжевый
+        # для EditPumpDialog)
         self._glow_color = glow_color or styles.LEFT_PANEL_GLOW_COLOR
 
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(styles.LEFT_PANEL_GLOW_SHADOW_BLUR)
         shadow.setColor(QColor(0, 0, 0, 150))
+        shadow.setOffset(0, 0)
+        self.setGraphicsEffect(shadow)
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -533,6 +691,11 @@ class LeftPanel(QWidget):
             # весь экран в расширенном режиме
             self.setMaximumWidth(16777215)
             parent.splitter.setSizes([parent.width(), 0])
+            # Правая панель визуально сжимается до нуля - но открытый
+            # протокол/статистика и кнопки для них в верхней панели без
+            # этого остались бы видны поверх расширенного списка
+            if hasattr(parent, 'right_panel'):
+                parent.right_panel.hide_content_only()
         else:
             # Компактный режим (минимальный)
             self.compact_mode = True

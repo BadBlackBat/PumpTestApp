@@ -1,11 +1,10 @@
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QMessageBox
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTextEdit, QDialogButtonBox, QMessageBox, 
     QListWidget, QListWidgetItem, QComboBox, QDateEdit,
     QTableWidget, QTableWidgetItem, QScrollArea, QWidget, QSizePolicy,
-    QApplication, QGraphicsOpacityEffect, QFrame, QHeaderView
+    QApplication, QGraphicsOpacityEffect, QFrame, QHeaderView, QGridLayout
 )
 from PyQt5.QtCore import Qt, QDate, QPoint, QSize, QPropertyAnimation, QEasingCurve, QTimer
 from PyQt5.QtGui import QFont, QColor, QFontMetrics
@@ -16,7 +15,10 @@ from .. import database as db
 from .. import utils
 from .. import styles
 from .. import icon_utils
-from .left_panel import _GlowFrame
+from .left_panel import _GlowFrame, _GlowScrollBar
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
+from matplotlib.ticker import MultipleLocator
 from .status_bar import _GlowLine
 
 ICONS_DIR = os.path.join(
@@ -1001,46 +1003,169 @@ class AddModificationDialog(_GlowDialog):
             'seal_rules': seal_rules,
         }
 
-
-class ViewModificationsDialog(QDialog):
-    """Просмотр уже добавленных модификаций с их нормативами - с
-    возможностью редактирования и удаления выбранной модификации."""
+class ViewModificationsDialog(_GlowDialog):
+    """Просмотр уже добавленных модификаций с их нормативами - фирменный
+    стиль (бирюзовая подсветка), с возможностью редактирования и удаления
+    выбранной модификации."""
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Просмотр модификаций")
-        self.setModal(True)
-        self.resize(650, 500)
+        super().__init__(parent, title="Просмотр модификаций")
 
-        layout = QHBoxLayout(self)
+        main_row = QHBoxLayout()
+        main_row.setSpacing(14)
 
+        # Левая колонка - список модификаций + кнопки
         left_col = QVBoxLayout()
         self.list_widget = QListWidget()
         self.list_widget.setFixedWidth(200)
+        self.list_widget.setMinimumHeight(500)
+        self.list_widget.setStyleSheet("""
+            QListWidget {
+                background-color: #f0f0f0;
+                color: #1c1e21;
+                border: 1px solid #6b6f75;
+                border-radius: 4px;
+            }
+            QListWidget::item {
+                padding: 3px 4px;
+            }
+            QListWidget::item:selected {
+                background-color: #bdeeff;
+                color: #1c1e21;
+            }
+            QListWidget::item:hover {
+                background-color: #d6f3ff;
+            }
+        """)
         self._reload_list()
         self.list_widget.currentItemChanged.connect(self.show_details)
         left_col.addWidget(self.list_widget)
 
         btn_row = QHBoxLayout()
         self.btn_edit = QPushButton("Редактировать")
+        self.btn_edit.setObjectName("chromeButton")
+        self.btn_edit.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
         self.btn_edit.clicked.connect(self.edit_selected)
         self.btn_delete = QPushButton("Удалить")
+        self.btn_delete.setObjectName("chromeButton")
+        self.btn_delete.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
         self.btn_delete.clicked.connect(self.delete_selected)
         btn_row.addWidget(self.btn_edit)
         btn_row.addWidget(self.btn_delete)
         left_col.addLayout(btn_row)
-        layout.addLayout(left_col)
+        main_row.addLayout(left_col)
 
-        self.details_label = QLabel("Выберите модификацию слева, чтобы увидеть нормативы.")
-        self.details_label.setWordWrap(True)
-        self.details_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        # Правая колонка - подробности, в прокручиваемой области с нашей
+        # фирменной полосой прокрутки
+        self.details_widget = QWidget()
+        self.details_widget.setStyleSheet("background: transparent;")
+        self.details_layout = QVBoxLayout(self.details_widget)
+        self.details_layout.setSpacing(10)
+        # Правый отступ увеличен на ширину, которую резервирует под себя
+        # наша полоса прокрутки (_GlowScrollBar.FULL_WIDTH + MARGIN_RIGHT =
+        # 8+5=13px) - иначе визуально казалось бы, что отступ справа
+        # меньше, чем слева
+        self.details_layout.setContentsMargins(8, 4, 21, 4)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setWidget(self.details_label)
-        layout.addWidget(scroll)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        scroll.setVerticalScrollBar(_GlowScrollBar())
+        scroll.setWidget(self.details_widget)
+        scroll.setMinimumWidth(520)
+        scroll.setMinimumHeight(500)
+        main_row.addWidget(scroll, 1)
 
-        if self.list_widget.count() == 0:
-            self.details_label.setText("В базе пока нет ни одной модификации.")
+        self.body_layout.addLayout(main_row)
+
+        if self.list_widget.count() > 0:
+            # Выбираем первую модификацию ДО фиксации размера окна - иначе
+            # adjustSize() посчитал бы ширину по пустой заглушке, а не по
+            # реальному содержимому (таблицы+графики), и при выборе любой
+            # модификации графики оказывались бы обрезаны по уже
+            # зафиксированной, слишком узкой ширине
+            self.list_widget.setCurrentRow(0)
+            # QScrollArea сама по себе не "прокидывает" наружу фактическую
+            # ширину своего содержимого - измеряем её явно и задаём как
+            # минимум области прокрутки, плюс запас под саму полосу
+            # прокрутки справа (см. отступы details_layout выше)
+            content_width = self.details_widget.sizeHint().width()
+            scroll.setMinimumWidth(content_width + 20)
+        else:
+            self.show_details(None)
+            self._clear_details_layout()
+            self.details_layout.addWidget(
+                self._plain_label("В базе пока нет ни одной модификации.")
+            )
+            self.details_layout.addStretch(1)
         self._update_buttons()
+
+        self._lock_size(clamp_to_screen=True)
+
+        # Разрешаем растягивание окна по ВЕРТИКАЛИ (ширина остаётся
+        # зафиксированной, как обычно у наших диалогов) - у этого диалога
+        # содержимое сильно варьируется по высоте в зависимости от
+        # количества контрольных точек модификации, фиксированная высота
+        # не всегда удобна. Тянуть можно за нижний край окна (см.
+        # mousePressEvent/mouseMoveEvent/mouseReleaseEvent ниже).
+        self.setMinimumHeight(400)
+        self.setMaximumHeight(16777215)
+        self._resizing = False
+        self.setMouseTracking(True)
+        self.glow_frame.setMouseTracking(True)
+
+    RESIZE_GRIP_HEIGHT = 10  # толщина зоны у нижнего края, за которую можно тянуть
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and event.y() >= self.height() - self.RESIZE_GRIP_HEIGHT:
+            self._resizing = True
+            self._resize_start_y = event.globalY()
+            self._resize_start_height = self.height()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._resizing:
+            delta = event.globalY() - self._resize_start_y
+            new_height = self._resize_start_height + delta
+            new_height = max(self.minimumHeight(), min(new_height, self.maximumHeight()))
+            self.resize(self.width(), new_height)
+            return
+        if event.y() >= self.height() - self.RESIZE_GRIP_HEIGHT:
+            self.setCursor(Qt.SizeVerCursor)
+        else:
+            self.unsetCursor()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._resizing:
+            self._resizing = False
+            return
+        super().mouseReleaseEvent(event)
+
+    def _plain_label(self, text, bold=False, size=None):
+        lbl = QLabel(text)
+        weight = "bold" if bold else "normal"
+        size_css = f"font-size: {size}pt;" if size else ""
+        lbl.setStyleSheet(f"color: #e8eaed; font-weight: {weight}; {size_css} background: transparent;")
+        lbl.setWordWrap(True)
+        return lbl
+
+    def _clear_details_layout(self):
+        while self.details_layout.count():
+            item = self.details_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                self._clear_sub_layout_rec(item.layout())
+
+    def _clear_sub_layout_rec(self, layout):
+        while layout.count():
+            child = layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+            elif child.layout():
+                self._clear_sub_layout_rec(child.layout())
 
     def _reload_list(self):
         self.list_widget.clear()
@@ -1056,35 +1181,211 @@ class ViewModificationsDialog(QDialog):
 
     def show_details(self, current, previous=None):
         self._update_buttons()
+        self._clear_details_layout()
+
         if not current:
+            self.details_layout.addWidget(
+                self._plain_label("Выберите модификацию слева, чтобы увидеть нормативы.")
+            )
+            self.details_layout.addStretch(1)
             return
+
         mod_id = current.data(Qt.UserRole)
         mod = db.get_modification_by_id(mod_id)
         if not mod:
             return
 
-        html = f"<h3>{mod['name']}</h3>"
+        self.details_layout.addWidget(self._plain_label(f"Модификация - {mod['name']}", bold=True, size=12))
+        self.details_layout.addWidget(self._plain_label("Нормативные требования для:", bold=True))
 
-        def points_html(title, x_vals, min_vals, max_vals):
-            h = f"<p><b>{title}</b><br>"
-            for x, mn, mx in zip(x_vals, min_vals, max_vals):
-                h += f"{x}: {mn} – {mx}<br>"
-            return h + "</p>"
+        section1, table1 = self._build_test_section(
+            "Испытание 1:",
+            "Зависимость объемной подачи от оборотов привода насоса ГУР, "
+            "клапан ECO выкл (I = 0 A)",
+            mod['norm_graph1_x'], mod['norm_graph1_min'], mod['norm_graph1_max'],
+            "Обороты привода,\nоб/мин"
+        )
+        section2, table2 = self._build_test_section(
+            "Испытание 2:",
+            "Зависимость объемной подачи от оборотов привода насоса ГУР, "
+            "клапан ECO вкл (I = 1 A)",
+            mod['norm_graph2_x'], mod['norm_graph2_min'], mod['norm_graph2_max'],
+            "Обороты привода,\nоб/мин"
+        )
+        section3, table3 = self._build_test_section(
+            "Испытание 3:",
+            "Зависимость объемной подачи от силы тока на управляющем клапане ECO",
+            mod['norm_graph3_x'], mod['norm_graph3_min'], mod['norm_graph3_max'],
+            "Сила тока, А", x_major_step=0.1
+        )
+        self.details_layout.addLayout(section1)
+        self.details_layout.addLayout(section2)
+        self.details_layout.addLayout(section3)
 
-        html += points_html("Испытание 1 (ECO выкл.), обороты:",
-                             mod['norm_graph1_x'], mod['norm_graph1_min'], mod['norm_graph1_max'])
-        html += points_html("Испытание 2 (ECO вкл.), обороты:",
-                             mod['norm_graph2_x'], mod['norm_graph2_min'], mod['norm_graph2_max'])
-        html += points_html("Испытание 3, сила тока ECO:",
-                             mod['norm_graph3_x'], mod['norm_graph3_min'], mod['norm_graph3_max'])
-        html += f"<p><b>Давление настройки клапана:</b> {mod['pressure_min']} – {mod['pressure_max']} бар</p>"
+        # Все три таблицы - одной ширины (п.1 требований)
+        max_table_width = max(table1.width(), table2.width(), table3.width())
+        self._match_table_width(table1, max_table_width)
+        self._match_table_width(table2, max_table_width)
+        self._match_table_width(table3, max_table_width)
 
-        html += "<p><b>Требования по герметичности:</b><br>"
-        for key in utils.SEAL_KEYS:
-            html += f"{utils.SEAL_LABELS[key]}: {mod['seal_rules'].get(key, '—')}<br>"
-        html += "</p>"
+        self.details_layout.addWidget(self._plain_label("Испытание 4:", bold=True))
+        self.details_layout.addWidget(
+            self._plain_label("Максимальное давление срабатывания предохранительного клапана.")
+        )
+        self.details_layout.addWidget(self._plain_label(
+            f"MIN давление: {mod['pressure_min']} бар<br>MAX давление: {mod['pressure_max']} бар"
+        ))
 
-        self.details_label.setText(html)
+        self.details_layout.addWidget(self._plain_label("Применяемые требования герметичности:", bold=True))
+        seal_grid = QGridLayout()
+        seal_grid.setHorizontalSpacing(10)
+        seal_grid.setVerticalSpacing(2)
+        for row, key in enumerate(utils.SEAL_KEYS):
+            label = QLabel(utils.SEAL_LABELS[key] + ":")
+            label.setStyleSheet("color: #e8eaed; background: transparent;")
+            label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            value = QLabel(mod['seal_rules'].get(key, '—'))
+            value.setStyleSheet("color: #e8eaed; background: transparent;")
+            value.setWordWrap(True)
+            seal_grid.addWidget(label, row, 0)
+            seal_grid.addWidget(value, row, 1)
+        seal_grid.setColumnStretch(1, 1)
+        self.details_layout.addLayout(seal_grid)
+
+        self.details_layout.addStretch(1)
+
+    def _build_test_section(self, test_num_label, description, x_values, min_values, max_values,
+                             x_label, x_major_step=None):
+        section = QVBoxLayout()
+        section.setSpacing(4)
+        section.addWidget(self._plain_label(test_num_label, bold=True))
+        section.addWidget(self._plain_label(description))
+
+        row = QHBoxLayout()
+        row.setSpacing(14)
+        table = self._build_vertical_table(x_label, x_values, min_values, max_values)
+        row.addWidget(table)
+        row.addWidget(self._build_mini_chart(x_values, min_values, max_values, x_label, x_major_step))
+        row.addStretch(1)
+        section.addLayout(row)
+        return section, table
+
+    def _match_table_width(self, table, target_width):
+        """Пропорционально растягивает/сжимает столбцы таблицы, чтобы её
+        общая ширина точно совпала с target_width - используется, чтобы
+        таблицы всех трёх испытаний были одной ширины (п.1 требований)."""
+        col_count = table.columnCount()
+        if col_count == 0:
+            return
+        current_cols_width = sum(table.columnWidth(c) for c in range(col_count))
+        if current_cols_width == 0:
+            return
+        available = max(30 * col_count, target_width - 2)
+        scale = available / current_cols_width
+        for c in range(col_count):
+            table.setColumnWidth(c, max(30, int(table.columnWidth(c) * scale)))
+        new_total = 2 + sum(table.columnWidth(c) for c in range(col_count))
+        table.setFixedWidth(new_total)
+
+    def _build_vertical_table(self, x_label, x_values, min_values, max_values):
+        """Таблица испытания - X/MIN/MAX по столбцам, контрольные точки по
+        строкам (та же ориентация, что и в PointsEditorWidget при
+        редактировании модификации). Минимальные отступы в ячейках, без
+        лишних полей по краям, без возможности изменения размера
+        пользователем."""
+        table = QTableWidget()
+        table.setColumnCount(3)
+        table.setHorizontalHeaderLabels([x_label, "MIN, л/мин", "MAX, л/мин"])
+        table.setRowCount(len(x_values))
+        table.verticalHeader().setVisible(False)
+        table.setStyleSheet("""
+            QTableWidget {
+                gridline-color: #b0b4b9;
+                border: 1px solid #6b6f75;
+                border-radius: 4px;
+                background-color: #f0f0f0;
+            }
+            QTableWidget::item {
+                padding: 0px;
+            }
+            QHeaderView::section {
+                background-color: #3a3d42;
+                color: #e8eaed;
+                border: 1px solid #6b6f75;
+                padding: 1px 4px;
+            }
+        """)
+
+        small_font = QFont()
+        small_font.setPointSize(9)
+        table.setFont(small_font)
+        table.horizontalHeader().setFont(small_font)
+        # Заголовок X-столбца обычно на 2 строки (например, "Обороты
+        # привода,\nоб/мин") - специально, чтобы сжать ширину этого
+        # столбца. Резервируем под заголовок высоту в 2 строки текста.
+        header_line_height = QFontMetrics(small_font).lineSpacing()
+        table.horizontalHeader().setFixedHeight(header_line_height * 2 + 8)
+
+        cell_color = QColor("#1c1e21")
+        for row, (x, mn, mx) in enumerate(zip(x_values, min_values, max_values)):
+            for col, val in enumerate([x, mn, mx]):
+                item = QTableWidgetItem(str(val))
+                item.setFlags(Qt.ItemIsEnabled)
+                item.setTextAlignment(Qt.AlignCenter)
+                item.setForeground(cell_color)
+                table.setItem(row, col, item)
+
+        table.resizeColumnsToContents()
+        table.verticalHeader().setDefaultSectionSize(20)
+        table.resizeRowsToContents()
+        min_col_width = 50
+        for c in range(table.columnCount()):
+            table.setColumnWidth(c, max(min_col_width, table.columnWidth(c) + 2))
+        table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        total_width = 2
+        for c in range(table.columnCount()):
+            total_width += table.columnWidth(c)
+        table.setFixedWidth(total_width)
+        total_height = table.horizontalHeader().height() + 2
+        for row in range(table.rowCount()):
+            total_height += table.rowHeight(row)
+        table.setFixedHeight(total_height)
+
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        return table
+
+    def _build_mini_chart(self, x_values, min_values, max_values, x_label, x_major_step=None):
+        """Минималистичный график норматива - только линии MIN/MAX и
+        область между ними, без легенды и панели инструментов (только
+        для наглядности).
+
+        x_major_step - если задан, шаг делений оси X фиксируется этим
+        значением (например, 0.1 для испытания 3 - чтобы совпадало с
+        шагом значений в таблице), а не считается автоматически."""
+        fig = Figure(figsize=(6.3, 3.6), dpi=100)
+        fig.patch.set_alpha(0)
+        ax = fig.add_subplot(111)
+        ax.set_facecolor('none')
+        ax.plot(x_values, min_values, color='#4fd1ff', linewidth=1.8)
+        ax.plot(x_values, max_values, color='#4fd1ff', linewidth=1.8)
+        ax.fill_between(x_values, min_values, max_values, color='#4fd1ff', alpha=0.2)
+        ax.set_xlabel(x_label, fontsize=8, color='#e8eaed')
+        ax.set_ylabel("Q, л/мин", fontsize=8, color='#e8eaed')
+        ax.tick_params(labelsize=7.5, colors='#e8eaed')
+        if x_major_step:
+            ax.xaxis.set_major_locator(MultipleLocator(x_major_step))
+        ax.grid(True, color='#e8eaed', alpha=0.15, linewidth=0.6)
+        ax.set_axisbelow(True)  # сетка под линиями графика, а не поверх них
+        for spine in ax.spines.values():
+            spine.set_color('#6b6f75')
+        fig.subplots_adjust(left=0.18, right=0.96, top=0.94, bottom=0.2)
+        canvas = FigureCanvasQTAgg(fig)
+        canvas.setFixedSize(475, 270)
+        canvas.setStyleSheet("background: transparent;")
+        return canvas
 
     def edit_selected(self):
         current = self.list_widget.currentItem()
@@ -1142,9 +1443,8 @@ class ViewModificationsDialog(QDialog):
         # Пароль уже проверен внутри диалога - если дошли сюда, значит верный
         db.delete_modification(mod_id)
         self._reload_list()
-        self.details_label.setText("Выберите модификацию слева, чтобы увидеть нормативы.")
+        self.show_details(None)
         self._update_buttons()
-
 
 class SettingsDialog(_GlowDialog):
     """Меню настроек: управление модификациями насосов."""
