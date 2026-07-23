@@ -161,6 +161,46 @@ def get_all_modifications():
         cursor.execute('SELECT id, name FROM modifications ORDER BY name')
         return cursor.fetchall()
 
+def update_modification(mod_id, name, norm_graph1_min, norm_graph1_max, norm_graph1_x,
+                         norm_graph2_min, norm_graph2_max, norm_graph2_x,
+                         norm_graph3_min, norm_graph3_max, norm_graph3_x,
+                         pressure_min, pressure_max, seal_rules=None):
+    """Обновляет существующую модификацию по её id (а не через INSERT OR
+    REPLACE по имени, как add_modification) - id остаётся тем же, поэтому
+    ссылки насосов на эту модификацию (modification_id) не теряются."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE modifications SET
+                name = ?, norm_graph1_min = ?, norm_graph1_max = ?, norm_graph1_x = ?,
+                norm_graph2_min = ?, norm_graph2_max = ?, norm_graph2_x = ?,
+                norm_graph3_min = ?, norm_graph3_max = ?, norm_graph3_x = ?,
+                pressure_min = ?, pressure_max = ?, seal_rules_json = ?
+            WHERE id = ?
+        ''', (name, norm_graph1_min, norm_graph1_max, norm_graph1_x,
+              norm_graph2_min, norm_graph2_max, norm_graph2_x,
+              norm_graph3_min, norm_graph3_max, norm_graph3_x,
+              pressure_min, pressure_max, seal_rules, mod_id))
+        conn.commit()
+
+def delete_modification(mod_id):
+    """Удаляет модификацию. У насосов, которые на неё ссылались, поле
+    modification_id автоматически станет NULL (см. FOREIGN KEY ... ON
+    DELETE SET NULL в схеме) - сами протоколы насосов не удаляются."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM modifications WHERE id = ?', (mod_id,))
+        conn.commit()
+
+def count_pumps_for_modification(mod_id):
+    """Сколько существующих протоколов насосов сейчас ссылаются на эту
+    модификацию - используется, чтобы предупредить пользователя перед
+    удалением, если такие протоколы есть."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM pumps WHERE modification_id = ?', (mod_id,))
+        return cursor.fetchone()[0]
+
 # ---------- Работа с заказами ----------
 # def add_order(order_number):
 #     with get_connection() as conn:

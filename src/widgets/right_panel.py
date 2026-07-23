@@ -162,7 +162,7 @@ class _GlowScrollBar(QScrollBar):
         # под самой полосой (для контраста на светлом фоне)
         shadow_rect = handle_rect.translated(0.6, 1.2)
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(0, 0, 0, 50))
+        painter.setBrush(QColor(0, 0, 0, 60))
         painter.drawRoundedRect(shadow_rect, radius, radius)
 
         r, g, b = 79, 209, 255
@@ -218,22 +218,26 @@ class RightPanel(QWidget):
         self.content_widget = content  # нужен целиком для экспорта в PDF
         self.content_layout = QVBoxLayout(content)
 
-        # Постоянные виджеты
-        top_btns_layout = QHBoxLayout()
-        self.clear_btn = QPushButton("Скрыть протокол")
+        # Кнопки "Скрыть протокол"/"Экспорт в PDF" физически переехали в
+        # верхнюю панель приложения (gui.py, значки рядом с "уместить в
+        # высоту") - но сами объекты кнопок оставляем здесь и НИКУДА не
+        # добавляем в layout: так все show()/hide() ниже по файлу (их
+        # много, в разных методах) продолжают работать без переписывания -
+        # просто теперь они не на что визуально не влияют, а видимость
+        # реальных значков в верхней панели управляется через сигнал
+        # mode_changed (см. gui.py, on_right_panel_mode_changed)
+        self.clear_btn = QPushButton("Скрыть протокол", self)
         self.clear_btn.setObjectName("chromeButton")
         self.clear_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
         self.clear_btn.clicked.connect(self.clear_protocol)
-        top_btns_layout.addWidget(self.clear_btn)
+        self.clear_btn.hide()
 
-        self.export_pdf_btn = QPushButton("Экспорт в PDF")
+        self.export_pdf_btn = QPushButton("Экспорт в PDF", self)
         self.export_pdf_btn.setObjectName("chromeButton")
         self.export_pdf_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
         self.export_pdf_btn.clicked.connect(self.export_to_pdf)
-        top_btns_layout.addWidget(self.export_pdf_btn)
+        self.export_pdf_btn.hide()
         self._fit_mode = False
-
-        self.content_layout.addLayout(top_btns_layout)
 
         # Жирный заголовок "Характеристики образца насоса ГУР" - во всю
         # ширину, отдельно от остальных деталей протокола
@@ -433,8 +437,6 @@ class RightPanel(QWidget):
         self.header_label.hide()
         self.header_title_label.hide()
         self.test_conditions_box.hide()
-        self.clear_btn.hide()
-        self.export_pdf_btn.hide()
         self.legend_label.hide()
         self.seal_panel.hide()
         self.notes_widget.hide()
@@ -453,17 +455,9 @@ class RightPanel(QWidget):
         delta = event.angleDelta().y()
         self._zoom_stats(1.15 if delta > 0 else 1 / 1.15)
 
-    def display_statistics(self, stats_data):
-        """Отображает сводную статистику в правой панели."""
-        self._clear_dynamic_content()  # очищаем динамическую область
-        self._zoom_stats(1.0 / self._stats_zoom)  # сброс масштаба к исходному
-        self.logo_label.hide()
-        self.header_label.hide()  # скрываем заголовок протокола
-        self.test_conditions_box.hide()
-        self.clear_btn.hide()
-        self.export_pdf_btn.hide()
-
-        # Строим HTML-отчёт
+    def _build_stats_html(self, stats_data):
+        """Строит HTML-отчёт сводной статистики - общий для экранного
+        показа (тёмная тема) и печати/PDF (светлый классический фон)."""
         html = "<h2>Сводная статистика по базе данных</h2>"
         html += f"<p><b>Всего проверено насосов:</b> {stats_data['total']} шт — 100%</p>"
         html += f"<p><b>Из них годных:</b> {stats_data['good']} шт — {stats_data['good_percent']:.1f}%</p>"
@@ -471,7 +465,6 @@ class RightPanel(QWidget):
         html += f"<p><b>Не годных:</b> {stats_data['bad']} шт — {stats_data['bad_percent']:.1f}%</p>"
         html += f"<p><b>Из них не герметичны:</b> {stats_data['not_sealed']} шт — {stats_data['not_sealed_percent']:.1f}%</p>"
 
-        # Статистика по заказам
         if stats_data['orders']:
             html += "<h3>Статистика по заказам:</h3>"
             for order in stats_data['orders']:
@@ -491,12 +484,74 @@ class RightPanel(QWidget):
                 html += "</ul>"
         else:
             html += "<p>Нет данных по заказам.</p>"
+        return html
 
-        self.stats_label.setText(html)
+    def display_statistics(self, stats_data):
+        """Отображает сводную статистику в правой панели."""
+        self._clear_dynamic_content()  # очищаем динамическую область
+        self._zoom_stats(1.0 / self._stats_zoom)  # сброс масштаба к исходному
+        self.logo_label.hide()
+        self.header_label.hide()  # скрываем заголовок протокола
+        self.test_conditions_box.hide()
+
+        self.stats_label.setText(self._build_stats_html(stats_data))
         self.stats_widget.show()
         self.current_data = None  # сбрасываем текущий протокол, т.к. показываем статистику
         self.current_comparison_items = None
         self.mode_changed.emit('stats')
+
+    def _make_print_stats_label(self, html):
+        """Виджет для печати/PDF статистики - классический светлый фон
+        (не тёмная тема, используемая на экране)."""
+        label = QLabel(html)
+        label.setWordWrap(True)
+        label.setStyleSheet("background: white; color: #1c1e21; padding: 20px;")
+        label.setFixedWidth(750)
+        label.adjustSize()
+        return label
+
+    def print_statistics(self):
+        """Открывает предпросмотр печати сводной статистики по всем
+        заказам - всегда берёт свежие данные из базы (не привязано к
+        тому, что сейчас показано на экране)."""
+        stats_data = db.get_statistics()
+        html = self._build_stats_html(stats_data)
+        print_label = self._make_print_stats_label(html)
+
+        printer = QPrinter()
+        printer.setPageSize(QPrinter.A4)
+        printer.setOrientation(QPrinter.Portrait)
+        printer.setPageMargins(10, 10, 10, 10, QPrinter.Millimeter)
+
+        preview = QPrintPreviewDialog(printer, self)
+        preview.setWindowTitle("Предпросмотр печати - сводная статистика")
+        preview.paintRequested.connect(lambda p: self._render_widget_to_printer(print_label, p))
+        preview.resize(850, 950)
+        _clamp_to_screen(preview, width_fraction=0.92, height_fraction=0.92)
+
+        preview_widget = preview.findChild(QPrintPreviewWidget)
+        if preview_widget:
+            def _apply_zoom():
+                preview_widget.setZoomMode(QPrintPreviewWidget.CustomZoom)
+                preview_widget.setZoomFactor(0.65)
+            QTimer.singleShot(0, _apply_zoom)
+
+        preview.exec_()
+
+    def _render_widget_to_printer(self, widget, printer):
+        try:
+            w = max(widget.width(), 1)
+            h = max(widget.height(), 1)
+            page_rect = printer.pageRect()
+            scale_x = (page_rect.width() / w) * 0.98
+            scale_y = scale_x * 1.12
+            painter = QPainter()
+            painter.begin(printer)
+            painter.scale(scale_x, scale_y)
+            widget.render(painter)
+            painter.end()
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка печати", f"Не удалось напечатать:\n{e}")
 
     def display_protocol(self, data):
         self._show_loading()
@@ -648,8 +703,6 @@ class RightPanel(QWidget):
         self.header_label.show()
         self.header_title_label.show()
         self.test_conditions_box.show()
-        self.clear_btn.show()
-        self.export_pdf_btn.show()
         self.legend_label.show()
         if show_notes:
             self.notes_widget.show()
@@ -1191,8 +1244,6 @@ class RightPanel(QWidget):
         self.seal_panel.show()
         self.header_label.show()
         self.header_title_label.show()
-        self.clear_btn.show()
-        self.export_pdf_btn.show()
         self.legend_label.show()
         self.mode_changed.emit('comparison')
 
@@ -1494,8 +1545,6 @@ class RightPanel(QWidget):
         сейчас развёрнута правая панель. Чтобы печать всегда выглядела
         одинаково (как при полном развороте на всю ширину), на время
         рендера временно фиксируем эталонную ширину."""
-        self.clear_btn.hide()
-        self.export_pdf_btn.hide()
         for toolbar in self._graph_toolbars:
             toolbar.hide()
 
@@ -1537,8 +1586,6 @@ class RightPanel(QWidget):
             widget_to_print.setMaximumWidth(original_max_w)
             self.scroll_area.setWidgetResizable(True)
 
-            self.clear_btn.show()
-            self.export_pdf_btn.show()
             for toolbar in self._graph_toolbars:
                 toolbar.show()
 
@@ -1597,8 +1644,51 @@ class RightPanel(QWidget):
         self._overview_zoom = max(0.3, min(3.0, self._overview_zoom * factor))
         self._render_overview()
 
+    def _export_stats_to_pdf(self):
+        """Экспортирует сводную статистику в PDF - светлый классический
+        фон (не тёмная тема, используемая на экране)."""
+        stats_data = db.get_statistics()
+        html = self._build_stats_html(stats_data)
+        print_label = self._make_print_stats_label(html)
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Сохранить статистику в PDF", "Сводная_статистика.pdf", "PDF файлы (*.pdf)"
+        )
+        if not file_path:
+            return
+        if not file_path.lower().endswith('.pdf'):
+            file_path += '.pdf'
+
+        try:
+            printer = QPrinter(QPrinter.HighResolution)
+            printer.setOutputFormat(QPrinter.PdfFormat)
+            printer.setOutputFileName(file_path)
+            printer.setPageSize(QPrinter.A4)
+            printer.setOrientation(QPrinter.Portrait)
+            printer.setPageMargins(10, 10, 10, 10, QPrinter.Millimeter)
+
+            w = max(print_label.width(), 1)
+            h = max(print_label.height(), 1)
+            page_rect = printer.pageRect()
+            scale = min(page_rect.width() / w, page_rect.height() / h) * 0.98
+
+            painter = QPainter()
+            painter.begin(printer)
+            painter.scale(scale, scale)
+            print_label.render(painter)
+            painter.end()
+
+            QMessageBox.information(self, "Экспорт в PDF", f"Статистика сохранена:\n{file_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка экспорта", f"Не удалось сохранить PDF:\n{e}")
+
     def export_to_pdf(self):
-        """Экспортирует текущий протокол (или сравнение дублей) в PDF-файл."""
+        """Экспортирует текущий протокол (или сравнение дублей, или -
+        если сейчас открыт этот режим - сводную статистику) в PDF-файл."""
+        if self.stats_widget.isVisible():
+            self._export_stats_to_pdf()
+            return
+
         if self.current_data:
             pump_number = self.current_data.get('pump_number', 'protocol')
             safe_number = str(pump_number).replace('/', '_').replace('\\', '_')
@@ -1621,8 +1711,6 @@ class RightPanel(QWidget):
 
         # Скрываем кнопки и тулбары графиков на время рендера - в бумажном
         # документе элементы управления зумом неуместны
-        self.clear_btn.hide()
-        self.export_pdf_btn.hide()
         for toolbar in self._graph_toolbars:
             toolbar.hide()
 
@@ -1653,8 +1741,6 @@ class RightPanel(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Ошибка экспорта", f"Не удалось сохранить PDF:\n{e}")
         finally:
-            self.clear_btn.show()
-            self.export_pdf_btn.show()
             for toolbar in self._graph_toolbars:
                 toolbar.show()
 
@@ -1740,8 +1826,6 @@ class RightPanel(QWidget):
         self.header_label.hide()
         self.header_title_label.hide()
         self.test_conditions_box.hide()
-        self.clear_btn.hide()
-        self.export_pdf_btn.hide()
         self.legend_label.hide()
         self.seal_panel.hide()
         self.notes_widget.hide()
@@ -1759,8 +1843,6 @@ class RightPanel(QWidget):
         self.header_label.hide()
         self.header_title_label.hide()
         self.test_conditions_box.hide()
-        self.clear_btn.hide()
-        self.export_pdf_btn.hide()
         self.legend_label.hide()
         self.seal_panel.hide()
         self.notes_widget.hide()

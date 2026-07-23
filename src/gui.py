@@ -235,6 +235,16 @@ class MainWindow(QMainWindow):
         top_layout.addStretch()
 
         # Кнопки
+        self.btn_hide_protocol = _IconButton(os.path.join(ICONS_DIR, 'hide_protocol.svg'), tooltip="Скрыть протокол")
+        self.btn_hide_protocol.clicked.connect(self.on_hide_protocol_clicked)
+        self.btn_hide_protocol.hide()
+        top_layout.addWidget(self.btn_hide_protocol)
+
+        self.btn_export_pdf = _IconButton(os.path.join(ICONS_DIR, 'export_pdf.svg'), tooltip="Экспорт в PDF")
+        self.btn_export_pdf.clicked.connect(self.on_export_pdf_clicked)
+        self.btn_export_pdf.hide()
+        top_layout.addWidget(self.btn_export_pdf)
+
         self.btn_fit_view = _IconButton(os.path.join(ICONS_DIR, 'fit_view.svg'), tooltip="Уместить протокол по высоте")
         self.btn_fit_view.clicked.connect(self.on_fit_view_clicked)
         self.btn_fit_view.hide()
@@ -443,6 +453,8 @@ class MainWindow(QMainWindow):
             self.print_pump_list(compact=True)
         elif choice == "list_expanded":
             self.print_pump_list(compact=False)
+        elif choice == "stats":
+            self.right_panel.print_statistics()
 
     def print_pump_list(self, compact=True):
         """Открывает предпросмотр печати списка насосов - сокращённого или
@@ -936,11 +948,20 @@ class MainWindow(QMainWindow):
     def on_fit_view_clicked(self):
         self.right_panel.toggle_fit_view()
 
+    def on_hide_protocol_clicked(self):
+        self.right_panel.clear_protocol()
+
+    def on_export_pdf_clicked(self):
+        self.right_panel.export_to_pdf()
+
     def on_right_panel_mode_changed(self, mode):
         """Показывает нужные кнопки верхней панели в зависимости от того,
         что сейчас отображается в правой панели - протокол/сравнение
-        показывают кнопку "уместить по высоте", статистика - кнопки
-        масштаба, в остальных случаях (пусто) - ничего из этого."""
+        показывают кнопки "скрыть"/"экспорт в PDF"/"уместить по высоте",
+        статистика - кнопки масштаба, в остальных случаях (пусто) -
+        ничего из этого."""
+        self.btn_hide_protocol.setVisible(mode in ('protocol', 'comparison'))
+        self.btn_export_pdf.setVisible(mode in ('protocol', 'comparison', 'stats'))
         self.btn_fit_view.setVisible(mode in ('protocol', 'comparison'))
         self.btn_stats_minus.setVisible(mode == 'stats')
         self.btn_stats_plus.setVisible(mode == 'stats')
