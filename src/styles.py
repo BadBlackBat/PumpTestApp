@@ -104,6 +104,30 @@ LEFT_PANEL_COMBO_STYLE = """
         selection-color: #1c1e21;
         outline: none;
     }
+    QComboBox QAbstractItemView QScrollBar:vertical {
+        background: #2b2d31;
+        width: 10px;
+        margin: 2px;
+        border-radius: 5px;
+    }
+    QComboBox QAbstractItemView QScrollBar::handle:vertical {
+        background: #4fd1ff;
+        min-height: 24px;
+        border-radius: 5px;
+    }
+    QComboBox QAbstractItemView QScrollBar::handle:vertical:hover {
+        background: #7de0ff;
+    }
+    QComboBox QAbstractItemView QScrollBar::add-line:vertical,
+    QComboBox QAbstractItemView QScrollBar::sub-line:vertical {
+        height: 0px;
+        border: none;
+        background: none;
+    }
+    QComboBox QAbstractItemView QScrollBar::add-page:vertical,
+    QComboBox QAbstractItemView QScrollBar::sub-page:vertical {
+        background: transparent;
+    }
 """
 
 # Всплывающий календарь QDateEdit - по умолчанию у него получался чёрный
@@ -143,7 +167,46 @@ LEFT_PANEL_CALENDAR_STYLE = """
     QCalendarWidget QAbstractItemView:disabled {
         color: #6b6f75;
     }
+    QCalendarWidget QHeaderView {
+        background-color: #2b2d31;
+    }
+    QCalendarWidget QHeaderView::section {
+        background-color: #2b2d31;
+        color: #e8eaed;
+        border: none;
+        padding: 4px;
+    }
 """
+def apply_calendar_style(calendar_widget):
+    """Применяет тёмную тему к всплывающему календарю QDateEdit - через
+    QSS, палитру И явный формат текста дней недели.
+
+    У QCalendarWidget есть свой, отдельный от QSS и палитры механизм
+    именно для будних/выходных дней - setWeekdayTextFormat(). Именно он
+    красил субботу/воскресенье в красный цвет по умолчанию (поэтому они
+    были видны), а будние дни оставались белым текстом по умолчанию на
+    белом фоне - ни стиль, ни палитра его не переопределяют, нужно
+    менять специально через этот метод."""
+    from PyQt5.QtCore import Qt
+    from PyQt5.QtGui import QPalette, QColor, QTextCharFormat
+    calendar_widget.setStyleSheet(LEFT_PANEL_CALENDAR_STYLE)
+    palette = calendar_widget.palette()
+    palette.setColor(QPalette.WindowText, QColor("#f1f1f1"))
+    palette.setColor(QPalette.Window, QColor("#2b2d31"))
+    palette.setColor(QPalette.Text, QColor("#ffffff"))
+    palette.setColor(QPalette.Base, QColor("#2b2d31"))
+    palette.setColor(QPalette.ButtonText, QColor("#e8eaed"))
+    calendar_widget.setPalette(palette)
+
+    weekday_format = QTextCharFormat()
+    weekday_format.setForeground(QColor("#00ccf0"))
+    for day in (Qt.Monday, Qt.Tuesday, Qt.Wednesday, Qt.Thursday, Qt.Friday):
+        calendar_widget.setWeekdayTextFormat(day, weekday_format)
+
+    weekend_format = QTextCharFormat()
+    weekend_format.setForeground(QColor("#ff8080"))  # мягче чистого красного - читаемо на тёмном фоне
+    for day in (Qt.Saturday, Qt.Sunday):
+        calendar_widget.setWeekdayTextFormat(day, weekend_format)
 
 # --- Строка поиска: не как обычное поле ввода, а просто нижнее
 # подчёркивание контрастным цветом. При наведении - лёгкая подсветка,

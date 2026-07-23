@@ -14,7 +14,7 @@ from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintPreviewWid
 from .widgets.left_panel import LeftPanel
 from .widgets.right_panel import RightPanel
 from .widgets.status_bar import StatusBar, _GlowLine
-from .widgets.dialogs import PasswordDialog, AddModificationDialog, AddOrderDialog, SettingsDialog, AddPumpDialog, _clamp_to_screen, GlowMessageDialog, PrintChoiceDialog
+from .widgets.dialogs import PasswordDialog, AddModificationDialog, AddOrderDialog, SettingsDialog, AddPumpDialog, _clamp_to_screen, GlowMessageDialog, PrintChoiceDialog, _DialogBackgroundManager
 from . import database as db
 from . import excel_importer as importer
 from . import utils
@@ -213,8 +213,10 @@ class MainWindow(QMainWindow):
         top_layout.setContentsMargins(14, 6, 14, 6)
         top_layout.setSpacing(10)
 
-        # Добавляем растяжение слева, чтобы центрировать логотип
-        top_layout.addStretch()
+        # Логотип зафиксирован у левого края (отступ - contentsMargins
+        # выше) - раньше было растяжение слева, центрирующее логотип, но
+        # из-за этого он визуально "съезжал", когда справа появлялись/
+        # исчезали кнопки (менялась общая середина панели)
 
         # Картинка логотипа - перед текстовой надписью
         logo_image_label = QLabel()
@@ -304,6 +306,16 @@ class MainWindow(QMainWindow):
 
         outer_layout.addWidget(top_bar_widget)
         outer_layout.addWidget(content_widget)
+
+        # Регистрируем главное окно в менеджере фона (см. dialogs.py) -
+        # при открытии диалогов ВСЯ основная программа будет размываться
+        # и обесцвечиваться. Целью выбран self (всё окно целиком), а не
+        # central - статус-бар подключён отдельно через setStatusBar()
+        # и не входит в central, поэтому иначе не попадал бы в снимок.
+        # Эффект строится на снимке (grab()), а не на живом виджете, так
+        # гарантированно захватываются вообще все элементы, включая
+        # заголовки таблиц и графики matplotlib
+        _DialogBackgroundManager.register_main_window(self, self)
         
         # Сплиттер
         self.splitter = QSplitter(Qt.Horizontal)
@@ -755,7 +767,7 @@ class MainWindow(QMainWindow):
         self.update_status()
         GlowMessageDialog.show_success(
             self, "Успех",
-            f"Насос добавлен.\nВердикт: {verdict}."
+            f"Насос №{data['pump_number']} успешно добавлен.\nВердикт: {verdict}."
         )
     
     def on_delete_requested(self, pump_id):
@@ -952,12 +964,13 @@ class MainWindow(QMainWindow):
                 self.right_panel.display_protocol(updated)
             GlowMessageDialog.show_success(self, "Успех", "Протокол обновлён.")
         else:
-            QMessageBox.information(self, "Информация", "Изменений не обнаружено.")
+            GlowMessageDialog.show_success(self, "Информация", "Изменений не обнаружено.")
 
             GlowMessageDialog.show_success(self, "Успех", "Примечание обновлено.")
     
     def on_fit_view_clicked(self):
         self.right_panel.toggle_fit_view()
+        self.btn_fit_view.set_active(self.right_panel._fit_mode)
 
     def on_hide_protocol_clicked(self):
         self.right_panel.clear_protocol()
@@ -974,6 +987,10 @@ class MainWindow(QMainWindow):
         self.btn_hide_protocol.setVisible(mode in ('protocol', 'comparison'))
         self.btn_export_pdf.setVisible(mode in ('protocol', 'comparison', 'stats'))
         self.btn_fit_view.setVisible(mode in ('protocol', 'comparison'))
+        # Любая смена режима (новый протокол, сброс и т.п.) сбрасывает и
+        # режим снимка внутри right_panel - синхронизируем подсветку
+        # кнопки с этим состоянием, а не только по клику на неё саму
+        self.btn_fit_view.set_active(self.right_panel._fit_mode)
         self.btn_stats_minus.setVisible(mode == 'stats')
         self.btn_stats_plus.setVisible(mode == 'stats')
         self.btn_stats.set_active(mode == 'stats')

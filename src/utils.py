@@ -170,7 +170,13 @@ def normalize_order_number(value):
     несколько разных записей в базе."""
     if not value:
         return value
-    translated = ''.join(_CYR_TO_LAT_HOMOGLYPHS.get(ch, ch) for ch in value.strip())
+    stripped = value.strip()
+    # Особый случай - маркер "без номера" (см. AddPumpDialog) - без этой
+    # проверки буква "н" ушла бы в замену как обычный омоглиф и превратилась
+    # бы в латинскую "h", получилось бы смешанное "Б/H" вместо чистого "Б/Н"
+    if stripped.upper() in ("Б/Н", "БН"):
+        return "Б/Н"
+    translated = ''.join(_CYR_TO_LAT_HOMOGLYPHS.get(ch, ch) for ch in stripped)
     return translated.upper()
 
 

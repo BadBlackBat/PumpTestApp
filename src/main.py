@@ -7,6 +7,7 @@ from PyQt5.QtGui import QFontDatabase
 from .gui import MainWindow
 from . import database as db
 from . import styles
+from .widgets.dialogs import _DialogBackgroundManager
 
 RESOURCES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
 
@@ -98,6 +99,7 @@ def set_app_user_model_id():
 
 def main():
     db.init_db()
+    _DialogBackgroundManager.load_settings()
 
     set_app_user_model_id()
 

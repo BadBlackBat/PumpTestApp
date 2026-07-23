@@ -467,7 +467,7 @@ class LeftPanel(QWidget):
       self.date_from.dateChanged.connect(self.apply_filters)
       self.date_from.setStyleSheet(styles.LEFT_PANEL_COMBO_STYLE)
       self.date_from.setMinimumWidth(115)  # шире, симметрично с Вердикт/Тип проверки сверху
-      self.date_from.calendarWidget().setStyleSheet(styles.LEFT_PANEL_CALENDAR_STYLE)
+      styles.apply_calendar_style(self.date_from.calendarWidget())
 
       self.date_to = QDateEdit()
       self.date_to.setCalendarPopup(True)
@@ -475,7 +475,7 @@ class LeftPanel(QWidget):
       self.date_to.dateChanged.connect(self.apply_filters)
       self.date_to.setStyleSheet(styles.LEFT_PANEL_COMBO_STYLE)
       self.date_to.setMinimumWidth(115)
-      self.date_to.calendarWidget().setStyleSheet(styles.LEFT_PANEL_CALENDAR_STYLE)
+      styles.apply_calendar_style(self.date_to.calendarWidget())
 
       self.only_duplicates = QCheckBox("Дубли")
       self.only_duplicates.setStyleSheet(styles.LEFT_PANEL_CHECKBOX_STYLE)

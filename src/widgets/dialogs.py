@@ -1,13 +1,16 @@
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QMessageBox
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTextEdit, QDialogButtonBox, QMessageBox, 
     QListWidget, QListWidgetItem, QComboBox, QDateEdit,
     QTableWidget, QTableWidgetItem, QScrollArea, QWidget, QSizePolicy,
-    QApplication, QGraphicsOpacityEffect, QFrame, QHeaderView, QGridLayout
+    QApplication, QGraphicsOpacityEffect, QFrame, QHeaderView, QGridLayout,
+    QGraphicsBlurEffect, QGraphicsColorizeEffect, QGraphicsScene, QGraphicsPixmapItem,
+    QCheckBox
 )
-from PyQt5.QtCore import Qt, QDate, QPoint, QSize, QPropertyAnimation, QEasingCurve, QTimer
-from PyQt5.QtGui import QFont, QColor, QFontMetrics
+from PyQt5.QtCore import Qt, QDate, QPoint, QSize, QPropertyAnimation, QEasingCurve, QTimer, QRectF, pyqtProperty, QSettings
+from PyQt5.QtGui import QFont, QColor, QFontMetrics, QPainter, QPixmap
 import json
 import os
 
@@ -16,10 +19,10 @@ from .. import utils
 from .. import styles
 from .. import icon_utils
 from .left_panel import _GlowFrame, _GlowScrollBar
+from .status_bar import _GlowLine
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 from matplotlib.ticker import MultipleLocator
-from .status_bar import _GlowLine
 
 ICONS_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'resources', 'icons'
@@ -75,6 +78,181 @@ class _DialogCloseButton(QPushButton):
         self.setIcon(self._normal_icon)
         self.setIconSize(QSize(self._size, self._size))
         super().leaveEvent(event)
+
+
+class _BlurOverlay(QWidget):
+    """Полупрозрачный размытый "снимок" виджета - показывается поверх
+    него, пока открыт диалог, создавая эффект размытия/обесцвечивания
+    фона. Работает на статичном снимке (grab()), а не на живом виджете
+    через QGraphicsEffect - последнее не всегда одинаково затрагивает
+    вложенные элементы со сложной отрисовкой (заголовки таблиц,
+    графики matplotlib) - снимок гарантированно захватывает вообще всё.
+    Появляется и исчезает плавной анимацией прозрачности, а не мгновенно."""
+    def __init__(self, target_widget, blur_radius=8, desaturate=False):
+        parent_widget = target_widget.parentWidget()
+        if parent_widget is not None:
+            # Обычный случай - у цели есть родитель (например,
+            # content_widget внутри central, или glow_frame внутри
+            # диалога) - оверлей становится "соседом" в том же родителе,
+            # с той же геометрией
+            super().__init__(parent_widget)
+            self.setGeometry(target_widget.geometry())
+        else:
+            # У цели нет родителя - она сама окно верхнего уровня
+            # (например, всё главное окно целиком) - оверлей становится
+            # её СОБСТВЕННЫМ дочерним виджетом, во всю её площадь
+            super().__init__(target_widget)
+            self.setGeometry(0, 0, target_widget.width(), target_widget.height())
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._opacity_value = 0.0
+        self._pixmap = self._build_snapshot(target_widget, blur_radius, desaturate)
+        self.raise_()
+        self.show()
+        self._anim = QPropertyAnimation(self, b"overlayOpacity", self)
+
+    @staticmethod
+    def _apply_scene_effect(pixmap, effect):
+        scene = QGraphicsScene()
+        item = QGraphicsPixmapItem(pixmap)
+        item.setGraphicsEffect(effect)
+        scene.addItem(item)
+        result = QPixmap(pixmap.size())
+        result.fill(Qt.transparent)
+        painter = QPainter(result)
+        scene.render(painter, QRectF(result.rect()), QRectF(pixmap.rect()))
+        painter.end()
+        return result
+
+    def _build_snapshot(self, target_widget, blur_radius, desaturate):
+        pixmap = target_widget.grab()
+        blur_effect = QGraphicsBlurEffect()
+        blur_effect.setBlurRadius(blur_radius)
+        pixmap = self._apply_scene_effect(pixmap, blur_effect)
+        if desaturate:
+            colorize_effect = QGraphicsColorizeEffect()
+            colorize_effect.setColor(QColor(130, 130, 130))
+            colorize_effect.setStrength(0.5)
+            pixmap = self._apply_scene_effect(pixmap, colorize_effect)
+        return pixmap
+
+    def getOverlayOpacity(self):
+        return self._opacity_value
+
+    def setOverlayOpacity(self, value):
+        self._opacity_value = value
+        self.update()
+
+    overlayOpacity = pyqtProperty(float, getOverlayOpacity, setOverlayOpacity)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setOpacity(self._opacity_value)
+        painter.drawPixmap(0, 0, self._pixmap)
+
+    def fade_in(self, duration=220):
+        self._anim.stop()
+        self._anim.setDuration(duration)
+        self._anim.setStartValue(self._opacity_value)
+        self._anim.setEndValue(1.0)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.start()
+
+    def fade_out_and_remove(self, duration=220):
+        self._anim.stop()
+        self._anim.setDuration(duration)
+        self._anim.setStartValue(self._opacity_value)
+        self._anim.setEndValue(0.0)
+        self._anim.setEasingCurve(QEasingCurve.InCubic)
+        self._anim.finished.connect(self.deleteLater)
+        self._anim.start()
+
+
+class _DialogBackgroundManager:
+    """Централизованно размывает/обесцвечивает то, что оказывается "не в
+    фокусе", когда открывается один из наших диалогов (_GlowDialog) -
+    либо главное окно программы (если это первый открытый диалог), либо
+    предыдущий диалог (если этот диалог открылся поверх другого)."""
+    _stack = []
+    main_window = None
+    _main_target = None
+    _overlays = {}  # виджет -> текущий активный на нём _BlurOverlay
+    BLUR_RADIUS = 8  # чуть слабее прежнего (было 14)
+    enabled = True  # можно выключить в настройках - см. load_settings()
+
+    @classmethod
+    def load_settings(cls):
+        """Загружает сохранённое состояние (вкл/выкл) - вызывать один раз
+        при запуске программы, до создания главного окна."""
+        settings = QSettings("PumpTestApp", "MainSettings")
+        cls.enabled = settings.value("background_blur_enabled", True, type=bool)
+
+    @classmethod
+    def set_enabled(cls, value):
+        cls.enabled = value
+        settings = QSettings("PumpTestApp", "MainSettings")
+        settings.setValue("background_blur_enabled", value)
+        if not value:
+            # Выключили прямо сейчас - убираем уже показанные размытия,
+            # если они есть
+            for widget in list(cls._overlays.keys()):
+                cls._hide_overlay(widget)
+        else:
+            # Включили прямо сейчас - применяем немедленно к тому, что
+            # сейчас находится "не в фокусе" (за текущим верхним диалогом
+            # в стеке), а не только при следующем открытии диалога
+            if len(cls._stack) >= 2:
+                cls._show_overlay(cls._stack[-2].glow_frame, desaturate=False)
+            elif cls._stack and cls.main_window is not None:
+                cls._show_overlay(cls._main_target, desaturate=True)
+
+    @classmethod
+    def register_main_window(cls, window, target_widget):
+        cls.main_window = window
+        cls._main_target = target_widget
+
+    @classmethod
+    def on_dialog_opened(cls, dialog):
+        if dialog in cls._stack:
+            # Уже был в стеке (например, диалог настроек, который мы
+            # просто скрывали, а не закрывали, и сейчас показываем снова
+            # после закрытия следующего пункта меню) - ничего размывать
+            # не нужно, иначе он "размыл бы сам себя"
+            return
+        if cls.enabled:
+            if cls._stack:
+                cls._show_overlay(cls._stack[-1].glow_frame, desaturate=False)
+            elif cls.main_window is not None:
+                cls._show_overlay(cls._main_target, desaturate=True)
+        cls._stack.append(dialog)
+
+    @classmethod
+    def on_dialog_closed(cls, dialog):
+        if dialog in cls._stack:
+            cls._stack.remove(dialog)
+        if not cls.enabled:
+            return
+        if cls._stack:
+            cls._hide_overlay(cls._stack[-1].glow_frame)
+        elif cls.main_window is not None:
+            cls._hide_overlay(cls._main_target)
+
+    @classmethod
+    def _show_overlay(cls, widget, desaturate):
+        if widget is None:
+            return
+        old = cls._overlays.pop(widget, None)
+        if old is not None:
+            old.setParent(None)
+            old.deleteLater()
+        overlay = _BlurOverlay(widget, blur_radius=cls.BLUR_RADIUS, desaturate=desaturate)
+        cls._overlays[widget] = overlay
+        overlay.fade_in()
+
+    @classmethod
+    def _hide_overlay(cls, widget):
+        overlay = cls._overlays.pop(widget, None)
+        if overlay is not None:
+            overlay.fade_out_and_remove()
 
 
 class _GlowDialog(QDialog):
@@ -146,7 +324,7 @@ class _GlowDialog(QDialog):
         self.close_btn.setDefault(False)
         self.close_btn.clicked.connect(self.reject)
 
-    def _lock_size(self, clamp_to_screen=False):
+    def _lock_size(self, clamp_to_screen=False, width_fraction=0.95, height_fraction=0.92):
         """Фиксирует размер окна по текущему содержимому - вызывать в
         конце __init__ наследника, после того как весь контент добавлен.
         clamp_to_screen=True - для больших/динамических диалогов (много
@@ -154,7 +332,7 @@ class _GlowDialog(QDialog):
         помещается на маленьком экране."""
         self.adjustSize()
         if clamp_to_screen:
-            _clamp_to_screen(self)
+            _clamp_to_screen(self, width_fraction=width_fraction, height_fraction=height_fraction)
         size = self.size()
         # Небольшой запас по высоте (а не строго min == max) - жёсткая
         # фиксация "тютелька в тютельку" иногда конфликтует с тем, как
@@ -183,9 +361,14 @@ class _GlowDialog(QDialog):
     # время анимации продолжает работать как обычно ---
     def showEvent(self, event):
         super().showEvent(event)
+        _DialogBackgroundManager.on_dialog_opened(self)
+        # Подстраховка: центрируем ещё раз прямо перед показом (а не
+        # только один раз в конструкторе) - на случай, если геометрия
+        # экрана/содержимого успела чуть измениться к этому моменту
+        _clamp_to_screen(self)
         self.setWindowOpacity(0.0)
         self._fade_in_anim = QPropertyAnimation(self, b"windowOpacity", self)
-        self._fade_in_anim.setDuration(180)
+        self._fade_in_anim.setDuration(220)
         self._fade_in_anim.setStartValue(0.0)
         self._fade_in_anim.setEndValue(1.0)
         self._fade_in_anim.setEasingCurve(QEasingCurve.OutCubic)
@@ -195,12 +378,13 @@ class _GlowDialog(QDialog):
         if self._closing_started:
             return
         self._closing_started = True
+        _DialogBackgroundManager.on_dialog_closed(self)
 
         self._closing_callback = finish_callback
         self._already_closed = False
 
         self._fade_out_anim = QPropertyAnimation(self, b"windowOpacity", self)
-        self._fade_out_anim.setDuration(140)
+        self._fade_out_anim.setDuration(190)
         self._fade_out_anim.setStartValue(self.windowOpacity())
         self._fade_out_anim.setEndValue(0.0)
         self._fade_out_anim.setEasingCurve(QEasingCurve.InCubic)
@@ -213,7 +397,7 @@ class _GlowDialog(QDialog):
         # мог остаться "подвешенным" модальным окном навсегда - вся
         # программа выглядела бы зависшей, и Windows реагировала бы
         # системным "гонгом" на любой клик по заблокированному окну.
-        QTimer.singleShot(250, self._run_closing_callback_once)
+        QTimer.singleShot(320, self._run_closing_callback_once)
 
     def _run_closing_callback_once(self):
         if self._already_closed:
@@ -258,7 +442,8 @@ class GlowMessageDialog(_GlowDialog):
     слева, текст справа, одна кнопка OK. Используется вместо обычного
     QMessageBox.warning() там, где нужен единый стиль (например,
     сообщение о неверном пароле)."""
-    def __init__(self, parent=None, title="Ошибка", message="", icon_name="warning.svg", confirm_mode=False):
+    def __init__(self, parent=None, title="Ошибка", message="", icon_name="warning.svg", confirm_mode=False,
+                 yes_text="Да", no_text="Нет"):
         super().__init__(parent, title=title)
 
         content_row = QHBoxLayout()
@@ -279,12 +464,12 @@ class GlowMessageDialog(_GlowDialog):
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         if confirm_mode:
-            yes_btn = QPushButton("Да")
+            yes_btn = QPushButton(yes_text)
             yes_btn.setObjectName("chromeButton")
             yes_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
             yes_btn.setAutoDefault(False)
             yes_btn.clicked.connect(self.accept)
-            no_btn = QPushButton("Нет")
+            no_btn = QPushButton(no_text)
             no_btn.setObjectName("chromeButton")
             no_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
             no_btn.setAutoDefault(False)
@@ -312,10 +497,13 @@ class GlowMessageDialog(_GlowDialog):
         dlg.exec_()
 
     @staticmethod
-    def confirm(parent, title, message, icon_name="warning.svg"):
-        """Диалог подтверждения (Да/Нет) в фирменном стиле - возвращает
-        True, если пользователь нажал "Да"."""
-        dlg = GlowMessageDialog(parent, title=title, message=message, icon_name=icon_name, confirm_mode=True)
+    def confirm(parent, title, message, icon_name="warning.svg", yes_text="Да", no_text="Нет"):
+        """Диалог подтверждения (2 кнопки) в фирменном стиле - возвращает
+        True, если пользователь нажал первую кнопку (yes_text)."""
+        dlg = GlowMessageDialog(
+            parent, title=title, message=message, icon_name=icon_name,
+            confirm_mode=True, yes_text=yes_text, no_text=no_text
+        )
         return dlg.exec_() == QDialog.Accepted
 
     @staticmethod
@@ -324,6 +512,7 @@ class GlowMessageDialog(_GlowDialog):
         QMessageBox.information(...)."""
         dlg = GlowMessageDialog(parent, title=title, message=message, icon_name="success.svg")
         dlg.exec_()
+
 
 class PrintChoiceDialog(_GlowDialog):
     """Диалог выбора того, что печатать - иконка принтера сверху, варианты
@@ -371,6 +560,39 @@ class PrintChoiceDialog(_GlowDialog):
             self.reject()
         else:
             self.accept()
+
+
+class InstructionsDialog(_GlowDialog):
+    """Окно инструкции - фирменный стиль, но с жёлтой (не бирюзовой)
+    подсветкой, чтобы визуально выделяться среди остальных диалогов."""
+    _YELLOW = (230, 200, 40)
+
+    def __init__(self, parent=None):
+        super().__init__(parent, title="Инструкция", glow_color=self._YELLOW)
+        text_label = QLabel("Инструкция по применению будет размещена позже")
+        text_label.setWordWrap(True)
+        text_label.setStyleSheet("color: #e8eaed; background: transparent;")
+        self.body_layout.addWidget(text_label)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_ok = QPushButton("Закрыть")
+        btn_ok.setObjectName("chromeButton")
+        btn_ok.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE + """
+            QPushButton#chromeButton:hover {
+                border: 2px solid #e6c828;
+            }
+        """)
+        btn_ok.setAutoDefault(False)
+        btn_ok.setDefault(False)
+        btn_ok.clicked.connect(self.accept)
+        btn_row.addWidget(btn_ok)
+        btn_row.addStretch()
+        self.body_layout.addLayout(btn_row)
+
+        self.setMinimumWidth(360)
+        self._lock_size()
+
 
 class PasswordDialog(_GlowDialog):
     def __init__(self, parent=None, message="Для удаления записи введите пароль:", correct_password="admin"):
@@ -840,9 +1062,9 @@ class AddModificationDialog(_GlowDialog):
                 # значения по умолчанию)
                 if len(parts) >= 2:
                     for extra_text in parts[1:3]:
-                        self._add_seal_field(extra_text)
+                        self._add_seal_field(extra_text, relock=False)
                 else:
-                    self._add_seal_field("присутствуют в допускаемой степени")
+                    self._add_seal_field("присутствуют в допускаемой степени", relock=False)
             else:
                 edit = make_seal_edit(seal_rules.get(key, "отсутствуют") or "отсутствуют")
                 row_layout.addWidget(edit)
@@ -890,12 +1112,24 @@ class AddModificationDialog(_GlowDialog):
         btn_layout.addWidget(cancel_btn)
         self.body_layout.addLayout(btn_layout)
 
-        self._lock_size(clamp_to_screen=True)
+        # У этого диалога обычно самое высокое содержимое из всех (3
+        # таблицы испытаний + герметичность + пароль) - стандартные 92%
+        # высоты экрана оставляют слишком мало отступов сверху/снизу,
+        # из-за чего окно визуально выглядело смещённым вниз. Даём
+        # заметно больше запаса специально для этого диалога.
+        self._lock_size(clamp_to_screen=True, height_fraction=0.8)
 
-    def _add_seal_field(self, initial_text=""):
+    def _add_seal_field(self, initial_text="", relock=True):
         """Добавляет ещё одно поле ввода для последнего пункта проверки на
         герметичность (не более 3 в сумме). У каждого добавленного поля
-        сразу есть своя кнопка "-" для его удаления."""
+        сразу есть своя кнопка "-" для его удаления.
+
+        relock=False - используется при первоначальном построении диалога
+        (когда остальной контент - примечание/пароль/кнопки - ещё не
+        добавлен): фиксировать размер здесь рано, иначе следующий вызов
+        _lock_size() в конце __init__ окажется "заперт" уже выставленным
+        maximumSize и не сможет корректно посчитать размер под ПОЛНЫЙ
+        контент - именно это и вызывало смещение окна вниз."""
         fields = self.seal_inputs[self._seal_last_key]
         if len(fields) >= 3:
             return
@@ -925,7 +1159,8 @@ class AddModificationDialog(_GlowDialog):
         self._seal_extra_layout.addWidget(row_widget)
         fields.append(edit)
         self._update_seal_add_button()
-        self._lock_size(clamp_to_screen=True)
+        if relock:
+            self._lock_size(clamp_to_screen=True)
 
     def _remove_seal_field(self, row_widget, edit):
         """Удаляет одно из добавленных полей (2е или 3е) - базовое (1е)
@@ -1002,6 +1237,7 @@ class AddModificationDialog(_GlowDialog):
             'pressure_max': float(self.pressure_max_input.text().strip()),
             'seal_rules': seal_rules,
         }
+
 
 class ViewModificationsDialog(_GlowDialog):
     """Просмотр уже добавленных модификаций с их нормативами - фирменный
@@ -1446,6 +1682,7 @@ class ViewModificationsDialog(_GlowDialog):
         self.show_details(None)
         self._update_buttons()
 
+
 class SettingsDialog(_GlowDialog):
     """Меню настроек: управление модификациями насосов."""
     def __init__(self, parent=None):
@@ -1482,7 +1719,40 @@ class SettingsDialog(_GlowDialog):
         # модификациями от служебных действий (инструкция/закрытие)
         self.body_layout.addSpacing(22)
 
-        # Блок 2: служебные действия
+        # Блок 2: настройки интерфейса - пока только размытие фона за
+        # диалогами; при добавлении переключателя темы в будущем стоит
+        # сделать по тому же принципу (QCheckBox + QSettings)
+        interface_label = QLabel("Интерфейс:")
+        interface_label.setStyleSheet("color: #e8eaed; background: transparent; font-size: 10.5pt;")
+        self.body_layout.addWidget(interface_label)
+
+        self.blur_checkbox = QCheckBox("Размытие фона за диалогами")
+        self.blur_checkbox.setChecked(_DialogBackgroundManager.enabled)
+        self.blur_checkbox.setStyleSheet("""
+            QCheckBox {
+                color: #e8eaed;
+                background: transparent;
+                font-size: 10pt;
+                spacing: 8px;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+                border: 1px solid #6b6f75;
+                border-radius: 4px;
+                background: #f0f0f0;
+            }
+            QCheckBox::indicator:checked {
+                background: #4fd1ff;
+                border: 1px solid #4fd1ff;
+            }
+        """)
+        self.blur_checkbox.toggled.connect(_DialogBackgroundManager.set_enabled)
+        self.body_layout.addWidget(self.blur_checkbox)
+
+        self.body_layout.addSpacing(22)
+
+        # Блок 3: служебные действия
         self.body_layout.addWidget(make_btn("Инструкция", self.open_instructions))
         self.body_layout.addWidget(make_btn("Закрыть", self.accept))
 
@@ -1514,46 +1784,42 @@ class SettingsDialog(_GlowDialog):
         watermark.show()
 
     def open_instructions(self):
-        self.accept()
-        dialog = QDialog(self.parent())
-        dialog.setWindowTitle("Инструкция")
-        dialog.resize(400, 250)
-        dlg_layout = QVBoxLayout(dialog)
-        dlg_layout.addWidget(QLabel("Инструкция по применению будет размещена позже"))
-        btn_ok = QPushButton("Закрыть")
-        btn_ok.clicked.connect(dialog.accept)
-        dlg_layout.addWidget(btn_ok)
+        self.hide()
+        dialog = InstructionsDialog(self.parent())
         dialog.exec_()
+        self.show()
 
     def open_add_modification(self):
-        self.accept()
+        self.hide()
         dialog = AddModificationDialog(self.parent())
-        if dialog.exec_() != QDialog.Accepted:
-            return
-        data = dialog.get_data()
-        # Пароль уже проверен внутри диалога (try_accept) - если дошли
-        # сюда, значит он верный
-        db.add_modification(
-            name=data['name'],
-            norm_graph1_min=json.dumps(data['graph1_min']),
-            norm_graph1_max=json.dumps(data['graph1_max']),
-            norm_graph1_x=json.dumps(data['graph1_x']),
-            norm_graph2_min=json.dumps(data['graph2_min']),
-            norm_graph2_max=json.dumps(data['graph2_max']),
-            norm_graph2_x=json.dumps(data['graph2_x']),
-            norm_graph3_min=json.dumps(data['graph3_min']),
-            norm_graph3_max=json.dumps(data['graph3_max']),
-            norm_graph3_x=json.dumps(data['graph3_x']),
-            pressure_min=data['pressure_min'],
-            pressure_max=data['pressure_max'],
-            seal_rules=json.dumps(data['seal_rules']),
-        )
-        GlowMessageDialog.show_success(self.parent(), "Успех", f"Модификация «{data['name']}» сохранена.")
+        if dialog.exec_() == QDialog.Accepted:
+            data = dialog.get_data()
+            # Пароль уже проверен внутри диалога (try_accept) - если дошли
+            # сюда, значит он верный
+            db.add_modification(
+                name=data['name'],
+                norm_graph1_min=json.dumps(data['graph1_min']),
+                norm_graph1_max=json.dumps(data['graph1_max']),
+                norm_graph1_x=json.dumps(data['graph1_x']),
+                norm_graph2_min=json.dumps(data['graph2_min']),
+                norm_graph2_max=json.dumps(data['graph2_max']),
+                norm_graph2_x=json.dumps(data['graph2_x']),
+                norm_graph3_min=json.dumps(data['graph3_min']),
+                norm_graph3_max=json.dumps(data['graph3_max']),
+                norm_graph3_x=json.dumps(data['graph3_x']),
+                pressure_min=data['pressure_min'],
+                pressure_max=data['pressure_max'],
+                seal_rules=json.dumps(data['seal_rules']),
+            )
+            GlowMessageDialog.show_success(self.parent(), "Успех", f"Модификация «{data['name']}» сохранена.")
+        self.show()
 
     def open_view_modifications(self):
-        self.accept()
+        self.hide()
         dialog = ViewModificationsDialog(self.parent())
         dialog.exec_()
+        self.show()
+
 
 class AddOrderDialog(QDialog):
     # Отдельный диалог не требуется: номер заказа при ручном добавлении
@@ -1630,7 +1896,7 @@ class AddPumpDialog(_GlowDialog):
         self.date_input = QDateEdit()
         self.date_input.setCalendarPopup(True)
         self.date_input.setDate(QDate.currentDate())
-        self.date_input.calendarWidget().setStyleSheet(styles.LEFT_PANEL_CALENDAR_STYLE)
+        styles.apply_calendar_style(self.date_input.calendarWidget())
         self.type_combo = QComboBox()
         self.type_combo.addItems(["первичная", "повторная"])
 
@@ -2088,6 +2354,18 @@ class AddPumpDialog(_GlowDialog):
             GlowMessageDialog.show_error(self, "Ошибка", "Некорректное значение давления.")
             return
 
+        if not self.order_input.text().strip():
+            fix_it = GlowMessageDialog.confirm(
+                self, "Внимание", "Вы не указали номер заказа.",
+                yes_text="Исправить", no_text="Оставить без номера"
+            )
+            if fix_it:
+                return
+            # Оставляем без номера - автоматически присваиваем "Б/Н",
+            # чтобы такие насосы группировались в собственную "Б/Н"
+            # статистику наравне с остальными заказами
+            self.order_input.setText("Б/Н")
+
         self.accept()
 
     def get_data(self):
@@ -2207,7 +2485,7 @@ class EditPumpDialog(_GlowDialog):
 
         self.date_input = QDateEdit()
         self.date_input.setCalendarPopup(True)
-        self.date_input.calendarWidget().setStyleSheet(styles.LEFT_PANEL_CALENDAR_STYLE)
+        styles.apply_calendar_style(self.date_input.calendarWidget())
         existing_date = pump_data.get('test_date') or ''
         if existing_date and ' ' in existing_date:
             existing_date = existing_date.split(' ')[0]
