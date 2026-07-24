@@ -88,6 +88,7 @@ class RightPanel(QWidget):
         self.current_data = None
         self.current_comparison_items = None
         self._graph_toolbars = []
+        self.history_btn = None  # создаётся заново при каждом протоколе с историей редактирования (см. create_notes_section)
         # Ссылки на оси/canvas графиков 1 и 2 - нужны, чтобы при клике на
         # ячейку в таблице теста 1/2/3 отметить точкой соответствующее
         # значение на графике (см. _highlight_graph_point). Заполняются в
@@ -111,6 +112,10 @@ class RightPanel(QWidget):
         content = QWidget()
         self.content_widget = content  # нужен целиком для экспорта в PDF
         self.content_layout = QVBoxLayout(content)
+        # Отступ справа увеличен - наша полоса прокрутки в раскрытом виде
+        # занимает до ~13px у правого края (см. _GlowScrollBar), без
+        # запаса она перекрывала бы часть содержимого
+        self.content_layout.setContentsMargins(9, 9, 20, 9)
 
         # Кнопки "Скрыть протокол"/"Экспорт в PDF" физически переехали в
         # верхнюю панель приложения (gui.py, значки рядом с "уместить в
@@ -146,20 +151,21 @@ class RightPanel(QWidget):
         self.header_label.setFont(QFont("Arial", 12))
 
         # Поле условий испытаний - под заголовком "Характеристики...",
-        # занимает правую часть под кнопкой "Экспорт в PDF" (та же ширина).
-        # Пока рамка со скруглением и текст-заглушка - содержимое добавим позже.
+        # занимает правую часть. Без рамки, фон в тон остальным таблицам
+        # протокола. Размер - строго по содержимому (без минимума), с
+        # разумным максимумом по ширине - при сжатии окна текст просто
+        # переносится дальше, а не обрезается и не тянет блок силой.
         self.test_conditions_box = QFrame()
         self.test_conditions_box.setStyleSheet(
-            "QFrame { border: 1px solid #9a9ea4; border-radius: 8px; }"
+            "QFrame { background-color: #f2f5f7; border: none; border-radius: 4px }"
         )
-        self.test_conditions_box.setFixedWidth(self.export_pdf_btn.sizeHint().width())
+        self.test_conditions_box.setMinimumWidth(300)
         conditions_layout = QVBoxLayout(self.test_conditions_box)
-        conditions_layout.setContentsMargins(8, 6, 8, 6)
+        conditions_layout.setContentsMargins(8, 6, 8, 2)
         self.test_conditions_label = QLabel("Условия проведения испытаний...")
         self.test_conditions_label.setWordWrap(True)
-        self.test_conditions_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.test_conditions_label.setAlignment(Qt.AlignTop | Qt.AlignCenter)
         conditions_layout.addWidget(self.test_conditions_label)
-        conditions_layout.addStretch()
 
         header_row = QHBoxLayout()
         header_row.addWidget(self.header_label, 1)
@@ -265,10 +271,12 @@ class RightPanel(QWidget):
         # содержимое (см. _clear_dynamic_content).
         self.dynamic_widget = QWidget()
         self.dynamic_layout = QHBoxLayout(self.dynamic_widget)
+        self.dynamic_layout.setContentsMargins(0, 0, 0, 0)
         self.dynamic_layout.setSpacing(10)
 
         self.tables_panel = QFrame()
         self.tables_panel.setStyleSheet(styles.RIGHT_PANEL_CARD_STYLE)
+        self.tables_panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
         self.tables_column = QVBoxLayout(self.tables_panel)
         self.tables_column.setContentsMargins(8, 8, 8, 8)
         self.tables_column.setSpacing(8)
@@ -311,7 +319,14 @@ class RightPanel(QWidget):
         # область прокрутки - видимость переключается между ними. Фон -
         # тот же тёмно-синий градиент, что и при загрузке/показе
         # статистики (п.1) - виден по краям, если снимок уже панели.
-        self.overview_bg = _CtrlWheelZoomWidget(self._on_overview_wheel)
+        #
+        # Масштабирование снимка колесом мыши убрано намеренно - при
+        # увеличении масштаба это приводило к растягиванию ОКНА ПРОГРАММЫ
+        # целиком за пределы монитора (без возможности сжать обратно),
+        # поэтому снимок теперь всегда показывается ровно "по высоте
+        # панели", без возможности зума.
+        self.overview_bg = QWidget()
+        self.overview_bg.setAttribute(Qt.WA_StyledBackground, True)
         self.overview_bg.setObjectName("statsBackground")
         self.overview_bg.setStyleSheet(styles.RIGHT_PANEL_STATS_BG_STYLE)
         overview_bg_layout = QVBoxLayout(self.overview_bg)
@@ -323,7 +338,6 @@ class RightPanel(QWidget):
         self.overview_bg.hide()
         scroll_frame_layout.addWidget(self.overview_bg)
         self._overview_base_pixmap = None
-        self._overview_zoom = 1.0
 
         layout.addWidget(scroll_frame)
 
@@ -498,6 +512,15 @@ class RightPanel(QWidget):
 
         self.header_title_label.setText("Характеристики образца насоса ГУР")
 
+        self.test_conditions_label.setText(
+            "<div align='right'>"
+            "<b>Общие условия проведения испытаний:</b><br>"
+            "Применяемая рабочая жидкость:<br>"
+            "масло CHF 11S / CHF202 (PENTOSIN / TITAN или прочее)<br>"
+            "Температура рабочей жидкости: 50±5 ˚С"
+            "</div>"
+        )
+
         header_html = (
             "<div align='left'>"
             f"Протокол проверки насоса ГУР от: <b>{mark(date_str, 'test_date')}</b><br>"
@@ -544,7 +567,7 @@ class RightPanel(QWidget):
             for col, w in enumerate(col_widths):
                 t.setColumnWidth(col, w)
             t.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
-            t.setFixedWidth(4 + sum(col_widths))
+            t.setFixedWidth(2 + sum(col_widths))
 
         # Таблица давления (тест 4): "Допустимый диапазон" по ширине равен
         # сумме столбцов "Мин.треб" + "Макс.треб" остальных таблиц.
@@ -563,11 +586,11 @@ class RightPanel(QWidget):
         p_table.setColumnWidth(1, value_width)
         p_table.setColumnWidth(2, range_width)
         p_table.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
-        p_table.setFixedWidth(4 + param_width + value_width + range_width)
+        p_table.setFixedWidth(2 + param_width + value_width + range_width)
 
         # Все четыре таблицы теперь одной и той же общей ширины - растягиваем
-        # заголовки на неё же (нужно для точного расчёта их высоты ниже,
-        # с учётом возможного переноса текста на 2 строки)
+        # заголовки (с условием внутри) на неё же (нужно для точного расчёта
+        # их высоты ниже, с учётом возможного переноса текста на несколько строк)
         main_titles = [t1_title, t2_title, t3_title, p_title]
         uniform_width = t1_table.width()
         for lbl in main_titles:
@@ -576,10 +599,11 @@ class RightPanel(QWidget):
         self.create_seal_table(data)
         self._set_loading_progress(55)
 
-        # Высоты групп "заголовок + таблица" - чтобы графики визуально
-        # вписывались по размеру в соответствующие таблицы слева. Считаем
-        # точно: реальная высота заголовка (с учётом возможного переноса на
-        # 2 строки) + все отступы между элементами внутри tables_column.
+        # Высоты групп "заголовок+условие + таблица" - чтобы графики
+        # визуально вписывались по размеру в соответствующие таблицы слева.
+        # Считаем точно: реальная высота заголовка (с учётом возможного
+        # переноса на несколько строк) + все отступы между элементами
+        # внутри tables_column.
         spacing = self.tables_column.spacing()
         t1_h = t1_title.heightForWidth(uniform_width)
         t2_h = t2_title.heightForWidth(uniform_width)
@@ -623,7 +647,7 @@ class RightPanel(QWidget):
     def _compact_table(self, table, fix_width=True):
         """Уменьшает шрифт таблицы и подгоняет высоту (и, если fix_width=True,
         ширину) точно под содержимое, чтобы таблица показывалась полностью,
-        без собственной прокрутки и без пустого пространства справа -
+        без собственной прокрутки и без пустого пространства справа/снизу -
         прокручиваться может только вся правая панель целиком."""
         small_font = QFont("Arial", 8)
         table.setFont(small_font)
@@ -632,21 +656,26 @@ class RightPanel(QWidget):
         table.resizeRowsToContents()
         table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        table.horizontalHeader().setMinimumSectionSize(40)
+        min_section = 34
+        for col in range(table.columnCount()):
+            table.setColumnWidth(col, max(min_section, table.columnWidth(col) + 2))
 
-        total_height = table.horizontalHeader().height() + 4
+        total_height = table.horizontalHeader().height() + 2
         for row in range(table.rowCount()):
             total_height += table.rowHeight(row)
         table.setFixedHeight(total_height)
 
         if fix_width:
-            total_width = 4  # небольшой запас на рамки/скролл-полосы
+            total_width = 2  # небольшой запас на рамки/скролл-полосы
             for col in range(table.columnCount()):
                 total_width += table.columnWidth(col)
             table.setFixedWidth(total_width)
             table.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         else:
             table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
 
     def create_test_table(self, title, indices, results, mod_name, changed_fields=None):
         changed_fields = changed_fields or []
@@ -659,21 +688,34 @@ class RightPanel(QWidget):
             norm_max = mod['norm_graph1_max'] if mod else []
             x_label = "Обороты, об/мин"
             x_vals = mod['norm_graph1_x'] if mod else list(utils.DEFAULT_GRAPH1_X)
+            condition_html = (
+                "<i>Условие: Давление на выходе насоса: "
+                "10<sup>+3</sup><sub>&minus;0,3</sub> бар</i>"
+            )
         elif indices[0] == 13:
             norm_min = mod['norm_graph2_min'] if mod else []
             norm_max = mod['norm_graph2_max'] if mod else []
             x_label = "Обороты, об/мин"
             x_vals = mod['norm_graph2_x'] if mod else list(utils.DEFAULT_GRAPH2_X)
+            condition_html = (
+                "<i>Условие: Давление на выходе насоса: "
+                "10<sup>+3</sup><sub>&minus;0,3</sub> бар</i>"
+            )
         elif indices[0] == 21:
             norm_min = mod['norm_graph3_min'] if mod else []
             norm_max = mod['norm_graph3_max'] if mod else []
             x_label = "Сила тока, А"
             x_vals = mod['norm_graph3_x'] if mod else list(utils.DEFAULT_GRAPH3_X)
+            condition_html = (
+                "<i>Условие: Обороты привода насоса: 1500±50 мин<sup>-1</sup><br>"
+                "Давление на выходе насоса: 10±0,5 бар</i>"
+            )
         else:
             norm_min = []
             norm_max = []
             x_label = ""
             x_vals = []
+            condition_html = ""
 
         # Вспомогательная функция для форматирования чисел
         def format_number(value):
@@ -744,12 +786,21 @@ class RightPanel(QWidget):
             lambda row, col, xs=list(x_vals), wg=which_graph: self._on_test_cell_clicked(row, col, xs, wg)
         )
 
-        title_label = QLabel(title)
-        title_label.setFont(QFont("Arial", 9, QFont.Bold))
-        title_label.setWordWrap(True)
-        self.tables_column.addWidget(title_label)
+        title_html = f"<b>{title}</b>"
+        if condition_html:
+            title_html += "<br>" + condition_html
+        combined_label = QLabel(title_html)
+        combined_label.setWordWrap(True)
+        combined_label.setFont(QFont("Arial", 9))
+        # Ограничиваем ширину СРАЗУ, известной шириной уже построенной
+        # таблицы (а не ждём отдельного прохода позже) - без этого метка
+        # с длинным текстом условия на мгновение получала "естественную"
+        # ширину в одну строку (без переноса), что раздувало ширину всей
+        # панели с таблицами
+        combined_label.setMaximumWidth(table.width())
+        self.tables_column.addWidget(combined_label)
         self.tables_column.addWidget(table)
-        return title_label, table
+        return combined_label, table
 
     def create_pressure_table(self, data):
         mod = None
@@ -785,21 +836,28 @@ class RightPanel(QWidget):
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._compact_table(table)
 
-        title_label = QLabel("Тест 4: Давление настройки предохранительного клапана")
-        title_label.setFont(QFont("Arial", 9, QFont.Bold))
-        title_label.setWordWrap(True)
-        self.tables_column.addWidget(title_label)
+        title_html = (
+            "<b>Тест 4: Давление настройки предохранительного клапана</b><br>"
+            "<i>Условие: Обороты привода насоса: 1000...1300 мин<sup>-1</sup><br>"
+            "Клапан ЕСО открыт (I = 1 А)<br>"
+            "Объемная подача (при срабатывании клапана) &lt; 0.1 л/мин</i>"
+        )
+        combined_label = QLabel(title_html)
+        combined_label.setWordWrap(True)
+        combined_label.setFont(QFont("Arial", 9))
+        combined_label.setMaximumWidth(table.width())
+        self.tables_column.addWidget(combined_label)
         self.tables_column.addWidget(table)
-        return title_label, table
+        return combined_label, table
 
     def create_seal_table(self, data):
         seal = data['seal_results_json']
         labels = {
-            'g33': 'Соединение с седлом клапана ECO',
-            'g34': 'Внешняя поверхность катушки ECO',
-            'g35': 'Внешняя поверхность с торца катушки ECO',
-            'g36': 'Соединение крышки корпуса',
-            'g37': 'Масляные образования на уплотнении'
+            'g33': 'Соединение с седлом клапана ЕСО',
+            'g34': 'Внешняя поверхность электромагнитной\nкатушки управляющего клапана ECO',
+            'g35': 'Внешняя поверхность с торца электромагнитной\nкатушки управляющего клапана ECO по завальцовке',
+            'g36': 'Соединение крышки корпуса насоса',
+            'g37': 'Масляные образования на грязезащитном\nуплотнении подшипника приводного вала насоса'
         }
         table = QTableWidget()
         table.setColumnCount(2)
@@ -811,6 +869,8 @@ class RightPanel(QWidget):
             table.setItem(i, 0, place_item)
             val = seal.get(key)
             display_text = str(val) if val is not None else ''
+            if display_text.strip().lower() == 'присутствуют в допускаемой степени':
+                display_text += ' "(ГОСТ 8882-2021, п.6.2.5)"'
             val_item = QTableWidgetItem(display_text)
             val_item.setTextAlignment(Qt.AlignCenter)
             if key in (data.get('changed_fields') or []):
@@ -826,17 +886,26 @@ class RightPanel(QWidget):
                     elif text != 'отсутствуют':
                         val_item.setBackground(QColor(255, 200, 200))
             table.setItem(i, 1, val_item)
-        
+
         table.verticalHeader().setVisible(False)
         table.resizeColumnsToContents()
+        # Первую колонку расширяем явно - иначе длинные формулировки (даже
+        # разбитые на 2 строки через \n) обрезались, автоширины по
+        # содержимому не всегда хватало
+        table.setColumnWidth(0, table.columnWidth(0) + 40)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.horizontalHeader().setStretchLastSection(True)
         self._compact_table(table, fix_width=False)
 
-        title_label = QLabel("Герметичность")
-        title_label.setFont(QFont("Arial", 9, QFont.Bold))
+        title_label = QLabel(
+            "<b>Проверка герметичности<br>"
+            "Признаки подтекания рабочей жидкости из насоса, отмечаемые на "
+            "его внешней поверхности в процессе функциональной проверки</b>"
+        )
         title_label.setWordWrap(True)
+        title_label.setFont(QFont("Arial", 9))
         self.seal_layout.addWidget(title_label)
+
         self.seal_layout.addWidget(table)
 
     def _plot_series(self, ax, x_vals, y_vals, norm_min, norm_max, color, linestyle, label):
@@ -1115,7 +1184,7 @@ class RightPanel(QWidget):
             for col, w in enumerate(col_widths):
                 t.setColumnWidth(col, w)
             t.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
-            t.setFixedWidth(4 + sum(col_widths))
+            t.setFixedWidth(2 + sum(col_widths))
 
         # Таблица давления (тест 4): "Допустимый диапазон" по ширине
         # соответствует "Мин.треб" + "Макс.треб" остальных таблиц, "Дата"/
@@ -1132,7 +1201,7 @@ class RightPanel(QWidget):
         p_table.setColumnWidth(1, value_width)
         p_table.setColumnWidth(2, range_width)
         p_table.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
-        p_table.setFixedWidth(4 + date_width + value_width + range_width)
+        p_table.setFixedWidth(2 + date_width + value_width + range_width)
 
         uniform_width = t1_table.width()
         for lbl in (t1_title, t2_title, t3_title, p_title):
@@ -1459,6 +1528,8 @@ class RightPanel(QWidget):
         рендера временно фиксируем эталонную ширину."""
         for toolbar in self._graph_toolbars:
             toolbar.hide()
+        if self.history_btn is not None:
+            self.history_btn.hide()
 
         widget_to_print = self.content_widget
         REFERENCE_WIDTH = 1400  # эталонная ширина "как при полном развороте"
@@ -1484,7 +1555,17 @@ class RightPanel(QWidget):
             high_res.fill(Qt.white)
             hr_painter = QPainter(high_res)
             hr_painter.scale(density, density)
-            widget_to_print.render(hr_painter)
+            # Отключаем системную заливку фона ТОЛЬКО на время этого
+            # разового снимка (не постоянно!) - иначе Qt рисует свой
+            # стандартный серый фон из палитры поверх нашей белой заливки.
+            # Включение этого атрибута постоянно (на время всей работы
+            # экрана) один раз уже приводило к серьёзной поломке обычной
+            # перерисовки - здесь это безопасно, т.к. рендер разовый.
+            widget_to_print.setAttribute(Qt.WA_NoSystemBackground, True)
+            try:
+                widget_to_print.render(hr_painter)
+            finally:
+                widget_to_print.setAttribute(Qt.WA_NoSystemBackground, False)
             hr_painter.end()
 
             # Масштабируем по ширине - протокол должен заполнять всю ширину
@@ -1514,6 +1595,8 @@ class RightPanel(QWidget):
 
             for toolbar in self._graph_toolbars:
                 toolbar.show()
+            if self.history_btn is not None:
+                self.history_btn.show()
 
     def toggle_fit_view(self):
         """Переключает между обычным (прокручиваемым) видом протокола и
@@ -1524,14 +1607,16 @@ class RightPanel(QWidget):
         аккуратно масштабировать таблицы/графики matplotlib целиком), а
         обычный снимок (QPixmap) текущего отображения - для быстрого
         визуального обзора этого достаточно, но кликать по ячейкам/
-        графикам в этом режиме нельзя (только смотреть). Снимок можно
-        дополнительно масштабировать колёсиком мыши с зажатым Ctrl."""
+        графикам в этом режиме нельзя (только смотреть). Масштабирование
+        снимка колесом мыши намеренно не реализовано - раньше это
+        приводило к растягиванию окна программы за пределы монитора."""
         if self.current_data is None and self.current_comparison_items is None:
             return
 
         if not self._fit_mode:
+            if self.history_btn is not None:
+                self.history_btn.hide()
             self._overview_base_pixmap = self.content_widget.grab()
-            self._overview_zoom = 1.0
             self._render_overview()
             self.scroll_area.hide()
             self.overview_bg.show()
@@ -1539,11 +1624,13 @@ class RightPanel(QWidget):
         else:
             self.overview_bg.hide()
             self.scroll_area.show()
+            if self.history_btn is not None:
+                self.history_btn.show()
             self._fit_mode = False
 
     def _render_overview(self):
-        """Перестраивает картинку обзорного снимка под текущий зум
-        (self._overview_zoom, 1.0 = точно по высоте панели)."""
+        """Строит картинку обзорного снимка ровно "по высоте панели" -
+        без возможности масштабирования (см. пояснение в toggle_fit_view)."""
         base = self._overview_base_pixmap
         if base is None or base.height() == 0:
             return
@@ -1551,24 +1638,11 @@ class RightPanel(QWidget):
         if viewport_height <= 0:
             return
         fit_scale = viewport_height / base.height()
-        total_scale = fit_scale * self._overview_zoom
         scaled = base.scaled(
-            max(1, int(base.width() * total_scale)), max(1, int(base.height() * total_scale)),
+            max(1, int(base.width() * fit_scale)), max(1, int(base.height() * fit_scale)),
             Qt.KeepAspectRatio, Qt.SmoothTransformation
         )
         self.overview_label.setPixmap(scaled)
-
-    def _on_overview_wheel(self, event):
-        """Ctrl+колесо мыши на обзорном снимке - масштабирование. Снимок
-        сохранён в исходном (не уменьшенном) разрешении, поэтому умеренное
-        увеличение остаётся чётким; очень сильное - как и с любой
-        картинкой, растровое увеличение всё же начнёт "мылить"."""
-        if not self._fit_mode:
-            return
-        delta = event.angleDelta().y()
-        factor = 1.1 if delta > 0 else (1 / 1.1)
-        self._overview_zoom = max(0.3, min(3.0, self._overview_zoom * factor))
-        self._render_overview()
 
     def _export_stats_to_pdf(self):
         """Экспортирует сводную статистику в PDF - светлый классический
@@ -1640,6 +1714,8 @@ class RightPanel(QWidget):
         # документе элементы управления зумом неуместны
         for toolbar in self._graph_toolbars:
             toolbar.hide()
+        if self.history_btn is not None:
+            self.history_btn.hide()
 
         try:
             printer = QPrinter(QPrinter.HighResolution)
@@ -1662,7 +1738,14 @@ class RightPanel(QWidget):
             painter.begin(printer)
             painter.fillRect(printer.pageRect(), Qt.white)
             painter.scale(scale, scale)
-            widget_to_print.render(painter)
+            # Отключаем системную заливку фона только на время этого
+            # разового рендера (см. подробное пояснение в аналогичном
+            # месте _render_protocol_to_printer)
+            widget_to_print.setAttribute(Qt.WA_NoSystemBackground, True)
+            try:
+                widget_to_print.render(painter)
+            finally:
+                widget_to_print.setAttribute(Qt.WA_NoSystemBackground, False)
             painter.end()
 
             GlowMessageDialog.show_success(self, "Экспорт в PDF", f"Протокол сохранён:\n{file_path}")
@@ -1671,6 +1754,8 @@ class RightPanel(QWidget):
         finally:
             for toolbar in self._graph_toolbars:
                 toolbar.show()
+            if self.history_btn is not None:
+                self.history_btn.show()
 
     def create_notes_section(self, data):
         note = data.get('note', '')
@@ -1685,9 +1770,15 @@ class RightPanel(QWidget):
             history_label.setWordWrap(True)
             self.notes_layout.addWidget(history_label)
 
-            btn_manage = QPushButton("Управлять историей")
-            btn_manage.clicked.connect(lambda: self.manage_history(data))
-            self.notes_layout.addWidget(btn_manage)
+            self.history_btn = QPushButton("Редактирование истории")
+            self.history_btn.setObjectName("chromeButton")
+            self.history_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+            self.history_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            self.history_btn.clicked.connect(lambda: self.manage_history(data))
+            btn_manage_row = QHBoxLayout()
+            btn_manage_row.addWidget(self.history_btn)
+            btn_manage_row.addStretch(1)
+            self.notes_layout.addLayout(btn_manage_row)
 
             for line in edit_history.strip().split('\n'):
                 if line.strip():
@@ -1750,6 +1841,11 @@ class RightPanel(QWidget):
         self._graph2_ax = None
         self._graph2_canvas = None
         self._graph2_marker = None
+        # Кнопка истории редактирования создаётся заново только если у
+        # нового протокола есть история - без этого сброса, если у
+        # СЛЕДУЮЩЕГО протокола истории нет, здесь осталась бы ссылка на
+        # уже удалённый (после очистки notes_layout ниже) виджет
+        self.history_btn = None
         for column in (self.tables_column, self.graphs_column, self.seal_layout, self.notes_layout):
             while column.count():
                 child = column.takeAt(0)

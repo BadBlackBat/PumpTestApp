@@ -2,7 +2,7 @@ from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QTextEdit, QDialogButtonBox, QMessageBox, 
+    QPushButton, QTextEdit, QTextBrowser, QDialogButtonBox, QMessageBox, 
     QListWidget, QListWidgetItem, QComboBox, QDateEdit,
     QTableWidget, QTableWidgetItem, QScrollArea, QWidget, QSizePolicy,
     QApplication, QGraphicsOpacityEffect, QFrame, QHeaderView, QGridLayout,
@@ -564,15 +564,34 @@ class PrintChoiceDialog(_GlowDialog):
 
 class InstructionsDialog(_GlowDialog):
     """Окно инструкции - фирменный стиль, но с жёлтой (не бирюзовой)
-    подсветкой, чтобы визуально выделяться среди остальных диалогов."""
+    подсветкой, чтобы визуально выделяться среди остальных диалогов.
+    Текст загружается из внешнего файла resources/instructions.txt
+    (обычный текст с HTML-тегами внутри) - чтобы изменить содержимое
+    инструкции, достаточно отредактировать этот файл, без изменений в
+    коде программы."""
     _YELLOW = (230, 200, 40)
+    INSTRUCTIONS_PATH = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'resources', 'instructions.txt'
+    )
 
     def __init__(self, parent=None):
         super().__init__(parent, title="Инструкция", glow_color=self._YELLOW)
-        text_label = QLabel("Инструкция по применению будет размещена позже")
-        text_label.setWordWrap(True)
-        text_label.setStyleSheet("color: #e8eaed; background: transparent;")
-        self.body_layout.addWidget(text_label)
+
+        text_browser = QTextBrowser()
+        text_browser.setOpenExternalLinks(True)
+        text_browser.setStyleSheet("""
+            QTextBrowser {
+                background-color: #f0f0f0;
+                color: #1c1e21;
+                border: 1px solid #6b6f75;
+                border-radius: 6px;
+                padding: 10px;
+            }
+        """)
+        text_browser.setHtml(self._load_instructions_html())
+        text_browser.setMinimumSize(520, 420)
+        self.body_layout.addWidget(text_browser)
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
@@ -590,8 +609,17 @@ class InstructionsDialog(_GlowDialog):
         btn_row.addStretch()
         self.body_layout.addLayout(btn_row)
 
-        self.setMinimumWidth(360)
-        self._lock_size()
+        self._lock_size(clamp_to_screen=True)
+
+    def _load_instructions_html(self):
+        try:
+            with open(self.INSTRUCTIONS_PATH, encoding='utf-8') as f:
+                return f.read()
+        except OSError:
+            return (
+                "<p>Файл инструкции не найден "
+                f"({self.INSTRUCTIONS_PATH}).</p>"
+            )
 
 
 class PasswordDialog(_GlowDialog):
@@ -3026,21 +3054,40 @@ class EditProtocolDialog(QDialog):
             'password': self.password_input.text()
         }
 
-class EditHistoryDialog(QDialog):
+class EditHistoryDialog(_GlowDialog):
+    """Диалог управления историей редактирования протокола - фирменный стиль."""
     def __init__(self, edit_history, pump_id, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Управление историей редактирования")
-        self.setModal(True)
-        self.resize(600, 400)
+        super().__init__(parent, title="Управление историей редактирования")
         self.pump_id = pump_id
         self.clear_note = False  # по умолчанию не очищать примечание
 
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Выберите записи для удаления (отметьте галочками):"))
+        hint_label = QLabel("Выберите записи для удаления (отметьте галочками):")
+        hint_label.setWordWrap(True)
+        hint_label.setStyleSheet("color: #e8eaed; background: transparent;")
+        self.body_layout.addWidget(hint_label)
 
         self.list_widget = QListWidget()
         self.list_widget.setSelectionMode(QListWidget.MultiSelection)
-        layout.addWidget(self.list_widget)
+        self.list_widget.setStyleSheet("""
+            QListWidget {
+                background-color: #f0f0f0;
+                color: #1c1e21;
+                border: 1px solid #6b6f75;
+                border-radius: 4px;
+            }
+            QListWidget::item {
+                padding: 3px 4px;
+            }
+            QListWidget::item:selected {
+                background-color: #bdeeff;
+                color: #1c1e21;
+            }
+            QListWidget::item:hover {
+                background-color: #d6f3ff;
+            }
+        """)
+        self.list_widget.setMinimumSize(520, 320)
+        self.body_layout.addWidget(self.list_widget)
 
         self.entries = []
         if edit_history:
@@ -3058,6 +3105,11 @@ class EditHistoryDialog(QDialog):
         btn_delete_selected = QPushButton("Удалить выбранные")
         btn_delete_all = QPushButton("Удалить все")
         btn_cancel = QPushButton("Отмена")
+        for btn in (btn_delete_selected, btn_delete_all, btn_cancel):
+            btn.setObjectName("chromeButton")
+            btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+            btn.setAutoDefault(False)
+            btn.setDefault(False)
 
         btn_delete_selected.clicked.connect(self.delete_selected)
         btn_delete_all.clicked.connect(self.delete_all)
@@ -3066,9 +3118,10 @@ class EditHistoryDialog(QDialog):
         btn_layout.addWidget(btn_delete_selected)
         btn_layout.addWidget(btn_delete_all)
         btn_layout.addWidget(btn_cancel)
-        layout.addLayout(btn_layout)
+        self.body_layout.addLayout(btn_layout)
 
         self.result_history = edit_history
+        self._lock_size(clamp_to_screen=True)
 
     def delete_selected(self):
         indices = []
@@ -3077,7 +3130,7 @@ class EditHistoryDialog(QDialog):
             if item.checkState() == Qt.Checked:
                 indices.append(i)
         if not indices:
-            QMessageBox.information(self, "Информация", "Не выбрано ни одной записи.")
+            GlowMessageDialog.show_error(self, "Информация", "Не выбрано ни одной записи.")
             return
         for i in reversed(indices):
             self.list_widget.takeItem(i)
@@ -3085,13 +3138,14 @@ class EditHistoryDialog(QDialog):
         self.save_result()
 
     def delete_all(self):
-        reply = QMessageBox.question(self, "Подтверждение",
-                                     "Удалить все записи истории?\nПримечание также будет очищено.",
-                                     QMessageBox.Yes | QMessageBox.No)
-        if reply == QMessageBox.Yes:
-            self.list_widget.clear()
-            self.clear_note = True
-            self.save_result()
+        if not GlowMessageDialog.confirm(
+            self, "Подтверждение",
+            "Удалить все записи истории?\nПримечание также будет очищено."
+        ):
+            return
+        self.list_widget.clear()
+        self.clear_note = True
+        self.save_result()
 
     def save_result(self):
         new_entries = []

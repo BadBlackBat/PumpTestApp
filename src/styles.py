@@ -167,6 +167,9 @@ LEFT_PANEL_CALENDAR_STYLE = """
     QCalendarWidget QAbstractItemView:disabled {
         color: #6b6f75;
     }
+    QCalendarWidget QAbstractItemView::item:hover {
+        background-color: rgba(79, 209, 255, 60);
+    }
     QCalendarWidget QHeaderView {
         background-color: #2b2d31;
     }
@@ -176,10 +179,15 @@ LEFT_PANEL_CALENDAR_STYLE = """
         border: none;
         padding: 4px;
     }
+    QCalendarWidget QToolButton#qt_calendar_monthbutton {
+        padding-right: 16px;
+    }
 """
+
+
 def apply_calendar_style(calendar_widget):
     """Применяет тёмную тему к всплывающему календарю QDateEdit - через
-    QSS, палитру И явный формат текста дней недели.
+    QSS, палитру и явный формат текста дней недели.
 
     У QCalendarWidget есть свой, отдельный от QSS и палитры механизм
     именно для будних/выходных дней - setWeekdayTextFormat(). Именно он
@@ -191,7 +199,7 @@ def apply_calendar_style(calendar_widget):
     from PyQt5.QtGui import QPalette, QColor, QTextCharFormat
     calendar_widget.setStyleSheet(LEFT_PANEL_CALENDAR_STYLE)
     palette = calendar_widget.palette()
-    palette.setColor(QPalette.WindowText, QColor("#f1f1f1"))
+    palette.setColor(QPalette.WindowText, QColor("#e8eaed"))
     palette.setColor(QPalette.Window, QColor("#2b2d31"))
     palette.setColor(QPalette.Text, QColor("#ffffff"))
     palette.setColor(QPalette.Base, QColor("#2b2d31"))
@@ -207,6 +215,40 @@ def apply_calendar_style(calendar_widget):
     weekend_format.setForeground(QColor("#ff8080"))  # мягче чистого красного - читаемо на тёмном фоне
     for day in (Qt.Saturday, Qt.Sunday):
         calendar_widget.setWeekdayTextFormat(day, weekend_format)
+
+    # Кнопки "предыдущий/следующий месяц" - у Qt это документированные,
+    # стабильные внутренние имена объектов, официальный способ их найти
+    # и настроить. Заменяем стандартные (зелёные) стрелки на свои
+    # аккуратные шевроны в тон остальному интерфейсу.
+    import os
+    from PyQt5.QtWidgets import QToolButton
+    from PyQt5.QtCore import QSize
+    from . import icon_utils
+    icons_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources', 'icons')
+    prev_btn = calendar_widget.findChild(QToolButton, "qt_calendar_prevmonth")
+    next_btn = calendar_widget.findChild(QToolButton, "qt_calendar_nextmonth")
+    prev_icon_path = os.path.join(icons_dir, 'calendar_prev.svg')
+    next_icon_path = os.path.join(icons_dir, 'calendar_next.svg')
+    if prev_btn is not None and os.path.exists(prev_icon_path):
+        prev_btn.setIcon(icon_utils.tinted_icon(prev_icon_path, "#e8eaed", 14))
+        prev_btn.setIconSize(QSize(14, 14))
+        prev_btn.setText("")
+    if next_btn is not None and os.path.exists(next_icon_path):
+        next_btn.setIcon(icon_utils.tinted_icon(next_icon_path, "#e8eaed", 14))
+        next_btn.setIconSize(QSize(14, 14))
+        next_btn.setText("")
+
+    # Ховер на отдельных ячейках с числами не проявлялся - вероятная
+    # причина: у внутренней таблицы календаря не включено отслеживание
+    # движения мыши без нажатой кнопки, из-за чего QSS ":hover" на
+    # ячейках просто не получал события для срабатывания
+    from PyQt5.QtWidgets import QTableView
+    calendar_view = calendar_widget.findChild(QTableView)
+    if calendar_view is not None:
+        calendar_view.setMouseTracking(True)
+        viewport = calendar_view.viewport()
+        if viewport is not None:
+            viewport.setMouseTracking(True)
 
 # --- Строка поиска: не как обычное поле ввода, а просто нижнее
 # подчёркивание контрастным цветом. При наведении - лёгкая подсветка,
@@ -422,12 +464,14 @@ def build_left_panel_table_style(arrow_down_path=None, arrow_up_path=None, heade
 # (тот же приём, что и у таблицы в левой панели)
 RIGHT_PANEL_SCROLL_STYLE = """
     QScrollArea {
-        background-color: #f0f0f0;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 #ffffff, stop:0.5 #f4f5f7, stop:1 #eceef1);
         border: 1px solid #9a9ea4;
         border-radius: 8px;
     }
     QScrollArea > QWidget#qt_scrollarea_viewport {
-        background-color: #f0f0f0;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 #ffffff, stop:0.5 #f4f5f7, stop:1 #eceef1);
     }
 """
 
@@ -455,7 +499,7 @@ RIGHT_PANEL_LOGO_STYLE = """
 RIGHT_PANEL_LOGO_TEXT_STYLE = """
     color: #7de8ff;
     font-family: "Segoe UI", Arial, sans-serif;
-    font-size: 14pt;
+    font-size: 16pt;
     letter-spacing: 1px;
 """
 
