@@ -22,7 +22,7 @@ from .. import database as db
 from .. import utils
 from ..utils import is_value_in_range
 from ..utils import format_order_number
-from .dialogs import _clamp_to_screen, GlowMessageDialog
+from .dialogs import _clamp_to_screen, GlowMessageDialog, ExportProgressDialog
 from .left_panel import _GlowFrame, _CtrlWheelZoomWidget, _GlowScrollBar
 from .. import styles
 from .. import icon_utils
@@ -157,9 +157,10 @@ class RightPanel(QWidget):
         # переносится дальше, а не обрезается и не тянет блок силой.
         self.test_conditions_box = QFrame()
         self.test_conditions_box.setStyleSheet(
-            "QFrame { background-color: #f2f5f7; border: none; border-radius: 4px }"
+            "QFrame { background-color: transparent; border: none; border-radius: 4px; }"
         )
         self.test_conditions_box.setMinimumWidth(300)
+        self.test_conditions_box.setMaximumWidth(460)
         conditions_layout = QVBoxLayout(self.test_conditions_box)
         conditions_layout.setContentsMargins(8, 6, 8, 2)
         self.test_conditions_label = QLabel("Условия проведения испытаний...")
@@ -1659,6 +1660,10 @@ class RightPanel(QWidget):
         if not file_path.lower().endswith('.pdf'):
             file_path += '.pdf'
 
+        progress = ExportProgressDialog(self)
+        progress.show()
+        progress.set_progress(10)
+
         try:
             printer = QPrinter(QPrinter.HighResolution)
             printer.setOutputFormat(QPrinter.PdfFormat)
@@ -1666,6 +1671,7 @@ class RightPanel(QWidget):
             printer.setPageSize(QPrinter.A4)
             printer.setOrientation(QPrinter.Portrait)
             printer.setPageMargins(10, 10, 10, 10, QPrinter.Millimeter)
+            progress.set_progress(30)
 
             w = max(print_label.width(), 1)
             h = max(print_label.height(), 1)
@@ -1676,11 +1682,16 @@ class RightPanel(QWidget):
             painter.begin(printer)
             painter.fillRect(printer.pageRect(), Qt.white)
             painter.scale(scale, scale)
+            progress.set_progress(60)
             print_label.render(painter)
+            progress.set_progress(90)
             painter.end()
 
+            progress.set_progress(100)
+            progress.accept()
             GlowMessageDialog.show_success(self, "Экспорт в PDF", f"Статистика сохранена:\n{file_path}")
         except Exception as e:
+            progress.accept()
             QMessageBox.critical(self, "Ошибка экспорта", f"Не удалось сохранить PDF:\n{e}")
 
     def export_to_pdf(self):
@@ -1717,6 +1728,10 @@ class RightPanel(QWidget):
         if self.history_btn is not None:
             self.history_btn.hide()
 
+        progress = ExportProgressDialog(self)
+        progress.show()
+        progress.set_progress(10)
+
         try:
             printer = QPrinter(QPrinter.HighResolution)
             printer.setOutputFormat(QPrinter.PdfFormat)
@@ -1726,30 +1741,44 @@ class RightPanel(QWidget):
             # Обычные поля страницы (не setFullPage) - чтобы контент не
             # обрезался краевой непечатаемой зоной реального принтера
             printer.setPageMargins(10, 10, 10, 10, QPrinter.Millimeter)
+            progress.set_progress(25)
 
             widget_to_print = self.content_widget
             w = max(widget_to_print.width(), 1)
             h = max(widget_to_print.height(), 1)
             page_rect = printer.pageRect()
-            # Небольшой запас (0.98), чтобы точно не выйти за границы печати
-            scale = min(page_rect.width() / w, page_rect.height() / h) * 0.98
+            # Масштабируем по ширине листа (как и в предпросмотре печати -
+            # см. _render_protocol_to_printer) - протокол должен занимать
+            # всю ширину страницы; высота при необходимости просто
+            # продолжается за пределы одной "видимой" страницы. Раньше
+            # здесь использовался масштаб "по меньшей из сторон", из-за
+            # чего высокий протокол ужимался по ширине, оставляя пустые
+            # поля по бокам, а графики выглядели сплющенными.
+            scale_x = (page_rect.width() / w) * 0.98
+            scale_y = scale_x * 1.12
+            progress.set_progress(40)
 
             painter = QPainter()
             painter.begin(printer)
             painter.fillRect(printer.pageRect(), Qt.white)
-            painter.scale(scale, scale)
+            painter.scale(scale_x, scale_y)
             # Отключаем системную заливку фона только на время этого
             # разового рендера (см. подробное пояснение в аналогичном
             # месте _render_protocol_to_printer)
             widget_to_print.setAttribute(Qt.WA_NoSystemBackground, True)
+            progress.set_progress(65)
             try:
                 widget_to_print.render(painter)
             finally:
                 widget_to_print.setAttribute(Qt.WA_NoSystemBackground, False)
+            progress.set_progress(90)
             painter.end()
 
+            progress.set_progress(100)
+            progress.accept()
             GlowMessageDialog.show_success(self, "Экспорт в PDF", f"Протокол сохранён:\n{file_path}")
         except Exception as e:
+            progress.accept()
             QMessageBox.critical(self, "Ошибка экспорта", f"Не удалось сохранить PDF:\n{e}")
         finally:
             for toolbar in self._graph_toolbars:

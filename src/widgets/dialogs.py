@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QScrollArea, QWidget, QSizePolicy,
     QApplication, QGraphicsOpacityEffect, QFrame, QHeaderView, QGridLayout,
     QGraphicsBlurEffect, QGraphicsColorizeEffect, QGraphicsScene, QGraphicsPixmapItem,
-    QCheckBox
+    QCheckBox, QProgressBar
 )
 from PyQt5.QtCore import Qt, QDate, QPoint, QSize, QPropertyAnimation, QEasingCurve, QTimer, QRectF, pyqtProperty, QSettings
 from PyQt5.QtGui import QFont, QColor, QFontMetrics, QPainter, QPixmap
@@ -560,6 +560,72 @@ class PrintChoiceDialog(_GlowDialog):
             self.reject()
         else:
             self.accept()
+
+
+class ExportProgressDialog(_GlowDialog):
+    """Диалог с индикатором прогресса на время экспорта в PDF - блокирует
+    основную программу (модально), показывает процент выполнения.
+
+    Размытие/обесцвечивание фона здесь ПРИНУДИТЕЛЬНОЕ - не зависит от
+    переключателя в настройках (экспорт и так блокирует всю основную
+    программу целиком, пользователь должен видеть это визуально в любом
+    случае). Если общий переключатель размытия и так включён - обычный
+    механизм (_DialogBackgroundManager, через showEvent родителя) уже
+    покажет размытие сам; здесь мы лишь дополнительно подстраховываемся
+    на случай, если он выключен."""
+    def __init__(self, parent=None):
+        super().__init__(parent, title="Экспорт в PDF")
+        self.setWindowModality(Qt.ApplicationModal)
+        self._forced_overlay = None
+
+        label = QLabel("Подождите, идёт экспорт файла PDF...")
+        label.setWordWrap(True)
+        label.setStyleSheet("color: #e8eaed; background: transparent;")
+        self.body_layout.addWidget(label)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                background-color: #2b2d31;
+                border: 1px solid #6b6f75;
+                border-radius: 4px;
+                color: #e8eaed;
+                text-align: center;
+                height: 22px;
+            }
+            QProgressBar::chunk {
+                background-color: #4fd1ff;
+                border-radius: 4px;
+            }
+        """)
+        self.body_layout.addWidget(self.progress_bar)
+
+        self.setMinimumWidth(360)
+        self.close_btn.hide()  # экспорт нельзя прервать закрытием окна
+        self._lock_size()
+
+    def set_progress(self, value):
+        self.progress_bar.setValue(value)
+        QApplication.processEvents()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not _DialogBackgroundManager.enabled and self._forced_overlay is None:
+            target = _DialogBackgroundManager._main_target
+            if target is not None:
+                self._forced_overlay = _BlurOverlay(
+                    target, blur_radius=_DialogBackgroundManager.BLUR_RADIUS, desaturate=True
+                )
+                self._forced_overlay.fade_in()
+
+    def _fade_out_then(self, finish_callback):
+        if self._forced_overlay is not None:
+            self._forced_overlay.fade_out_and_remove()
+            self._forced_overlay = None
+        super()._fade_out_then(finish_callback)
 
 
 class InstructionsDialog(_GlowDialog):

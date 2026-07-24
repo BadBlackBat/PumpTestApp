@@ -519,7 +519,7 @@ RIGHT_PANEL_LOADING_TEXT_STYLE = "color: #555;"
 
 # Легенда с пояснением цветовой подсветки несоответствий техническим
 # требованиям (текстовая строка под таблицами протокола)
-RIGHT_PANEL_LEGEND_STYLE = "background-color: #f0f0f0; padding: 5px;"
+RIGHT_PANEL_LEGEND_STYLE = "background-color: transparent; padding: 5px;"
 
 # Общий фон-подложка для панели таблиц испытаний (tables_panel) И для
 # отдельной панели герметичности (seal_panel) - используется ОДНА И ТА
