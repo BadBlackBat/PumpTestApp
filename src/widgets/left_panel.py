@@ -15,6 +15,7 @@ from .. import database as db
 from .. import utils
 from .. import styles
 import os
+import weakref
 
 RESOURCES_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'resources'
@@ -112,7 +113,7 @@ class _GlowScrollBar(QScrollBar):
 
     def __init__(self, parent=None, color=None):
         super().__init__(Qt.Vertical, parent)
-        self._color = color or (79, 209, 255)
+        self._explicit_color = color  # None - подстраивается под тему динамически, см. _color
         self._hover_progress = 0.0  # 0 - состояние покоя, 1 - полностью раскрыта
         self._is_hovering = False
         self.setStyleSheet("QScrollBar { background: transparent; border: none; }")
@@ -128,6 +129,9 @@ class _GlowScrollBar(QScrollBar):
         self._activity_timer.timeout.connect(self._on_activity_timeout)
 
         self.valueChanged.connect(self._on_value_changed)
+
+    def _current_color(self):
+        return self._explicit_color or styles.get_accent_color_rgb()
 
     def getHoverProgress(self):
         return self._hover_progress
@@ -200,7 +204,7 @@ class _GlowScrollBar(QScrollBar):
         painter.setBrush(QColor(0, 0, 0, 60))
         painter.drawRoundedRect(shadow_rect, radius, radius)
 
-        r, g, b = self._color
+        r, g, b = self._current_color()
         if self._hover_progress < 0.05:
             # Состояние покоя - просто тонкая линия акцентного цвета, без свечения
             painter.setPen(Qt.NoPen)
@@ -219,49 +223,109 @@ class _GlowScrollBar(QScrollBar):
 
 
 class _GlowFrame(QFrame):
-    """Графитовая панель с фирменным бирюзовым свечением по всем четырём
-    сторонам - яркое по центру каждой стороны, гаснущее к углам. Основа
-    (градиентный фон, скругление) рисуется через обычный QSS (QFrame
-    поддерживает это нативно), свечение - поверх, вручную через
-    QPainter (в QSS такого эффекта нет). Тень добавляется отдельным
-    QGraphicsDropShadowEffect с нулевым смещением - равномерно со всех
-    сторон, а не в одну сторону."""
+    """Панель с фирменной подсветкой по всем четырём сторонам.
+
+    На тёмной теме - графитовый фон + яркое бирюзовое свечение (как и
+    было). На светлой - мягкий длинный серебристый градиент + блик
+    полированного металла по краям (яркая почти-белая полоса у одной
+    стороны, имитирующая отражение света от кромки детали, и лёгкая
+    тень с противоположной - вместо неонового свечения, которое на
+    светлом фоне просто не читалось бы как "свечение").
+
+    Все живые экземпляры отслеживаются в _instances (WeakSet - не
+    мешает сборке мусора) - при переключении темы gui.py вызывает
+    _GlowFrame.refresh_all(), и каждая панель (левая панель, ЛЮБОЙ
+    открытый диалог - они все используют этот же класс) перекрашивается
+    сразу, без пересоздания."""
+    _instances = weakref.WeakSet()
+
     def __init__(self, parent=None, glow_color=None):
         super().__init__(parent)
         self.setObjectName("filtersPanel")
-        self.setStyleSheet(styles.LEFT_PANEL_FILTER_PANEL_STYLE)
-        # Цвет свечения - по умолчанию фирменный бирюзовый (styles.LEFT_PANEL_GLOW_COLOR),
-        # но можно переопределить для конкретного окна (например, оранжевый
-        # для EditPumpDialog)
-        self._glow_color = glow_color or styles.LEFT_PANEL_GLOW_COLOR
+        # Цвет свечения - явно заданный (например, оранжевый для
+        # EditPumpDialog, зелёный для AddModificationDialog) остаётся
+        # тем же независимо от темы - это семантический цвет конкретного
+        # диалога. None (обычные диалоги/левая панель) - подстраивается
+        # под тему автоматически через styles.get_accent_color_rgb().
+        self._explicit_glow_color = glow_color
+        self._apply_base_style()
 
+        blur, alpha = styles.get_glow_shadow_params()
         shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(styles.LEFT_PANEL_GLOW_SHADOW_BLUR)
-        shadow.setColor(QColor(0, 0, 0, 150))
+        shadow.setBlurRadius(blur)
+        shadow.setColor(QColor(0, 0, 0, alpha))
         shadow.setOffset(0, 0)
         self.setGraphicsEffect(shadow)
+        self._shadow_effect = shadow
+
+        _GlowFrame._instances.add(self)
+
+    @property
+    def _glow_color(self):
+        return self._explicit_glow_color or styles.get_accent_color_rgb()
+
+    def _apply_base_style(self):
+        self.setStyleSheet(styles.get_glow_panel_style())
+
+    def refresh_theme(self):
+        """Перечитывает стиль/цвета под текущую тему - вызывается из
+        refresh_all() при переключении темы."""
+        self._apply_base_style()
+        blur, alpha = styles.get_glow_shadow_params()
+        self._shadow_effect.setBlurRadius(blur)
+        self._shadow_effect.setColor(QColor(0, 0, 0, alpha))
+        self.update()
+
+    @classmethod
+    def refresh_all(cls):
+        for instance in list(cls._instances):
+            instance.refresh_theme()
 
     def paintEvent(self, event):
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         w, h = self.width(), self.height()
-        r, g, b = self._glow_color
         t = styles.LEFT_PANEL_GLOW_THICKNESS
 
-        grad_h = QLinearGradient(0, 0, w, 0)
-        grad_h.setColorAt(0.0, QColor(r, g, b, 0))
-        grad_h.setColorAt(0.5, QColor(r, g, b, 230))
-        grad_h.setColorAt(1.0, QColor(r, g, b, 0))
-        painter.fillRect(QRectF(0, 0, w, t), grad_h)
-        painter.fillRect(QRectF(0, h - t, w, t), grad_h)
+        if styles.is_light_theme():
+            # Светлая тема - блик полированного металла: яркая почти-белая
+            # полоса сверху и по бокам (имитация отражения света от
+            # скруглённой кромки). Без тёмных элементов (тень снизу/
+            # затемнение по бокам) - именно они, судя по всему, и читались
+            # как "тень по углам панели" поверх и так уже смягчённой тени
+            # QGraphicsDropShadowEffect.
+            grad_top = QLinearGradient(0, 0, w, 0)
+            grad_top.setColorAt(0.0, QColor(255, 255, 255, 0))
+            grad_top.setColorAt(0.5, QColor(255, 255, 255, 200))
+            grad_top.setColorAt(1.0, QColor(255, 255, 255, 0))
+            painter.fillRect(QRectF(0, 0, w, t), grad_top)
 
-        grad_v = QLinearGradient(0, 0, 0, h)
-        grad_v.setColorAt(0.0, QColor(r, g, b, 0))
-        grad_v.setColorAt(0.5, QColor(r, g, b, 230))
-        grad_v.setColorAt(1.0, QColor(r, g, b, 0))
-        painter.fillRect(QRectF(0, 0, t, h), grad_v)
-        painter.fillRect(QRectF(w - t, 0, t, h), grad_v)
+            grad_side = QLinearGradient(0, 0, 0, h)
+            grad_side.setColorAt(0.0, QColor(255, 255, 255, 150))
+            grad_side.setColorAt(0.5, QColor(255, 255, 255, 60))
+            grad_side.setColorAt(1.0, QColor(255, 255, 255, 0))
+            painter.fillRect(QRectF(0, 0, t, h), grad_side)
+            painter.fillRect(QRectF(w - t, 0, t, h), grad_side)
+        else:
+            # Тёмная тема - фирменное бирюзовое (или явно заданное, см.
+            # _explicit_glow_color) свечение, яркое по центру каждой
+            # стороны, гаснущее к углам
+            r, g, b = self._glow_color
+
+            grad_h = QLinearGradient(0, 0, w, 0)
+            grad_h.setColorAt(0.0, QColor(r, g, b, 0))
+            grad_h.setColorAt(0.5, QColor(r, g, b, 230))
+            grad_h.setColorAt(1.0, QColor(r, g, b, 0))
+            painter.fillRect(QRectF(0, 0, w, t), grad_h)
+            painter.fillRect(QRectF(0, h - t, w, t), grad_h)
+
+            grad_v = QLinearGradient(0, 0, 0, h)
+            grad_v.setColorAt(0.0, QColor(r, g, b, 0))
+            grad_v.setColorAt(0.5, QColor(r, g, b, 230))
+            grad_v.setColorAt(1.0, QColor(r, g, b, 0))
+            painter.fillRect(QRectF(0, 0, t, h), grad_v)
+            painter.fillRect(QRectF(w - t, 0, t, h), grad_v)
 
 
 class _NoSelectionPaintDelegate(QStyledItemDelegate):
@@ -315,6 +379,18 @@ class LeftPanel(QWidget):
     request_delete = pyqtSignal(int)
     request_edit = pyqtSignal(int)
     filters_applied = pyqtSignal(dict)
+
+    def refresh_theme(self):
+        """Перекрашивает всю левую панель (фильтры, таблица, кнопки) под
+        текущую тему - вызывается из gui.py при переключении. Левая
+        панель - постоянный (не пересоздаваемый) виджет, в отличие от
+        диалогов, поэтому ей отдельно нужен этот метод, а не только
+        showEvent."""
+        styles.retheme_widget_tree(self)
+        if hasattr(self, 'date_from'):
+            styles.apply_calendar_style(self.date_from.calendarWidget())
+        if hasattr(self, 'date_to'):
+            styles.apply_calendar_style(self.date_to.calendarWidget())
 
     def __init__(self, parent=None):
         super().__init__(parent)

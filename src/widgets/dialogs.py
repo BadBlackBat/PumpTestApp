@@ -345,6 +345,10 @@ class _GlowDialog(QDialog):
         self.setMinimumSize(size)
         self.setMaximumSize(size.width(), size.height() + 20)
         self._position_close_button()
+        # Дублируем применение темы здесь же (не только в showEvent) -
+        # это вызывается в конце __init__ КАЖДОГО диалога, когда весь
+        # его контент уже точно построен
+        styles.retheme_widget_tree(self)
 
     def _position_close_button(self):
         """Ставит крестик в правый верхний угол рамки - вызывается после
@@ -366,6 +370,10 @@ class _GlowDialog(QDialog):
         # только один раз в конструкторе) - на случай, если геометрия
         # экрана/содержимого успела чуть измениться к этому моменту
         _clamp_to_screen(self)
+        # Перекрашиваем текст/акценты под текущую тему - на светлой теме
+        # белый текст (зашитый буквально в коде диалога) иначе был бы не
+        # виден на светлом фоне
+        styles.retheme_widget_tree(self)
         self.setWindowOpacity(0.0)
         self._fade_in_anim = QPropertyAnimation(self, b"windowOpacity", self)
         self._fade_in_anim.setDuration(220)

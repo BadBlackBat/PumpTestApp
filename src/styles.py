@@ -12,7 +12,226 @@ left_panel.py / right_panel.py / dialogs.py / gui.py / status_bar.py -
 Как этим пользоваться:
     from . import styles
     self.table.setStyleSheet(styles.LEFT_PANEL_TABLE_STYLE)
+"""
 
+# ============================================================
+# ПЕРЕКЛЮЧЕНИЕ ТЕМЫ (тёмная/светлая)
+# ============================================================
+# CURRENT_THEME - единственный источник истины о текущей теме на весь
+# рантайм приложения. Меняется только через gui.py: MainWindow.apply_theme().
+# Остальные модули просто читают его через функции ниже (get_*), а не
+# проверяют флаг напрямую - так при добавлении новых тем не придётся
+# искать все места со сравнением строки.
+CURRENT_THEME = 'dark'  # 'dark' или 'light'
+
+
+def is_light_theme():
+    return CURRENT_THEME == 'light'
+
+
+def get_top_bar_style():
+    return TOP_BAR_STYLE_LIGHT if is_light_theme() else TOP_BAR_STYLE
+
+
+def get_top_bar_logo_style():
+    return TOP_BAR_LOGO_STYLE_BASE_LIGHT if is_light_theme() else TOP_BAR_LOGO_STYLE_BASE
+
+
+def get_status_bar_style():
+    return STATUS_BAR_STYLE_LIGHT if is_light_theme() else STATUS_BAR_STYLE
+
+
+def get_glow_shadow_params():
+    """(радиус размытия, альфа-канал 0-255) для тени панелей (_GlowFrame).
+
+    На светлой теме тень заметно мягче и прозрачнее тёмной - у
+    QGraphicsDropShadowEffect есть особенность: он строит тень по
+    прямоугольному силуэту виджета, не зная о скруглении углов через
+    QSS border-radius - из-за этого в самих скруглённых углах панели
+    "протекает" немного тени. На тёмной теме это было незаметно (тень
+    тёмная - панель тёмная), на светлой стало заметно - полностью убрать
+    эту особенность рискованно (можно сломать отрисовку, как уже было
+    с WA_NoSystemBackground), поэтому смягчаем тень, а не убираем совсем."""
+    if is_light_theme():
+        return 8, 35
+    return LEFT_PANEL_GLOW_SHADOW_BLUR, 150
+
+
+def get_glow_panel_style():
+    """Базовый (без свечения/блика по краям - это рисуется отдельно в
+    _GlowFrame.paintEvent) фон панели - графит для тёмной темы, мягкий
+    длинный серебристый градиент для светлой."""
+    return LEFT_PANEL_FILTER_PANEL_STYLE_LIGHT if is_light_theme() else LEFT_PANEL_FILTER_PANEL_STYLE
+
+
+def get_title_bar_rgb():
+    return TITLE_BAR_COLOR_RGB_LIGHT if is_light_theme() else TITLE_BAR_COLOR_RGB
+
+
+def get_window_border_rgb():
+    return WINDOW_BORDER_COLOR_RGB_LIGHT if is_light_theme() else WINDOW_BORDER_COLOR_RGB
+
+
+def get_top_bar_icon_normal_color():
+    return TOP_BAR_ICON_COLOR_NORMAL_LIGHT if is_light_theme() else TOP_BAR_ICON_COLOR_NORMAL
+
+
+def get_top_bar_icon_hover_color():
+    return TOP_BAR_ICON_COLOR_HOVER_LIGHT if is_light_theme() else TOP_BAR_ICON_COLOR_HOVER
+
+
+def get_accent_color_rgb():
+    """Акцентный цвет по умолчанию (RGB-кортеж) - фирменный бирюзовый на
+    тёмной теме (там он реально "светится" на графите), тёмно-стальной
+    бирюзовый на светлой (обычный яркий неон на светлом фоне не
+    читается как свечение - нужен цвет поконтрастнее и потемнее)."""
+    return LEFT_PANEL_ACCENT_COLOR_LIGHT if is_light_theme() else LEFT_PANEL_GLOW_COLOR
+
+
+def get_accent_color_hex():
+    """То же самое, но строкой "#rrggbb" - для мест, где QSS собирается
+    строкой (ховер-рамки кнопок, полей ввода и т.д.)."""
+    r, g, b = get_accent_color_rgb()
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def get_dialog_text_color():
+    """Основной цвет текста в диалогах - светлый на тёмной теме (как и
+    было, #e8eaed), наш графитовый на светлой (на серебристом фоне
+    светлый текст просто не виден)."""
+    return LEFT_PANEL_TEXT_COLOR_LIGHT if is_light_theme() else "#e8eaed"
+
+
+import re as _re
+
+
+def retheme_stylesheet(css):
+    """Заменяет в уже готовой строке QSS цвета тёмной темы на цвета
+    текущей активной темы. Работает как "постобработка" уже собранной
+    строки стиля (см. _GlowDialog.showEvent, LeftPanel.refresh_theme) -
+    вместо того чтобы искать и переписывать каждое из полусотни мест в
+    исходном коде, где цвет мог быть зашит буквально в setStyleSheet().
+
+    На тёмной теме ничего не меняет - возвращает css как есть."""
+    if not css or not is_light_theme():
+        return css
+    accent_hex = get_accent_color_hex()
+    text_hex = LEFT_PANEL_TEXT_COLOR_LIGHT
+
+    # Текст (аккуратно: именно "color:", а не "background-color:")
+    css = _re.sub(r'(?<!background-)\bcolor\s*:\s*#e8eaed', f'color: {text_hex}', css)
+    css = _re.sub(r'(?<!background-)\bcolor\s*:\s*#ffffff', f'color: {text_hex}', css)
+    css = _re.sub(r'(?<!background-)\bcolor\s*:\s*#fff\b', f'color: {text_hex}', css)
+
+    # Акцентный бирюзовый (рамки при наведении/фокусе, выделение) ->
+    # тёмно-стальной, контрастный на светлом фоне
+    css = css.replace('#4fd1ff', accent_hex)
+    css = css.replace('#7de0ff', accent_hex)
+    css = css.replace('#8fe3ff', accent_hex)  # светлый оттенок ховера (поле поиска и т.п.)
+
+    # То же самое, но в rgba(79, 209, 255, X) - используется для лёгкой
+    # полупрозрачной подсветки фона при наведении (сохраняем альфа-канал,
+    # меняем только сам цвет)
+    accent_r, accent_g, accent_b = get_accent_color_rgb()
+    css = _re.sub(
+        r'rgba\(\s*79\s*,\s*209\s*,\s*255\s*,\s*(\d+)\s*\)',
+        lambda m: f'rgba({accent_r}, {accent_g}, {accent_b}, {m.group(1)})',
+        css
+    )
+
+    # Тёмный графитовый фон выпадающих списков/попапов -> светлый алюминий.
+    # ВАЖНО: заменяем только когда это именно ФОН (background/
+    # background-color), а не текст (color: #2b2d31 - это наш же
+    # графитовый ЦВЕТ ТЕКСТА кнопок, его трогать нельзя - раньше здесь
+    # была ошибка именно в этом: слепая замена превращала текст кнопок
+    # в светлый, вместо того чтобы остаться графитовым)
+    css = _re.sub(r'background(-color)?\s*:\s*#2b2d31',
+                  lambda m: f'background{m.group(1) or ""}: #eef0f2', css)
+
+    # Алюминиевый градиент кнопок -> более гладкий и светлый вариант
+    # (нужно подставлять уже готовые строки, т.к. это не просто цвет, а
+    # целая строка qlineargradient(...))
+    css = css.replace(_ALUMINUM_NORMAL, _ALUMINUM_NORMAL_LIGHT)
+    css = css.replace(_ALUMINUM_HOVER, _ALUMINUM_HOVER_LIGHT)
+
+    return css
+
+
+def retheme_widget_tree(root_widget):
+    """Проходит по root_widget и всем его дочерним виджетам, перекрашивая
+    уже применённый QSS через retheme_stylesheet(). Используется при
+    переключении темы - и для диалогов (см. _GlowDialog.showEvent), и
+    для постоянных панелей вроде левой панели (см. LeftPanel.refresh_theme)."""
+    from PyQt5.QtWidgets import QWidget
+    widgets = [root_widget] + root_widget.findChildren(QWidget)
+    for w in widgets:
+        sheet = w.styleSheet()
+        if sheet:
+            new_sheet = retheme_stylesheet(sheet)
+            if new_sheet != sheet:
+                w.setStyleSheet(new_sheet)
+
+
+# --- Светлая тема: серебристый алюминий (вариант 1) ---
+# Отличие от градиента на кнопках (см. алюминиевые константы кнопок
+# дальше по файлу) - переход здесь специально длиннее и мягче, без
+# резких граней между цветовыми остановками, чтобы не выглядеть "как
+# кнопка", а читаться как большая цельная панель.
+LEFT_PANEL_FILTER_PANEL_STYLE_LIGHT = """
+    QFrame#filtersPanel {
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 #fcfdfe, stop:0.35 #eef0f2, stop:0.7 #dde1e5, stop:1 #ced2d7);
+        border-radius: 10px;
+    }
+"""
+
+# Акцент для светлой темы - глубокий стальной бирюзовый (тот же тон, что
+# уже используется для линий MIN/MAX на графиках - #0d7a99), НЕ яркий
+# неон: на светлом фоне яркий неон просто не читается как "свечение"
+LEFT_PANEL_ACCENT_COLOR_LIGHT = (13, 122, 153)
+LEFT_PANEL_TEXT_COLOR_LIGHT = "#2b2d31"  # наш графитовый - на светлом фоне используется как цвет текста
+
+TOP_BAR_STYLE_LIGHT = """
+    QWidget#topBar {
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 #fcfdfe, stop:0.45 #e9ebee, stop:1 #d2d6db);
+        border-bottom-left-radius: 10px;
+        border-bottom-right-radius: 10px;
+        border-bottom: 1px solid #b7bcc2;
+    }
+"""
+TOP_BAR_LOGO_STYLE_BASE_LIGHT = """
+    color: #2b2d31;
+    letter-spacing: 1.5px;
+"""
+
+STATUS_BAR_STYLE_LIGHT = """
+    QStatusBar {
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 #d2d6db, stop:0.45 #e9ebee, stop:1 #fcfdfe);
+        border-top-left-radius: 10px;
+        border-top-right-radius: 10px;
+        border-top: 1px solid #b7bcc2;
+    }
+    QStatusBar QLabel {
+        color: #2b2d31;
+        font-family: "Consolas", "Courier New", monospace;
+        font-size: 9pt;
+        letter-spacing: 1px;
+        background: transparent;
+    }
+    QStatusBar::item {
+        border: none;
+    }
+"""
+
+TITLE_BAR_COLOR_RGB_LIGHT = (0xe9, 0xeb, 0xee)
+WINDOW_BORDER_COLOR_RGB_LIGHT = (0xb7, 0xbc, 0xc2)
+
+TOP_BAR_ICON_COLOR_NORMAL_LIGHT = "#6b6f75"
+TOP_BAR_ICON_COLOR_HOVER_LIGHT = "#0d7a99"
+
+"""
 Важно: это ЧИСТЫЙ ПЕРЕНОС существующих стилей без каких-либо визуальных
 изменений - значения цветов/отступов/шрифтов везде оставлены точно
 такими же, какими были в коде до переноса.
@@ -186,8 +405,15 @@ LEFT_PANEL_CALENDAR_STYLE = """
 
 
 def apply_calendar_style(calendar_widget):
-    """Применяет тёмную тему к всплывающему календарю QDateEdit - через
-    QSS, палитру и явный формат текста дней недели.
+    """Применяет оформление к всплывающему календарю QDateEdit под
+    текущую тему.
+
+    На тёмной теме - тёмная стилизация через QSS, палитру и явный
+    формат текста дней недели (как и было). На светлой теме - календарь
+    возвращается к простому нативному светлому виду (тот, что был у
+    него изначально) - никакой специальной стилизации не требуется,
+    она и была нужна только для того, чтобы вписать календарь в тёмную
+    тему приложения.
 
     У QCalendarWidget есть свой, отдельный от QSS и палитры механизм
     именно для будних/выходных дней - setWeekdayTextFormat(). Именно он
@@ -197,29 +423,101 @@ def apply_calendar_style(calendar_widget):
     менять специально через этот метод."""
     from PyQt5.QtCore import Qt
     from PyQt5.QtGui import QPalette, QColor, QTextCharFormat
-    calendar_widget.setStyleSheet(LEFT_PANEL_CALENDAR_STYLE)
-    palette = calendar_widget.palette()
-    palette.setColor(QPalette.WindowText, QColor("#e8eaed"))
-    palette.setColor(QPalette.Window, QColor("#2b2d31"))
-    palette.setColor(QPalette.Text, QColor("#ffffff"))
-    palette.setColor(QPalette.Base, QColor("#2b2d31"))
-    palette.setColor(QPalette.ButtonText, QColor("#e8eaed"))
-    calendar_widget.setPalette(palette)
 
-    weekday_format = QTextCharFormat()
-    weekday_format.setForeground(QColor("#00ccf0"))
-    for day in (Qt.Monday, Qt.Tuesday, Qt.Wednesday, Qt.Thursday, Qt.Friday):
-        calendar_widget.setWeekdayTextFormat(day, weekday_format)
+    if is_light_theme():
+        # Светлая тема - вместо "сброса" стиля (не сработало надёжно -
+        # зона с числами оставалась тёмной, судя по всему, из-за
+        # унаследованной откуда-то стилизации) явно задаём полный набор
+        # светлых стилей, так же подробно, как и для тёмной темы ниже
+        calendar_widget.setStyleSheet("""
+            QCalendarWidget QWidget {
+                background-color: #ffffff;
+                color: #2b2d31;
+            }
+            QCalendarWidget QToolButton {
+                background-color: #ffffff;
+                color: #2b2d31;
+                border: none;
+                border-radius: 4px;
+                padding: 4px;
+            }
+            QCalendarWidget QToolButton:hover {
+                background-color: rgba(13, 122, 153, 40);
+            }
+            QCalendarWidget QMenu {
+                background-color: #ffffff;
+                color: #2b2d31;
+            }
+            QCalendarWidget QSpinBox {
+                background-color: #ffffff;
+                color: #2b2d31;
+                selection-background-color: #0d7a99;
+            }
+            QCalendarWidget QAbstractItemView:enabled {
+                background-color: #ffffff;
+                color: #2b2d31;
+                selection-background-color: #0d7a99;
+                selection-color: #ffffff;
+            }
+            QCalendarWidget QAbstractItemView:disabled {
+                color: #b0b4b9;
+            }
+            QCalendarWidget QHeaderView {
+                background-color: #ffffff;
+            }
+            QCalendarWidget QHeaderView::section {
+                background-color: #ffffff;
+                color: #2b2d31;
+                border: none;
+                padding: 4px;
+            }
+            QCalendarWidget QToolButton#qt_calendar_monthbutton {
+                padding-right: 16px;
+            }
+        """)
+        palette = calendar_widget.palette()
+        palette.setColor(QPalette.WindowText, QColor("#2b2d31"))
+        palette.setColor(QPalette.Window, QColor("#ffffff"))
+        palette.setColor(QPalette.Text, QColor("#2b2d31"))
+        palette.setColor(QPalette.Base, QColor("#ffffff"))
+        palette.setColor(QPalette.ButtonText, QColor("#2b2d31"))
+        calendar_widget.setPalette(palette)
 
-    weekend_format = QTextCharFormat()
-    weekend_format.setForeground(QColor("#ff8080"))  # мягче чистого красного - читаемо на тёмном фоне
-    for day in (Qt.Saturday, Qt.Sunday):
-        calendar_widget.setWeekdayTextFormat(day, weekend_format)
+        weekday_format = QTextCharFormat()
+        weekday_format.setForeground(QColor("#2b2d31"))
+        for day in (Qt.Monday, Qt.Tuesday, Qt.Wednesday, Qt.Thursday, Qt.Friday):
+            calendar_widget.setWeekdayTextFormat(day, weekday_format)
+
+        weekend_format = QTextCharFormat()
+        weekend_format.setForeground(QColor("#c0392b"))
+        for day in (Qt.Saturday, Qt.Sunday):
+            calendar_widget.setWeekdayTextFormat(day, weekend_format)
+        nav_icon_color = "#2b2d31"
+    else:
+        calendar_widget.setStyleSheet(LEFT_PANEL_CALENDAR_STYLE)
+        palette = calendar_widget.palette()
+        palette.setColor(QPalette.WindowText, QColor("#e8eaed"))
+        palette.setColor(QPalette.Window, QColor("#2b2d31"))
+        palette.setColor(QPalette.Text, QColor("#ffffff"))
+        palette.setColor(QPalette.Base, QColor("#2b2d31"))
+        palette.setColor(QPalette.ButtonText, QColor("#e8eaed"))
+        calendar_widget.setPalette(palette)
+
+        weekday_format = QTextCharFormat()
+        weekday_format.setForeground(QColor("#00ccf0"))
+        for day in (Qt.Monday, Qt.Tuesday, Qt.Wednesday, Qt.Thursday, Qt.Friday):
+            calendar_widget.setWeekdayTextFormat(day, weekday_format)
+
+        weekend_format = QTextCharFormat()
+        weekend_format.setForeground(QColor("#ff8080"))  # мягче чистого красного - читаемо на тёмном фоне
+        for day in (Qt.Saturday, Qt.Sunday):
+            calendar_widget.setWeekdayTextFormat(day, weekend_format)
+        nav_icon_color = "#e8eaed"
 
     # Кнопки "предыдущий/следующий месяц" - у Qt это документированные,
     # стабильные внутренние имена объектов, официальный способ их найти
     # и настроить. Заменяем стандартные (зелёные) стрелки на свои
-    # аккуратные шевроны в тон остальному интерфейсу.
+    # аккуратные шевроны в тон текущей теме.
     import os
     from PyQt5.QtWidgets import QToolButton
     from PyQt5.QtCore import QSize
@@ -230,11 +528,11 @@ def apply_calendar_style(calendar_widget):
     prev_icon_path = os.path.join(icons_dir, 'calendar_prev.svg')
     next_icon_path = os.path.join(icons_dir, 'calendar_next.svg')
     if prev_btn is not None and os.path.exists(prev_icon_path):
-        prev_btn.setIcon(icon_utils.tinted_icon(prev_icon_path, "#e8eaed", 14))
+        prev_btn.setIcon(icon_utils.tinted_icon(prev_icon_path, nav_icon_color, 14))
         prev_btn.setIconSize(QSize(14, 14))
         prev_btn.setText("")
     if next_btn is not None and os.path.exists(next_icon_path):
-        next_btn.setIcon(icon_utils.tinted_icon(next_icon_path, "#e8eaed", 14))
+        next_btn.setIcon(icon_utils.tinted_icon(next_icon_path, nav_icon_color, 14))
         next_btn.setIconSize(QSize(14, 14))
         next_btn.setText("")
 
@@ -306,6 +604,12 @@ def _brushed_metal_gradient(light, dark, bands=16, horizontal_bands=False):
 
 _ALUMINUM_NORMAL = _brushed_metal_gradient("#c9cdd2", "#a6aab0")
 _ALUMINUM_HOVER = _brushed_metal_gradient("#aeb2b8", "#8b8f95")
+
+# Светлая тема - тот же приём, но заметно глаже (меньше полос - мягче
+# переход между ними) и светлее тон, чтобы кнопка не выглядела резкой
+# полосатой вставкой на итак уже светлом серебристом фоне
+_ALUMINUM_NORMAL_LIGHT = _brushed_metal_gradient("#f5f6f8", "#e6e8eb", bands=6)
+_ALUMINUM_HOVER_LIGHT = _brushed_metal_gradient("#eef0f2", "#dadde1", bands=6)
 
 LEFT_PANEL_RESET_BTN_STYLE = f"""
     QPushButton#chromeButton {{

@@ -2,22 +2,48 @@ from PyQt5.QtWidgets import QStatusBar, QLabel, QWidget, QGraphicsDropShadowEffe
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QPainter, QLinearGradient, QBrush
 from .. import styles
+import weakref
 
 
 class _GlowLine(QWidget):
-    """Тонкая светящаяся полоса-акцент на всю ширину статус-бара -
-    имитация свечения приборной панели (HUD). Прозрачная по краям,
-    ярче к центру - настоящий "blur" QSS не поддерживает, поэтому
-    свечение имитируется градиентом с плавным затуханием альфа-канала."""
+    """Тонкая светящаяся полоса-акцент на всю ширину статус-бара/верхней
+    панели (и подчёркивание заголовка во всех диалогах) - имитация
+    свечения приборной панели (HUD). Прозрачная по краям, ярче к центру -
+    настоящий "blur" QSS не поддерживает, поэтому свечение имитируется
+    градиентом с плавным затуханием альфа-канала.
+
+    color=None (по умолчанию, используется в статус-баре/верхней панели)
+    - подстраивается под текущую тему автоматически. Явно заданный цвет
+    (используется диалогами - оранжевый/зелёный/жёлтый) остаётся
+    семантическим и от темы не зависит.
+
+    Все живые экземпляры отслеживаются в _instances - при переключении
+    темы достаточно вызвать _GlowLine.refresh_all(), чтобы перекрасить
+    сразу все полосы во всём приложении (статус-бар, верхняя панель,
+    подчёркивания заголовков во всех открытых диалогах)."""
+    _instances = weakref.WeakSet()
+
     def __init__(self, parent=None, color=None):
         super().__init__(parent)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.setFixedHeight(styles.STATUS_BAR_GLOW_HEIGHT)
-        self._color = color or styles.STATUS_BAR_GLOW_COLOR
+        self._explicit_color = color
+        _GlowLine._instances.add(self)
+
+    def _current_color(self):
+        return self._explicit_color or styles.get_accent_color_rgb()
+
+    def refresh_theme(self):
+        self.update()
+
+    @classmethod
+    def refresh_all(cls):
+        for instance in list(cls._instances):
+            instance.refresh_theme()
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        r, g, b = self._color
+        r, g, b = self._current_color()
         max_alpha = styles.STATUS_BAR_GLOW_MAX_ALPHA
         gradient = QLinearGradient(0, 0, self.width(), 0)
         gradient.setColorAt(0.0, QColor(r, g, b, 0))
@@ -30,9 +56,10 @@ class StatusBar(QStatusBar):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # Тёмная "графитовая" панель со скруглёнными верхними углами и
-        # светлым моноширинным HUD-шрифтом
-        self.setStyleSheet(styles.STATUS_BAR_STYLE)
+        # Тёмная "графитовая" панель (или светлый серебристый градиент
+        # на светлой теме) со скруглёнными верхними углами и моноширинным
+        # HUD-шрифтом
+        self.setStyleSheet(styles.get_status_bar_style())
         self.setFixedHeight(styles.STATUS_BAR_HEIGHT)
 
         # Тень, приподнимающая панель над остальным содержимым окна -
@@ -81,6 +108,12 @@ class StatusBar(QStatusBar):
         self.addPermanentWidget(right_info_widget)
         
         self.set_status("Готово")
+
+    def refresh_theme(self):
+        """Перекрашивает статус-бар под текущую тему - вызывается из
+        gui.py при переключении. Сама светящаяся полоса (_glow_line)
+        обновляется отдельно через _GlowLine.refresh_all()."""
+        self.setStyleSheet(styles.get_status_bar_style())
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

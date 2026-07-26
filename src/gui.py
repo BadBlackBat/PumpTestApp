@@ -1,5 +1,6 @@
 import sys
 import os
+import weakref
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QMessageBox, QInputDialog, QLineEdit,
@@ -11,7 +12,7 @@ from PyQt5.QtCore import Qt, QTimer, QRectF, QEvent, QSize, pyqtSignal
 from PyQt5.QtGui import QFont, QPainter, QColor, QIcon, QPixmap
 from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintPreviewWidget
 
-from .widgets.left_panel import LeftPanel
+from .widgets.left_panel import LeftPanel, _GlowFrame
 from .widgets.right_panel import RightPanel
 from .widgets.status_bar import StatusBar, _GlowLine
 from .widgets.dialogs import PasswordDialog, AddModificationDialog, AddOrderDialog, SettingsDialog, AddPumpDialog, _clamp_to_screen, GlowMessageDialog, PrintChoiceDialog, _DialogBackgroundManager
@@ -34,14 +35,18 @@ ICONS_DIR = os.path.join(RESOURCES_DIR, 'icons')
 
 class _IconButton(QPushButton):
     """Кнопка-иконка без рамки и фона - просто картинка. По умолчанию
-    серая, при наведении перекрашивается в фирменный бирюзовый (см.
-    icon_utils.py - перекраска происходит рендером в pixmap, а не через
-    QSS, т.к. QSS не умеет менять цвет содержимого произвольной SVG)."""
+    серая, при наведении перекрашивается в акцентный цвет текущей темы
+    (см. icon_utils.py - перекраска происходит рендером в pixmap, а не
+    через QSS, т.к. QSS не умеет менять цвет содержимого произвольной
+    SVG). Все живые кнопки отслеживаются в _instances - при
+    переключении темы достаточно вызвать _IconButton.refresh_all()."""
+    _instances = weakref.WeakSet()
+
     def __init__(self, svg_path, size=22, tooltip="", parent=None):
         super().__init__(parent)
+        self._svg_path = svg_path
         self._size = size
-        self._normal_icon = icon_utils.tinted_icon(svg_path, styles.TOP_BAR_ICON_COLOR_NORMAL, size)
-        self._hover_icon = icon_utils.tinted_icon(svg_path, styles.TOP_BAR_ICON_COLOR_HOVER, size)
+        self._build_icons()
         self.setIcon(self._normal_icon)
         self.setIconSize(QSize(size, size))
         self.setFlat(True)
@@ -52,6 +57,24 @@ class _IconButton(QPushButton):
         if tooltip:
             self.setToolTip(tooltip)
         self._active = False  # принудительно подсвечена (не зависит от наведения мыши)
+        _IconButton._instances.add(self)
+
+    def _build_icons(self):
+        self._normal_icon = icon_utils.tinted_icon(
+            self._svg_path, styles.get_top_bar_icon_normal_color(), self._size
+        )
+        self._hover_icon = icon_utils.tinted_icon(
+            self._svg_path, styles.get_top_bar_icon_hover_color(), self._size
+        )
+
+    def refresh_theme(self):
+        self._build_icons()
+        self.setIcon(self._hover_icon if (self._active or self.underMouse()) else self._normal_icon)
+
+    @classmethod
+    def refresh_all(cls):
+        for instance in list(cls._instances):
+            instance.refresh_theme()
 
     def set_active(self, active):
         """Держит иконку подсвеченной (как при наведении), пока active=True,
@@ -85,7 +108,7 @@ class _ThemeToggleButton(QWidget):
         self._size = size
         self._inactive_size = inactive_size
         self._night_inactive_size = night_inactive_size
-        self._is_day = True
+        self._is_day = False
 
         # Разные SVG могут иметь разный "запас" пустого поля внутри своего
         # холста - при одинаковом заявленном размере рендера видимая
@@ -118,7 +141,7 @@ class _ThemeToggleButton(QWidget):
         self._refresh_icons()
 
     def _refresh_icons(self, day_hover=False, night_hover=False):
-        active = styles.THEME_ICON_ACTIVE_COLOR
+        active = styles.get_accent_color_hex()
         inactive = styles.THEME_ICON_INACTIVE_COLOR
         inactive_hover = styles.THEME_ICON_INACTIVE_HOVER_COLOR
 
@@ -199,17 +222,17 @@ class MainWindow(QMainWindow):
 
         # Верхняя панель с логотипом и кнопками - оформлена в стиле
         # статус-бара (тот же тёмный графит), только зеркально
-        top_bar_widget = _TopBar()
-        top_bar_widget.setObjectName("topBar")
+        self.top_bar_widget = _TopBar()
+        self.top_bar_widget.setObjectName("topBar")
         # Обычный QWidget (в отличие от QStatusBar/QPushButton/QFrame) не
         # рисует фон/рамку из QSS без этого атрибута - без него весь
         # градиент из TOP_BAR_STYLE молча игнорировался бы при отрисовке
-        top_bar_widget.setAttribute(Qt.WA_StyledBackground, True)
-        top_bar_widget.setFixedHeight(styles.TOP_BAR_HEIGHT)
-        top_bar_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        top_bar_widget.setStyleSheet(styles.TOP_BAR_STYLE)
+        self.top_bar_widget.setAttribute(Qt.WA_StyledBackground, True)
+        self.top_bar_widget.setFixedHeight(styles.TOP_BAR_HEIGHT)
+        self.top_bar_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.top_bar_widget.setStyleSheet(styles.get_top_bar_style())
 
-        top_layout = QHBoxLayout(top_bar_widget)
+        top_layout = QHBoxLayout(self.top_bar_widget)
         top_layout.setContentsMargins(14, 6, 14, 6)
         top_layout.setSpacing(10)
 
@@ -232,15 +255,15 @@ class MainWindow(QMainWindow):
         # Имя шрифта берём из того, что реально определил Qt при загрузке
         # (см. main.py, load_custom_fonts) - если по какой-то причине
         # кастомный шрифт не загрузился, тихо остаёмся на Segoe UI
-        logo_label = QLabel("Лаборатория Рулевого Управления")
-        logo_label.setAlignment(Qt.AlignCenter)
+        self.logo_label = QLabel("Лаборатория Рулевого Управления")
+        self.logo_label.setAlignment(Qt.AlignCenter)
         font_family = getattr(styles, 'TERMINATOR_FONT_FAMILY', None) or "Segoe UI"
-        logo_label.setFont(QFont(font_family, 16, QFont.Bold))
-        logo_label.setStyleSheet(
-            styles.TOP_BAR_LOGO_STYLE_BASE
+        self.logo_label.setFont(QFont(font_family, 16, QFont.Bold))
+        self.logo_label.setStyleSheet(
+            styles.get_top_bar_logo_style()
             + f'font-family: "{font_family}", "Segoe UI", Arial, sans-serif;'
         )
-        top_layout.addWidget(logo_label)
+        top_layout.addWidget(self.logo_label)
 
         # Растяжение между логотипом и кнопками
         top_layout.addStretch()
@@ -277,7 +300,7 @@ class MainWindow(QMainWindow):
         self.btn_stats.clicked.connect(self.toggle_statistics)
         top_layout.addWidget(self.btn_stats)
 
-        btn_theme = _ThemeToggleButton(
+        self.btn_theme = _ThemeToggleButton(
             os.path.join(ICONS_DIR, 'theme-day.svg'),
             os.path.join(ICONS_DIR, 'theme-night.svg'),
             tooltip="Смена темы"
@@ -286,25 +309,23 @@ class MainWindow(QMainWindow):
         btn_print = _IconButton(os.path.join(ICONS_DIR, 'print.svg'), tooltip="Печать")
 
         # Подключаем
-        btn_theme.theme_changed.connect(
-            lambda is_day: QMessageBox.information(self, "Тема", "Функция будет реализована позже")
-        )
+        self.btn_theme.theme_changed.connect(self.apply_theme)
         self.btn_settings.clicked.connect(self.open_settings)
         btn_print.clicked.connect(self.on_print_requested)
 
-        top_layout.addWidget(btn_theme)
+        top_layout.addWidget(self.btn_theme)
         top_layout.addWidget(self.btn_settings)
         top_layout.addWidget(btn_print)
 
         # Тень, приподнимающая панель над рабочей областью - зеркально
         # статус-бару, уходит ВНИЗ (панель как будто нависает над окном)
-        shadow = QGraphicsDropShadowEffect(top_bar_widget)
+        shadow = QGraphicsDropShadowEffect(self.top_bar_widget)
         shadow.setBlurRadius(styles.TOP_BAR_SHADOW_BLUR_RADIUS)
         shadow.setColor(QColor(*styles.TOP_BAR_SHADOW_COLOR))
         shadow.setOffset(*styles.TOP_BAR_SHADOW_OFFSET)
-        top_bar_widget.setGraphicsEffect(shadow)
+        self.top_bar_widget.setGraphicsEffect(shadow)
 
-        outer_layout.addWidget(top_bar_widget)
+        outer_layout.addWidget(self.top_bar_widget)
         outer_layout.addWidget(content_widget)
 
         # Регистрируем главное окно в менеджере фона (см. dialogs.py) -
@@ -687,6 +708,65 @@ class MainWindow(QMainWindow):
                 self.left_panel.refresh()
                 self.update_status()
         if self.showing_stats: self.toggle_statistics()
+
+    def apply_theme(self, is_day):
+        """Переключает всю программу между тёмной и светлой темой.
+
+        is_day - True означает, что выбрана светлая тема (см.
+        _ThemeToggleButton - исторически "day"/"night" в названиях
+        иконок, хотя реального дня/ночи в оформлении нет, это просто
+        два названия темы).
+
+        Все панели со свечением (левая панель и ЛЮБОЙ открытый диалог -
+        они все используют один и тот же класс _GlowFrame) и светящиеся
+        полосы (статус-бар, верхняя панель, подчёркивания заголовков
+        диалогов) перекрашиваются сразу, без пересоздания - через их
+        собственные refresh_all()."""
+        styles.CURRENT_THEME = 'light' if is_day else 'dark'
+
+        self.top_bar_widget.setStyleSheet(styles.get_top_bar_style())
+        font_family = getattr(styles, 'TERMINATOR_FONT_FAMILY', None) or "Segoe UI"
+        self.logo_label.setStyleSheet(
+            styles.get_top_bar_logo_style()
+            + f'font-family: "{font_family}", "Segoe UI", Arial, sans-serif;'
+        )
+        self.status_bar.refresh_theme()
+
+        _GlowFrame.refresh_all()
+        _GlowLine.refresh_all()
+        _IconButton.refresh_all()
+        self.btn_theme._refresh_icons()
+        self.left_panel.refresh_theme()
+
+        self._apply_native_window_colors()
+
+    def _apply_native_window_colors(self):
+        """Перекрашивает системную рамку окна и заголовок под текущую
+        тему - те же DWM-вызовы, что используются при старте программы
+        (см. main.py, apply_title_bar_color), но продублированы здесь
+        напрямую, а не импортированы из main.py - иначе получился бы
+        циклический импорт (main.py сам импортирует gui.py). Работает
+        только на Windows 11 (build 22000+) - на любой другой ОС/версии
+        просто тихо ничего не делает."""
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            hwnd = ctypes.c_void_p(int(self.winId()))
+
+            def set_dwm_color(attribute, rgb):
+                r, g, b = rgb
+                colorref = ctypes.c_int(r | (g << 8) | (b << 16))
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, attribute, ctypes.byref(colorref), ctypes.sizeof(colorref)
+                )
+
+            DWMWA_BORDER_COLOR = 34
+            DWMWA_CAPTION_COLOR = 35
+            set_dwm_color(DWMWA_CAPTION_COLOR, styles.get_title_bar_rgb())
+            set_dwm_color(DWMWA_BORDER_COLOR, styles.get_window_border_rgb())
+        except Exception:
+            pass
 
     def open_settings(self):
         self.btn_settings.set_active(True)
