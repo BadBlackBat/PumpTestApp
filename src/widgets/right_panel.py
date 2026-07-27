@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
     QTableWidgetItem, QPushButton, QScrollArea, QSizePolicy,
     QFileDialog, QMessageBox, QFrame, QApplication, QHeaderView,
-    QScrollBar, QStyle, QStyleOptionSlider
+    QScrollBar, QStyle, QStyleOptionSlider, QGraphicsDropShadowEffect
 )
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtProperty, QSize, QTimer, QPropertyAnimation, QRectF
 from PyQt5.QtGui import QColor, QFont, QPainter, QPixmap, QTransform, QLinearGradient, QBrush
@@ -83,6 +83,19 @@ class RightPanel(QWidget):
     clear_requested = pyqtSignal()   # сигнал для запроса сброса
     mode_changed = pyqtSignal(str)   # 'protocol' / 'comparison' / 'stats' / 'empty'
 
+    def refresh_theme(self):
+        """Перекрашивает правую панель под текущую тему - вызывается из
+        gui.py при переключении. Правая панель - постоянный виджет,
+        поэтому ей отдельно нужен этот метод, а не только showEvent
+        диалогов."""
+        styles.retheme_widget_tree(self)
+        self.logo_label.setStyleSheet(styles.get_right_panel_logo_style())
+        self.logo_text_label.setStyleSheet(styles.get_right_panel_logo_text_style())
+        self.stats_widget.setStyleSheet(styles.get_right_panel_stats_bg_style())
+        self.overview_bg.setStyleSheet(styles.get_right_panel_stats_bg_style())
+        self.scroll_area.setStyleSheet(styles.get_right_panel_scroll_style())
+        self._apply_scroll_area_shadow()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_data = None
@@ -101,13 +114,27 @@ class RightPanel(QWidget):
         self._graph2_marker = None
         self.setup_ui()
 
+    def _apply_scroll_area_shadow(self):
+        """Мягкая тень для области прокрутки вместо тонкой рамки (убрана
+        для светлой темы - визуально выбивалась из общего вида на светлом
+        фоне). На тёмной теме рамка остаётся как была, тень не нужна."""
+        if styles.is_light_theme():
+            shadow = QGraphicsDropShadowEffect(self.scroll_area)
+            shadow.setBlurRadius(24)
+            shadow.setColor(QColor(0, 0, 0, 60))
+            shadow.setOffset(0, 2)
+            self.scroll_area.setGraphicsEffect(shadow)
+        else:
+            self.scroll_area.setGraphicsEffect(None)
+
     def setup_ui(self):
         layout = QVBoxLayout(self)
         scroll = _OverlayScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll.setStyleSheet(styles.RIGHT_PANEL_SCROLL_STYLE)
+        scroll.setStyleSheet(styles.get_right_panel_scroll_style())
         self.scroll_area = scroll  # нужна для временной фиксации ширины при печати
+        self._apply_scroll_area_shadow()
 
         content = QWidget()
         self.content_widget = content  # нужен целиком для экспорта в PDF
@@ -183,12 +210,12 @@ class RightPanel(QWidget):
         logo_layout = QVBoxLayout(self.logo_label)
         logo_layout.setAlignment(Qt.AlignCenter)
 
-        logo_text_label = QLabel("Выберите насос для просмотра протокола")
-        logo_text_label.setAlignment(Qt.AlignCenter)
-        logo_text_label.setStyleSheet(styles.RIGHT_PANEL_LOGO_TEXT_STYLE)
-        logo_layout.addWidget(logo_text_label)
+        self.logo_text_label = QLabel("Выберите насос для просмотра протокола")
+        self.logo_text_label.setAlignment(Qt.AlignCenter)
+        self.logo_text_label.setStyleSheet(styles.get_right_panel_logo_text_style())
+        logo_layout.addWidget(self.logo_text_label)
 
-        self.logo_label.setStyleSheet(styles.RIGHT_PANEL_LOGO_STYLE)
+        self.logo_label.setStyleSheet(styles.get_right_panel_logo_style())
         self.content_layout.addWidget(self.logo_label)
 
         # Индикатор загрузки: иконка песочных часов (переворачивается по
@@ -235,7 +262,7 @@ class RightPanel(QWidget):
         # бирюзовая полоса по контуру)
         self.stats_widget = _CtrlWheelZoomWidget(self._on_stats_wheel)
         self.stats_widget.setObjectName("statsBackground")
-        self.stats_widget.setStyleSheet(styles.RIGHT_PANEL_STATS_BG_STYLE)
+        self.stats_widget.setStyleSheet(styles.get_right_panel_stats_bg_style())
         stats_outer_layout = QVBoxLayout(self.stats_widget)
         stats_outer_layout.setContentsMargins(20, 20, 20, 20)
 
@@ -329,7 +356,7 @@ class RightPanel(QWidget):
         self.overview_bg = QWidget()
         self.overview_bg.setAttribute(Qt.WA_StyledBackground, True)
         self.overview_bg.setObjectName("statsBackground")
-        self.overview_bg.setStyleSheet(styles.RIGHT_PANEL_STATS_BG_STYLE)
+        self.overview_bg.setStyleSheet(styles.get_right_panel_stats_bg_style())
         overview_bg_layout = QVBoxLayout(self.overview_bg)
         overview_bg_layout.setContentsMargins(0, 0, 0, 0)
         self.overview_label = QLabel()
@@ -644,6 +671,11 @@ class RightPanel(QWidget):
         if show_notes:
             self.notes_widget.show()
         self.mode_changed.emit('protocol')
+        # Протокол перестраивается с нуля при каждом выборе насоса - со
+        # стилями "как в коде" (исходно тёмными). Перекрашиваем заново
+        # под текущую тему, иначе на светлой теме текст оставался бы
+        # белым до следующего переключения темы.
+        styles.retheme_widget_tree(self)
 
     def _compact_table(self, table, fix_width=True):
         """Уменьшает шрифт таблицы и подгоняет высоту (и, если fix_width=True,
@@ -742,7 +774,7 @@ class RightPanel(QWidget):
             key = f'g{idx}'
             val = results.get(key)
             x_val = x_vals[i] if i < len(x_vals) else ''
-            x_item = QTableWidgetItem(str(x_val))
+            x_item = QTableWidgetItem(utils.format_number(x_val))
             x_item.setTextAlignment(Qt.AlignCenter)
             table.setItem(i, 0, x_item)
 
@@ -1250,7 +1282,7 @@ class RightPanel(QWidget):
         for row, idx in enumerate(indices):
             key = f'g{idx}'
             x_val = x_vals[row] if row < len(x_vals) else ''
-            x_item = QTableWidgetItem(str(x_val))
+            x_item = QTableWidgetItem(utils.format_number(x_val))
             x_item.setTextAlignment(Qt.AlignCenter)
             table.setItem(row, 0, x_item)
 
@@ -1896,6 +1928,11 @@ class RightPanel(QWidget):
         self.dynamic_widget.hide()  # иначе видна пустая панель-подложка без содержимого
         self.stats_widget.hide()
         self.loading_label.hide()
+        # Переприменяем стиль заглушки прямо сейчас, а не полагаемся
+        # только на разовое обновление при переключении темы - защита от
+        # возможной рассинхронизации между темой и уже показанным виджетом
+        self.logo_label.setStyleSheet(styles.get_right_panel_logo_style())
+        self.logo_text_label.setStyleSheet(styles.get_right_panel_logo_text_style())
         self.logo_label.show()
 
     def _show_loading(self, message="Загрузка протокола..."):

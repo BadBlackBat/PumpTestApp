@@ -100,6 +100,7 @@ def set_app_user_model_id():
 def main():
     db.init_db()
     _DialogBackgroundManager.load_settings()
+    styles.load_theme_setting()
 
     set_app_user_model_id()
 

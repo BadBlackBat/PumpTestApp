@@ -29,6 +29,10 @@ class _GlowLine(QWidget):
         self.setFixedHeight(styles.STATUS_BAR_GLOW_HEIGHT)
         self._explicit_color = color
         _GlowLine._instances.add(self)
+        # См. подробное объяснение в _GlowFrame (left_panel.py) - та же
+        # причина: тема этого виджета управляется его собственным
+        # refresh_all(), общий retheme_widget_tree() должен его пропускать
+        self.setProperty("_self_themed", True)
 
     def _current_color(self):
         return self._explicit_color or styles.get_accent_color_rgb()

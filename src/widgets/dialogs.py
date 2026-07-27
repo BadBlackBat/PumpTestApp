@@ -708,6 +708,7 @@ class PasswordDialog(_GlowDialog):
 
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.Password)
+        self.password_input.setStyleSheet(styles.get_password_input_style())
         self.password_input.returnPressed.connect(self.try_accept)
         self.body_layout.addWidget(self.password_input)
 
@@ -762,9 +763,10 @@ class PointsEditorWidget(QWidget):
     """Таблица для редактирования точек испытания: X-значение, мин., макс.
     Позволяет добавлять/удалять точки в пределах max_points (ограничение
     структуры БД - под точки отведено фиксированное число ячеек результатов)."""
-    def __init__(self, x_values, min_values, max_values, max_points, x_label="X", parent=None):
+    def __init__(self, x_values, min_values, max_values, max_points, x_label="X", x_is_integer=False, parent=None):
         super().__init__(parent)
         self.max_points = max_points
+        self.x_is_integer = x_is_integer
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -803,6 +805,11 @@ class PointsEditorWidget(QWidget):
             x_val = x_values[i] if i < len(x_values) else ''
             min_val = min_values[i] if i < len(min_values) else ''
             max_val = max_values[i] if i < len(max_values) else ''
+            if self.x_is_integer and x_val != '':
+                try:
+                    x_val = int(round(float(x_val)))
+                except (ValueError, TypeError):
+                    pass
             x_item = QTableWidgetItem(str(x_val))
             x_item.setTextAlignment(Qt.AlignCenter)
             x_item.setForeground(cell_text_color)
@@ -959,7 +966,10 @@ class PointsEditorWidget(QWidget):
                     return float(text)
                 except ValueError:
                     return None
-            x_vals.append(get_float(0))
+            x_val = get_float(0)
+            if self.x_is_integer and x_val is not None:
+                x_val = int(round(x_val))
+            x_vals.append(x_val)
             min_vals.append(get_float(1))
             max_vals.append(get_float(2))
         return x_vals, min_vals, max_vals
@@ -1023,7 +1033,8 @@ class AddModificationDialog(_GlowDialog):
             min_values=existing_mod['norm_graph1_min'] if existing_mod else [],
             max_values=existing_mod['norm_graph1_max'] if existing_mod else [],
             max_points=utils.MAX_GRAPH1_POINTS,
-            x_label="Обороты"
+            x_label="Обороты",
+            x_is_integer=True
         )
         test1_col.addWidget(self.test1)
         tests_layout.addLayout(test1_col)
@@ -1035,7 +1046,8 @@ class AddModificationDialog(_GlowDialog):
             min_values=existing_mod['norm_graph2_min'] if existing_mod else [],
             max_values=existing_mod['norm_graph2_max'] if existing_mod else [],
             max_points=utils.MAX_GRAPH2_POINTS,
-            x_label="Обороты"
+            x_label="Обороты",
+            x_is_integer=True
         )
         test2_col.addWidget(self.test2)
         tests_layout.addLayout(test2_col)
@@ -1591,6 +1603,12 @@ class ViewModificationsDialog(_GlowDialog):
         self.details_layout.addLayout(seal_grid)
 
         self.details_layout.addStretch(1)
+        # Перекрашиваем заново под текущую тему - при переключении между
+        # модификациями это содержимое перестраивается с нуля (со
+        # стилями "как в коде", т.е. всегда исходными тёмными), в обход
+        # разовой перекраски, которая происходит только один раз при
+        # самом открытии диалога
+        styles.retheme_widget_tree(self)
 
     def _build_test_section(self, test_num_label, description, x_values, min_values, max_values,
                              x_label, x_major_step=None):
@@ -1667,7 +1685,8 @@ class ViewModificationsDialog(_GlowDialog):
         cell_color = QColor("#1c1e21")
         for row, (x, mn, mx) in enumerate(zip(x_values, min_values, max_values)):
             for col, val in enumerate([x, mn, mx]):
-                item = QTableWidgetItem(str(val))
+                text = utils.format_number(val) if col == 0 else str(val)
+                item = QTableWidgetItem(text)
                 item.setFlags(Qt.ItemIsEnabled)
                 item.setTextAlignment(Qt.AlignCenter)
                 item.setForeground(cell_color)
@@ -2236,6 +2255,10 @@ class AddPumpDialog(_GlowDialog):
             row.addStretch(1)
             self.seal_inputs[key] = combo
             self.extra_column.addLayout(row)
+        # Эти виджеты (условия испытаний, герметичность) строятся
+        # заново при каждом выборе модификации - со стилями "как в
+        # коде" (исходно тёмными). Перекрашиваем сразу под текущую тему.
+        styles.retheme_widget_tree(self)
 
     def _make_seal_combo(self, key, stored_value):
         """Выпадающий список для одного пункта проверки на герметичность -
@@ -2374,7 +2397,7 @@ class AddPumpDialog(_GlowDialog):
 
         cell_text_color = QColor("#1c1e21")  # тёмный текст - на светлом фоне ячеек читается всегда
         for i, x in enumerate(x_values):
-            x_item = QTableWidgetItem(str(x))
+            x_item = QTableWidgetItem(utils.format_number(x))
             x_item.setFlags(Qt.ItemIsEnabled)
             x_item.setTextAlignment(Qt.AlignCenter)
             x_item.setForeground(cell_text_color)
@@ -2827,6 +2850,10 @@ class EditPumpDialog(_GlowDialog):
             row.addStretch(1)
             self.seal_inputs[key] = combo
             self.extra_column.addLayout(row)
+        # Эти виджеты (условия испытаний, герметичность) строятся
+        # заново при каждом выборе модификации - со стилями "как в
+        # коде" (исходно тёмными). Перекрашиваем сразу под текущую тему.
+        styles.retheme_widget_tree(self)
 
     def _make_seal_combo(self, key, stored_value):
         if key == 'g37':
@@ -2955,7 +2982,7 @@ class EditPumpDialog(_GlowDialog):
         """)
 
         for i, x in enumerate(x_values):
-            x_item = QTableWidgetItem(str(x))
+            x_item = QTableWidgetItem(utils.format_number(x))
             x_item.setFlags(Qt.ItemIsEnabled)
             x_item.setTextAlignment(Qt.AlignCenter)
             x_item.setForeground(self._NORMAL_COLOR)

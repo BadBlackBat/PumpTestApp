@@ -58,6 +58,9 @@ class _IconButton(QPushButton):
             self.setToolTip(tooltip)
         self._active = False  # принудительно подсвечена (не зависит от наведения мыши)
         _IconButton._instances.add(self)
+        # См. подробное объяснение в _GlowFrame (widgets/left_panel.py) -
+        # тема этой кнопки управляется собственным refresh_all()
+        self.setProperty("_self_themed", True)
 
     def _build_icons(self):
         self._normal_icon = icon_utils.tinted_icon(
@@ -108,7 +111,7 @@ class _ThemeToggleButton(QWidget):
         self._size = size
         self._inactive_size = inactive_size
         self._night_inactive_size = night_inactive_size
-        self._is_day = False
+        self._is_day = styles.is_light_theme()
 
         # Разные SVG могут иметь разный "запас" пустого поля внутри своего
         # холста - при одинаковом заявленном размере рендера видимая
@@ -375,6 +378,16 @@ class MainWindow(QMainWindow):
         
         # Загрузка данных
         self.left_panel.load_data()
+
+        # Применяем уже загруженную (сохранённую с прошлого запуска)
+        # тему прямо сейчас - весь интерфейс выше строился со стилями
+        # "как в коде" (они всегда исходно тёмные), и ничего до этого
+        # момента не "применяло" по-настоящему светлую тему при самом
+        # первом показе окна - это происходило только при РУЧНОМ
+        # переключении пользователем (через apply_theme). Вызов
+        # безопасен и для тёмной темы тоже - тогда это просто повторное
+        # применение уже верных стилей, без видимого эффекта.
+        self.apply_theme(styles.is_light_theme())
     
     def reset_layout_to_default(self):
         """Возвращает интерфейс к исходному виду, как при запуске:
@@ -723,6 +736,7 @@ class MainWindow(QMainWindow):
         диалогов) перекрашиваются сразу, без пересоздания - через их
         собственные refresh_all()."""
         styles.CURRENT_THEME = 'light' if is_day else 'dark'
+        styles.save_theme_setting()
 
         self.top_bar_widget.setStyleSheet(styles.get_top_bar_style())
         font_family = getattr(styles, 'TERMINATOR_FONT_FAMILY', None) or "Segoe UI"
@@ -737,6 +751,7 @@ class MainWindow(QMainWindow):
         _IconButton.refresh_all()
         self.btn_theme._refresh_icons()
         self.left_panel.refresh_theme()
+        self.right_panel.refresh_theme()
 
         self._apply_native_window_colors()
 
@@ -847,7 +862,7 @@ class MainWindow(QMainWindow):
         self.update_status()
         GlowMessageDialog.show_success(
             self, "Успех",
-            f"Насос №{data['pump_number']} успешно добавлен.\nВердикт: {verdict}."
+            f"Насос № {data['pump_number']} успешно добавлен.\nВердикт: {verdict}."
         )
     
     def on_delete_requested(self, pump_id):

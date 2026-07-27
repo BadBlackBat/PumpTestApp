@@ -29,6 +29,24 @@ def is_light_theme():
     return CURRENT_THEME == 'light'
 
 
+def load_theme_setting():
+    """Загружает сохранённую тему - вызывать один раз при запуске
+    программы, до создания главного окна (см. main.py)."""
+    global CURRENT_THEME
+    from PyQt5.QtCore import QSettings
+    settings = QSettings("PumpTestApp", "MainSettings")
+    CURRENT_THEME = settings.value("app_theme", "dark", type=str)
+
+
+def save_theme_setting():
+    """Сохраняет текущую тему - вызывается из gui.py при каждом
+    переключении, чтобы при следующем запуске программа открылась в
+    той же теме."""
+    from PyQt5.QtCore import QSettings
+    settings = QSettings("PumpTestApp", "MainSettings")
+    settings.setValue("app_theme", CURRENT_THEME)
+
+
 def get_top_bar_style():
     return TOP_BAR_STYLE_LIGHT if is_light_theme() else TOP_BAR_STYLE
 
@@ -53,7 +71,7 @@ def get_glow_shadow_params():
     эту особенность рискованно (можно сломать отрисовку, как уже было
     с WA_NoSystemBackground), поэтому смягчаем тень, а не убираем совсем."""
     if is_light_theme():
-        return 8, 35
+        return 20, 75
     return LEFT_PANEL_GLOW_SHADOW_BLUR, 150
 
 
@@ -122,6 +140,7 @@ def retheme_stylesheet(css):
     css = _re.sub(r'(?<!background-)\bcolor\s*:\s*#e8eaed', f'color: {text_hex}', css)
     css = _re.sub(r'(?<!background-)\bcolor\s*:\s*#ffffff', f'color: {text_hex}', css)
     css = _re.sub(r'(?<!background-)\bcolor\s*:\s*#fff\b', f'color: {text_hex}', css)
+    css = _re.sub(r'(?<!background-)\bcolor\s*:\s*#f2f4f6', f'color: {text_hex}', css)
 
     # Акцентный бирюзовый (рамки при наведении/фокусе, выделение) ->
     # тёмно-стальной, контрастный на светлом фоне
@@ -148,27 +167,64 @@ def retheme_stylesheet(css):
     css = _re.sub(r'background(-color)?\s*:\s*#2b2d31',
                   lambda m: f'background{m.group(1) or ""}: #eef0f2', css)
 
+    # Тёмный графитовый фон заголовков таблиц (во всех диалогах -
+    # добавление насоса, редактирование, модификации и т.д.) -> светлый
+    # алюминий, в тон остальным светлым заголовкам
+    css = _re.sub(r'background(-color)?\s*:\s*#3a3d42',
+                  lambda m: f'background{m.group(1) or ""}: #eef0f2', css)
+
+    # Заголовки основной таблицы списка насосов -> ещё более светлый,
+    # гладкий вариант (п.8 - "в стиле наших новых светлых кнопок")
+    css = css.replace(_TABLE_HEADER_ALUMINUM, _TABLE_HEADER_ALUMINUM_LIGHT)
+
     # Алюминиевый градиент кнопок -> более гладкий и светлый вариант
     # (нужно подставлять уже готовые строки, т.к. это не просто цвет, а
     # целая строка qlineargradient(...))
     css = css.replace(_ALUMINUM_NORMAL, _ALUMINUM_NORMAL_LIGHT)
     css = css.replace(_ALUMINUM_HOVER, _ALUMINUM_HOVER_LIGHT)
 
+    # Выпадающий список (фильтры) - при наведении на пункт (не
+    # обязательно выбранный) текст становится серебристым - такого
+    # правила в исходном (тёмном) стиле не было, добавляем отдельно
+    if 'QAbstractItemView' in css and 'QComboBox' in css:
+        css += """
+    QComboBox QAbstractItemView::item:hover {
+        color: #e9ebee;
+    }
+"""
+
     return css
 
 
 def retheme_widget_tree(root_widget):
     """Проходит по root_widget и всем его дочерним виджетам, перекрашивая
-    уже применённый QSS через retheme_stylesheet(). Используется при
-    переключении темы - и для диалогов (см. _GlowDialog.showEvent), и
-    для постоянных панелей вроде левой панели (см. LeftPanel.refresh_theme)."""
+    их QSS под текущую тему. Используется при переключении темы - и для
+    диалогов (см. _GlowDialog.showEvent), и для постоянных панелей вроде
+    левой панели (см. LeftPanel.refresh_theme).
+
+    ВАЖНО: у каждого виджета при первой встрече запоминается его
+    ИСХОДНЫЙ (написанный в коде, всегда "тёмный") стиль - в свойстве
+    "_original_stylesheet". Тема каждый раз пересчитывается именно от
+    этого сохранённого оригинала, а не от уже применённого стиля -
+    иначе (как было раньше) переключение тёмная->светлая->тёмная не
+    отменяло бы перекраску: retheme_stylesheet() ничего не делает на
+    тёмной теме, поэтому виджет так и оставался бы светлым навсегда."""
     from PyQt5.QtWidgets import QWidget
     widgets = [root_widget] + root_widget.findChildren(QWidget)
     for w in widgets:
-        sheet = w.styleSheet()
-        if sheet:
-            new_sheet = retheme_stylesheet(sheet)
-            if new_sheet != sheet:
+        # Виджеты с собственным механизмом темизации (_GlowFrame,
+        # _GlowLine, _IconButton) пропускаем - иначе общий обход
+        # конфликтовал бы с их refresh_all() (см. подробное объяснение
+        # в _GlowFrame.__init__, left_panel.py)
+        if w.property("_self_themed"):
+            continue
+        original = w.property("_original_stylesheet")
+        if original is None:
+            original = w.styleSheet()
+            w.setProperty("_original_stylesheet", original)
+        if original:
+            new_sheet = retheme_stylesheet(original)
+            if new_sheet != w.styleSheet():
                 w.setStyleSheet(new_sheet)
 
 
@@ -548,6 +604,50 @@ def apply_calendar_style(calendar_widget):
         if viewport is not None:
             viewport.setMouseTracking(True)
 
+# --- Поле ввода пароля - почти прозрачное (чуть отличается от фона
+# диалога), с тем же принципом наведения/фокуса, что и у строки поиска
+# насоса: лёгкая подсветка при наведении, более явная - в фокусе ---
+PASSWORD_INPUT_STYLE = """
+    QLineEdit {
+        background-color: rgba(255, 255, 255, 12);
+        border: 1px solid #6b6f75;
+        border-radius: 4px;
+        color: #e8eaed;
+        padding: 4px 8px;
+    }
+    QLineEdit:hover {
+        border: 1px solid #8fe3ff;
+        background-color: rgba(79, 209, 255, 25);
+    }
+    QLineEdit:focus {
+        border: 2px solid #4fd1ff;
+        background-color: rgba(79, 209, 255, 40);
+    }
+"""
+
+PASSWORD_INPUT_STYLE_LIGHT = """
+    QLineEdit {
+        background-color: rgba(43, 45, 49, 10);
+        border: 1px solid #b7bcc2;
+        border-radius: 4px;
+        color: #2b2d31;
+        padding: 4px 8px;
+    }
+    QLineEdit:hover {
+        border: 1px solid #0d7a99;
+        background-color: rgba(13, 122, 153, 25);
+    }
+    QLineEdit:focus {
+        border: 2px solid #0d7a99;
+        background-color: rgba(13, 122, 153, 40);
+    }
+"""
+
+
+def get_password_input_style():
+    return PASSWORD_INPUT_STYLE_LIGHT if is_light_theme() else PASSWORD_INPUT_STYLE
+
+
 # --- Строка поиска: не как обычное поле ввода, а просто нижнее
 # подчёркивание контрастным цветом. При наведении - лёгкая подсветка,
 # в фокусе - явный бирюзовый акцент. Шрифт - жирный моноширинный
@@ -693,6 +793,11 @@ _TABLE_LIGHT_ALUMINUM = _brushed_metal_gradient(
 _TABLE_HEADER_ALUMINUM = _brushed_metal_gradient(
     "#c3c7cc", "#b2b6bb", bands=6, horizontal_bands=True
 )
+# Ещё светлее и глаже - специально для светлой темы (п.8: "в стиле наших
+# новых светлых кнопок")
+_TABLE_HEADER_ALUMINUM_LIGHT = _brushed_metal_gradient(
+    "#fafbfc", "#eef0f2", bands=6, horizontal_bands=True
+)
 
 
 def build_left_panel_table_style(arrow_down_path=None, arrow_up_path=None, header_font_family=None):
@@ -779,6 +884,26 @@ RIGHT_PANEL_SCROLL_STYLE = """
     }
 """
 
+# Светлая тема - без тонкой рамки (визуально выбивалась из общего вида
+# на светлом фоне) - взамен программно добавляется мягкая тень (см.
+# right_panel.py, apply_scroll_area_theme)
+RIGHT_PANEL_SCROLL_STYLE_LIGHT = """
+    QScrollArea {
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 #ffffff, stop:0.5 #f4f5f7, stop:1 #eceef1);
+        border: none;
+        border-radius: 8px;
+    }
+    QScrollArea > QWidget#qt_scrollarea_viewport {
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 #ffffff, stop:0.5 #f4f5f7, stop:1 #eceef1);
+    }
+"""
+
+
+def get_right_panel_scroll_style():
+    return RIGHT_PANEL_SCROLL_STYLE_LIGHT if is_light_theme() else RIGHT_PANEL_SCROLL_STYLE
+
 # Заглушка-логотип по центру правой панели - показывается, пока не
 # выбран ни один насос (и пока не идёт загрузка протокола). Без фона и
 # рамки - просто отступ вокруг картинки и текста. Привязан к objectName
@@ -797,6 +922,24 @@ RIGHT_PANEL_LOGO_STYLE = """
     }
 """
 
+# Светлая тема - нарядный светлый градиент вместо "киберпанк" тёмного,
+# графитовый текст вместо неонового
+RIGHT_PANEL_LOGO_STYLE_LIGHT = """
+    QWidget#logoContainer {
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+            stop:0 #fdfefe,
+            stop:0.45 #eef1f5,
+            stop:1 #dbe1e8);
+        border: 1px solid #b7bcc2;
+        border-radius: 12px;
+        padding: 40px;
+    }
+"""
+
+
+def get_right_panel_logo_style():
+    return RIGHT_PANEL_LOGO_STYLE_LIGHT if is_light_theme() else RIGHT_PANEL_LOGO_STYLE
+
 # Текст-подсказка ("Выберите насос для просмотра протокола") поверх
 # киберпанк-градиента выше - светящийся голубой неон, тот же оттенок,
 # что и акцентная подсветка статус-бара/верхней панели (единая палитра)
@@ -806,6 +949,18 @@ RIGHT_PANEL_LOGO_TEXT_STYLE = """
     font-size: 16pt;
     letter-spacing: 1px;
 """
+
+RIGHT_PANEL_LOGO_TEXT_STYLE_LIGHT = """
+    color: #2b2d31;
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-size: 16pt;
+    letter-spacing: 1px;
+"""
+
+
+def get_right_panel_logo_text_style():
+    return RIGHT_PANEL_LOGO_TEXT_STYLE_LIGHT if is_light_theme() else RIGHT_PANEL_LOGO_TEXT_STYLE
+
 
 # Индикатор "Загрузка протокола..." - показывается на время построения
 # таблиц и графиков matplotlib (эта операция синхронная и заметна по
@@ -849,6 +1004,24 @@ RIGHT_PANEL_STATS_BG_STYLE = """
         border-radius: 12px;
     }
 """
+
+# Светлая тема - тот же светлый градиент, что и у заглушки-логотипа
+# правой панели (RIGHT_PANEL_LOGO_STYLE_LIGHT) - используется и для
+# статистики, и для снимка протокола "по высоте" (оба показываются в
+# одном и том же widget#statsBackground)
+RIGHT_PANEL_STATS_BG_STYLE_LIGHT = """
+    QWidget#statsBackground {
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+            stop:0 #fdfefe,
+            stop:0.45 #eef1f5,
+            stop:1 #dbe1e8);
+        border-radius: 12px;
+    }
+"""
+
+
+def get_right_panel_stats_bg_style():
+    return RIGHT_PANEL_STATS_BG_STYLE_LIGHT if is_light_theme() else RIGHT_PANEL_STATS_BG_STYLE
 
 # Тулбар matplotlib (зум/панорама/сброс масштаба кнопкой "Home") над
 # каждым графиком - убираем внутренние отступы/рамку, чтобы тулбар не

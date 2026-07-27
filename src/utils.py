@@ -180,6 +180,24 @@ def normalize_order_number(value):
     return translated.upper()
 
 
+def format_number(value):
+    """Форматирует число для отображения: целые значения (например,
+    обороты - 1000.0) показывает без десятичных ("1000"), значения с
+    дробной частью (например, сила тока - 0.5) - как есть ("0.5").
+    Используется везде, где в таблицы попадают X-значения испытаний -
+    без этого обороты, хранящиеся как float, показывались бы с
+    лишним ".0" на конце."""
+    if value is None or value == '':
+        return ''
+    try:
+        num = float(value)
+    except (ValueError, TypeError):
+        return str(value)
+    if num == int(num):
+        return str(int(num))
+    return str(num)
+
+
 def format_order_number(value):
     """Приводит номер заказа к строке без .0."""
     if value is None:

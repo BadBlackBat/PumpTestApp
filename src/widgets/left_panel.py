@@ -9,7 +9,7 @@ from PyQt5.QtCore import (
     Qt, pyqtSignal, QDate, QPoint, QTimer, QEvent, QEasingCurve,
     QRect, QRectF, pyqtProperty, QPropertyAnimation, QSize
 )
-from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QPolygon, QLinearGradient, QBrush
+from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QPolygon, QLinearGradient, QBrush, QPainterPath
 
 from .. import database as db
 from .. import utils
@@ -242,6 +242,12 @@ class _GlowFrame(QFrame):
     def __init__(self, parent=None, glow_color=None):
         super().__init__(parent)
         self.setObjectName("filtersPanel")
+        # Без этого атрибута Qt в некоторых стилях может некорректно
+        # применять border-radius из QSS у QFrame - виджет визуально
+        # выглядит скруглённым, но его "форма" для целей эффектов (см.
+        # QGraphicsDropShadowEffect ниже) остаётся прямоугольной. Это и
+        # есть вероятная причина "углов поверх скруглений".
+        self.setAttribute(Qt.WA_StyledBackground, True)
         # Цвет свечения - явно заданный (например, оранжевый для
         # EditPumpDialog, зелёный для AddModificationDialog) остаётся
         # тем же независимо от темы - это семантический цвет конкретного
@@ -259,6 +265,15 @@ class _GlowFrame(QFrame):
         self._shadow_effect = shadow
 
         _GlowFrame._instances.add(self)
+        # Помечаем, что тема этого виджета управляется его собственным
+        # механизмом (refresh_all/refresh_theme выше) - иначе общий
+        # retheme_widget_tree() (см. styles.py) конфликтовал бы с ним:
+        # найдя этот виджет ПОСЛЕ того, как _GlowFrame.refresh_all() уже
+        # применил светлый стиль, retheme_widget_tree ошибочно принял бы
+        # УЖЕ светлый CSS за "исходный тёмный" и запомнил бы его как
+        # такой - при следующем переключении обратно в тёмную тему это
+        # привело бы к тому, что панель осталась бы светлой навсегда.
+        self.setProperty("_self_themed", True)
 
     @property
     def _glow_color(self):
@@ -287,6 +302,18 @@ class _GlowFrame(QFrame):
         painter.setRenderHint(QPainter.Antialiasing)
         w, h = self.width(), self.height()
         t = styles.LEFT_PANEL_GLOW_THICKNESS
+
+        # Ограничиваем область рисования той же скруглённой формой, что
+        # и border-radius в QSS (10px) - иначе прямоугольная заливка
+        # полос ниже (fillRect на всю ширину/высоту) рисуется буквально
+        # поверх скруглённых углов, создавая видимые квадратные
+        # "заплатки" именно там, где что-то рисуется от края до края.
+        # Это и объясняло замеченную асимметрию: на светлой теме полоса
+        # рисуется только сверху и по бокам (снизу ничего нет вообще) -
+        # поэтому квадратные уголки были видны только сверху.
+        clip_path = QPainterPath()
+        clip_path.addRoundedRect(QRectF(0, 0, w, h), 10, 10)
+        painter.setClipPath(clip_path)
 
         if styles.is_light_theme():
             # Светлая тема - блик полированного металла: яркая почти-белая
@@ -487,6 +514,12 @@ class LeftPanel(QWidget):
 
         self.filters_grid = self._build_filters_body(expanded)
         self.filters_layout.addLayout(self.filters_grid)
+        # Новые виджеты фильтров построены с исходным (тёмным) стилем -
+        # перекрашиваем их под текущую тему сразу же, иначе (на светлой
+        # теме) их текст остался бы белым до следующего переключения
+        # темы, что дополнительно путало бы всё при следующей перекраске
+        # (см. подробное объяснение бага в retheme_widget_tree, styles.py)
+        styles.retheme_widget_tree(self)
 
     def setup_ui(self):
       layout = QVBoxLayout(self)
