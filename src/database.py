@@ -2,12 +2,29 @@ import sqlite3
 import os
 import json
 from datetime import datetime
+from . import db_settings
 
-DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'pumps.db')
+def get_active_db_path():
+    """Возвращает путь к файлу базы, с которым программа реально
+    работает прямо сейчас.
+
+    По умолчанию (пользователь ничего не настраивал) - тот же локальный
+    путь, что был всегда, поведение не меняется. Если явно выбран
+    сетевой режим - используется ЛОКАЛЬНАЯ РАБОЧАЯ КОПИЯ (см.
+    get_local_db_path) - сама программа всегда читает/пишет локальный
+    файл; синхронизация с сетевым файлом - отдельный, более поздний шаг
+    (проверка версий, лок, слияние), не часть этой функции."""
+    return db_settings.get_local_db_path()
+
+# Оставлено для обратной совместимости - код, ссылающийся на
+# database.DB_PATH напрямую, продолжит работать. Новый код должен
+# использовать get_active_db_path().
+DB_PATH = get_active_db_path()
 
 def get_connection():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    return sqlite3.connect(DB_PATH)
+    path = get_active_db_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    return sqlite3.connect(path)
 
 def init_db():
     """Создаёт все таблицы, если их нет."""
@@ -82,9 +99,90 @@ def init_db():
         for col_name in ('norm_graph1_x', 'norm_graph2_x', 'norm_graph3_x'):
             if col_name not in mod_columns:
                 cursor.execute(f'ALTER TABLE modifications ADD COLUMN {col_name} TEXT')
-                
+
+        # Флажок расширенного шаблона (больше точек по оборотам) - явно
+        # задаётся при создании модификации, а не вычисляется по
+        # количеству точек (см. обсуждение: вычисление по количеству
+        # рискованно ошибиться, если кто-то случайно наполнит обычную
+        # модификацию бОльшим числом точек)
+        if 'is_extended_template' not in mod_columns:
+            cursor.execute(
+                'ALTER TABLE modifications ADD COLUMN is_extended_template BOOLEAN DEFAULT 0'
+            )
+
+        # Однострочная таблица метаданных базы - нужна для многопользова-
+        # тельской работы (сверка версий при старте, уведомления об
+        # изменениях у других пользователей). revision растёт при любой
+        # операции записи (см. bump_revision ниже).
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS db_meta (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                revision INTEGER NOT NULL DEFAULT 0,
+                last_modified_at TEXT,
+                last_modified_by TEXT,
+                last_action_description TEXT
+            )
+        ''')
+        cursor.execute('INSERT OR IGNORE INTO db_meta (id, revision) VALUES (1, 0)')
+
+        # Журнал действий - нужен для офлайн-слияния (см. обсуждение):
+        # при восстановлении сети после офлайн-работы проигрывается
+        # запись за записью, с проверкой конфликтов по record_revision
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS change_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                action_type TEXT NOT NULL,       -- 'add' / 'update' / 'delete'
+                entity_type TEXT NOT NULL,       -- 'pump' / 'modification' / 'order'
+                entity_id INTEGER,
+                record_revision INTEGER,         -- ревизия базы на момент действия
+                description TEXT
+            )
+        ''')
+
         conn.commit()
         print("База данных инициализирована.")
+
+
+def bump_revision(description, conn=None):
+    """Увеличивает ревизию базы на 1 и записывает, что именно произошло -
+    вызывать при любой операции записи (добавление/изменение/удаление
+    насоса, модификации, заказа).
+
+    conn - если операция уже идёт внутри своего соединения/транзакции
+    (обычный случай - большинство функций ниже открывают with
+    get_connection() as conn), нужно передать именно его, чтобы
+    увеличение ревизии было частью той же транзакции и не оказалось
+    рассинхронизировано, если основная операция вдруг не сохранится.
+
+    Пока просто обновляет db_meta - привязка к change_log (для будущего
+    офлайн-слияния) добавится отдельным шагом, когда будем реализовывать
+    сам механизм слияния."""
+    own_conn = conn is None
+    if own_conn:
+        conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            'UPDATE db_meta SET revision = revision + 1, last_modified_at = ?, '
+            'last_action_description = ? WHERE id = 1',
+            (datetime.now().isoformat(timespec='seconds'), description)
+        )
+        if own_conn:
+            conn.commit()
+    finally:
+        if own_conn:
+            conn.close()
+
+
+def get_current_revision():
+    """Текущая ревизия локальной базы - для сверки с сетевой копией при
+    старте программы (следующий шаг реализации)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT revision FROM db_meta WHERE id = 1')
+        row = cursor.fetchone()
+        return row[0] if row else 0
 
 # ---------- Работа с модификациями ----------
 def add_modification(name, norm_graph1_min, norm_graph1_max, norm_graph1_x,
@@ -108,6 +206,7 @@ def add_modification(name, norm_graph1_min, norm_graph1_max, norm_graph1_x,
               norm_graph2_min, norm_graph2_max, norm_graph2_x,
               norm_graph3_min, norm_graph3_max, norm_graph3_x,
               pressure_min, pressure_max, seal_rules))
+        bump_revision(f"Добавлена модификация «{name}»", conn)
         conn.commit()
         return cursor.lastrowid
 
@@ -181,6 +280,7 @@ def update_modification(mod_id, name, norm_graph1_min, norm_graph1_max, norm_gra
               norm_graph2_min, norm_graph2_max, norm_graph2_x,
               norm_graph3_min, norm_graph3_max, norm_graph3_x,
               pressure_min, pressure_max, seal_rules, mod_id))
+        bump_revision(f"Изменена модификация «{name}»", conn)
         conn.commit()
 
 def delete_modification(mod_id):
@@ -189,7 +289,11 @@ def delete_modification(mod_id):
     DELETE SET NULL в схеме) - сами протоколы насосов не удаляются."""
     with get_connection() as conn:
         cursor = conn.cursor()
+        cursor.execute('SELECT name FROM modifications WHERE id = ?', (mod_id,))
+        row = cursor.fetchone()
+        mod_name = row[0] if row else str(mod_id)
         cursor.execute('DELETE FROM modifications WHERE id = ?', (mod_id,))
+        bump_revision(f"Удалена модификация «{mod_name}»", conn)
         conn.commit()
 
 def count_pumps_for_modification(mod_id):
@@ -270,6 +374,7 @@ def add_pump(pump_number, test_date, test_type, modification_id, order_id,
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (pump_number, test_date, test_type, modification_id, order_id,
               json.dumps(results_json), json.dumps(seal_results_json), verdict, is_sealed, note))
+        bump_revision(f"Добавлен насос №{pump_number}", conn)
         conn.commit()
         return cursor.lastrowid
 
@@ -407,10 +512,12 @@ def delete_pump(pump_id):
     with get_connection() as conn:
         cursor = conn.cursor()
 
-        # Узнаём, к какому заказу была привязана запись, ДО удаления
-        cursor.execute('SELECT order_id FROM pumps WHERE id = ?', (pump_id,))
+        # Узнаём номер насоса и заказ, к которому была привязана запись,
+        # ДО удаления
+        cursor.execute('SELECT pump_number, order_id FROM pumps WHERE id = ?', (pump_id,))
         row = cursor.fetchone()
-        order_id = row[0] if row else None
+        pump_number = row[0] if row else str(pump_id)
+        order_id = row[1] if row else None
 
         cursor.execute('DELETE FROM pumps WHERE id = ?', (pump_id,))
 
@@ -422,6 +529,7 @@ def delete_pump(pump_id):
             if remaining == 0:
                 cursor.execute('DELETE FROM orders WHERE id = ?', (order_id,))
 
+        bump_revision(f"Удалён насос №{pump_number}", conn)
         conn.commit()
 
 def update_pump(pump_id, **kwargs):
@@ -448,6 +556,12 @@ def update_pump(pump_id, **kwargs):
         if set_clause:
             params.append(pump_id)
             cursor.execute(f'UPDATE pumps SET {", ".join(set_clause)} WHERE id = ?', params)
+            pump_number = kwargs.get('pump_number')
+            if pump_number is None:
+                cursor.execute('SELECT pump_number FROM pumps WHERE id = ?', (pump_id,))
+                row = cursor.fetchone()
+                pump_number = row[0] if row else pump_id
+            bump_revision(f"Изменён насос №{pump_number}", conn)
             conn.commit()
 
 # Функция статистики по выбранному заказу
