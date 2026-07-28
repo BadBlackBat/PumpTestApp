@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QScrollArea, QWidget, QSizePolicy,
     QApplication, QGraphicsOpacityEffect, QFrame, QHeaderView, QGridLayout,
     QGraphicsBlurEffect, QGraphicsColorizeEffect, QGraphicsScene, QGraphicsPixmapItem,
-    QCheckBox, QProgressBar
+    QCheckBox, QProgressBar, QRadioButton, QButtonGroup, QFileDialog
 )
 from PyQt5.QtCore import Qt, QDate, QPoint, QSize, QPropertyAnimation, QEasingCurve, QTimer, QRectF, pyqtProperty, QSettings
 from PyQt5.QtGui import QFont, QColor, QFontMetrics, QPainter, QPixmap
@@ -18,6 +18,7 @@ from .. import database as db
 from .. import utils
 from .. import styles
 from .. import icon_utils
+from .. import db_settings
 from .left_panel import _GlowFrame, _GlowScrollBar
 from .status_bar import _GlowLine
 from matplotlib.figure import Figure
@@ -1804,6 +1805,177 @@ class ViewModificationsDialog(_GlowDialog):
         self._update_buttons()
 
 
+class DatabaseLocationDialog(_GlowDialog):
+    """Диалог выбора расположения базы данных - локальный ПК (по
+    умолчанию, поведение как и всегда) или общая сетевая папка, плюс
+    отдельный флаг "полный офлайн" - для тех, кто сознательно всегда
+    работает только со своей локальной копией, даже если у остальных в
+    группе включён сетевой режим."""
+    def __init__(self, parent=None):
+        super().__init__(parent, title="Расположение базы данных")
+        left, top, right, bottom = self.frame_layout.getContentsMargins()
+        self.frame_layout.setContentsMargins(left + 10, top, right + 10, bottom)
+
+        text_color = styles.get_dialog_text_color()
+        label_style = f"color: {text_color}; background: transparent; font-size: 10.5pt;"
+
+        mode_label = QLabel("Режим работы с базой:")
+        mode_label.setStyleSheet(label_style)
+        self.body_layout.addWidget(mode_label)
+
+        self.radio_local = QRadioButton("Локальный файл на этом ПК")
+        self.radio_network = QRadioButton("Общая сетевая папка")
+        for radio in (self.radio_local, self.radio_network):
+            radio.setStyleSheet(f"color: {text_color}; background: transparent; font-size: 10pt;")
+        self.mode_group = QButtonGroup(self)
+        self.mode_group.addButton(self.radio_local)
+        self.mode_group.addButton(self.radio_network)
+        self.body_layout.addWidget(self.radio_local)
+        self.body_layout.addWidget(self.radio_network)
+
+        self.body_layout.addSpacing(14)
+
+        def path_row(label_text, initial_value):
+            row = QHBoxLayout()
+            lbl = QLabel(label_text)
+            lbl.setStyleSheet(label_style)
+            lbl.setFixedWidth(160)
+            field = QLineEdit(initial_value)
+            field.setStyleSheet(styles.get_password_input_style())
+            browse_btn = QPushButton("Обзор...")
+            browse_btn.setObjectName("chromeButton")
+            browse_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+            row.addWidget(lbl)
+            row.addWidget(field, 1)
+            row.addWidget(browse_btn)
+            self.body_layout.addLayout(row)
+            return field, browse_btn
+
+        self.local_path_field, local_browse = path_row(
+            "Локальный файл:", db_settings.get_local_db_path()
+        )
+        self.network_path_field, network_browse = path_row(
+            "Сетевой файл:", db_settings.get_network_db_path()
+        )
+        self.backup_path_field, backup_browse = path_row(
+            "Папка резервных копий:", db_settings.get_backup_path()
+        )
+
+        local_browse.clicked.connect(lambda: self._browse_file(self.local_path_field))
+        network_browse.clicked.connect(lambda: self._browse_file(self.network_path_field))
+        backup_browse.clicked.connect(lambda: self._browse_folder(self.backup_path_field))
+
+        self.body_layout.addSpacing(14)
+
+        self.offline_checkbox = QCheckBox("Полный офлайн-режим (не проверять сетевую базу вообще)")
+        self.offline_checkbox.setStyleSheet(f"""
+            QCheckBox {{
+                color: {text_color};
+                background: transparent;
+                font-size: 10pt;
+                spacing: 8px;
+            }}
+            QCheckBox::indicator {{
+                width: 18px;
+                height: 18px;
+                border: 1px solid #6b6f75;
+                border-radius: 4px;
+                background: #f0f0f0;
+            }}
+            QCheckBox::indicator:checked {{
+                background: {styles.get_accent_color_hex()};
+                border: 1px solid {styles.get_accent_color_hex()};
+            }}
+        """)
+        self.body_layout.addWidget(self.offline_checkbox)
+
+        hint_label = QLabel(
+            "Полный офлайн-режим полезен, если вы сознательно всегда\n"
+            "работаете только со своей локальной копией базы, даже если\n"
+            "остальные в группе используют общую сетевую папку."
+        )
+        hint_label.setWordWrap(True)
+        hint_label.setStyleSheet(f"color: {text_color}; background: transparent; font-size: 8.5pt;")
+        self.body_layout.addWidget(hint_label)
+
+        # Заполняем текущим состоянием
+        if db_settings.get_db_mode() == db_settings.MODE_NETWORK:
+            self.radio_network.setChecked(True)
+        else:
+            self.radio_local.setChecked(True)
+        self.offline_checkbox.setChecked(db_settings.is_full_offline_mode())
+
+        self.body_layout.addSpacing(18)
+        btn_row = QHBoxLayout()
+        save_btn = QPushButton("Сохранить")
+        save_btn.setObjectName("chromeButton")
+        save_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+        save_btn.clicked.connect(self.save_and_close)
+        cancel_btn = QPushButton("Отмена")
+        cancel_btn.setObjectName("chromeButton")
+        cancel_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(save_btn)
+        btn_row.addWidget(cancel_btn)
+        self.body_layout.addLayout(btn_row)
+
+        self.setMinimumWidth(460)
+        self._lock_size()
+
+    def _browse_file(self, field):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Выберите файл базы данных", field.text(), "SQLite (*.db)"
+        )
+        if path:
+            field.setText(path)
+
+    def _browse_folder(self, field):
+        path = QFileDialog.getExistingDirectory(self, "Выберите папку", field.text())
+        if path:
+            field.setText(path)
+
+    def save_and_close(self):
+        new_mode = db_settings.MODE_NETWORK if self.radio_network.isChecked() else db_settings.MODE_LOCAL
+        if new_mode == db_settings.MODE_NETWORK and not self.network_path_field.text().strip():
+            GlowMessageDialog.show_error(
+                self, "Ошибка",
+                "Для сетевого режима нужно указать путь к сетевому файлу базы."
+            )
+            return
+
+        db_settings.set_db_mode(new_mode)
+        db_settings.set_local_db_path(self.local_path_field.text().strip())
+        db_settings.set_network_db_path(self.network_path_field.text().strip())
+        db_settings.set_backup_path(self.backup_path_field.text().strip())
+        db_settings.set_full_offline_mode(self.offline_checkbox.isChecked())
+
+        # Применяем сразу, без перезапуска программы - MainWindow делает
+        # то же самое, что происходит при обычном старте (сверка/
+        # копирование сетевой версии, обновление индикатора, перезагрузка
+        # списка насосов). hasattr - на всякий случай, если этот диалог
+        # вдруг откроют из контекста без такого метода у родителя.
+        main_window = self.parent()
+        if main_window is not None and hasattr(main_window, 'apply_db_settings_change'):
+            sync_status, sync_message = main_window.apply_db_settings_change()
+            if sync_message:
+                if sync_status == 'network_unreachable':
+                    GlowMessageDialog.show_error(self, "База данных", sync_message)
+                else:
+                    GlowMessageDialog.show_success(self, "База данных", sync_message)
+            else:
+                GlowMessageDialog.show_success(
+                    self, "Сохранено",
+                    "Настройки расположения базы данных сохранены и применены."
+                )
+        else:
+            GlowMessageDialog.show_success(
+                self, "Сохранено",
+                "Настройки расположения базы данных сохранены.\n"
+                "Изменения вступят в силу после перезапуска программы."
+            )
+        self.accept()
+
+
 class SettingsDialog(_GlowDialog):
     """Меню настроек: управление модификациями насосов."""
     def __init__(self, parent=None):
@@ -1873,7 +2045,15 @@ class SettingsDialog(_GlowDialog):
 
         self.body_layout.addSpacing(22)
 
-        # Блок 3: служебные действия
+        # Блок 3: расположение базы данных (локальный ПК / сетевая папка)
+        db_label = QLabel("База данных:")
+        db_label.setStyleSheet("color: #e8eaed; background: transparent; font-size: 10.5pt;")
+        self.body_layout.addWidget(db_label)
+        self.body_layout.addWidget(make_btn("Расположение базы данных", self.open_database_location))
+
+        self.body_layout.addSpacing(22)
+
+        # Блок 4: служебные действия
         self.body_layout.addWidget(make_btn("Инструкция", self.open_instructions))
         self.body_layout.addWidget(make_btn("Закрыть", self.accept))
 
@@ -1938,6 +2118,12 @@ class SettingsDialog(_GlowDialog):
     def open_view_modifications(self):
         self.hide()
         dialog = ViewModificationsDialog(self.parent())
+        dialog.exec_()
+        self.show()
+
+    def open_database_location(self):
+        self.hide()
+        dialog = DatabaseLocationDialog(self.parent())
         dialog.exec_()
         self.show()
 

@@ -371,6 +371,111 @@ class _NoSelectionPaintDelegate(QStyledItemDelegate):
         super().paint(painter, opt, index)
 
 
+class _DbStatusIndicator(QWidget):
+    """Четыре мелкие подписи (Network/Local/Offline/Full offline) с
+    кружком-индикатором перед каждой - наглядно показывает, с какой
+    базой данных программа сейчас реально работает. Активная подпись
+    светится своим цветом, и её кружок мигает; остальные три -
+    приглушённо-серые, неактивные.
+
+    'network'      - реально работаем с сетевой базой прямо сейчас
+    'local'        - выбран локальный режим (сеть вообще не используется)
+    'offline'      - сетевой режим выбран/нужен, но сеть сейчас
+                     недоступна - работаем с локальной копией вынужденно
+    'full_offline' - явно включён режим "полный офлайн" в настройках -
+                     сеть не используется осознанно, по выбору
+                     пользователя (а не потому что недоступна)
+    """
+    # Яркие, узнаваемые цвета - специально НЕ зависят от темы (кроме
+    # full_offline) - должны одинаково хорошо читаться и на графитовой
+    # тёмной панели, и на светлой серебристой
+    _COLORS = {
+        'network': (79, 209, 255),   # фирменный бирюзовый
+        'local': (46, 204, 113),     # яркий зелёный
+        'offline': (255, 59, 59),    # яркий красный
+    }
+    _LABELS = {
+        'network': 'Network',
+        'local': 'Local',
+        'offline': 'Offline',
+        'full_offline': 'Full offline',
+    }
+    _INACTIVE_COLOR = (140, 144, 150)  # серый - для неактивных подписей
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._active_mode = 'local'
+        self._blink_on = True
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(2, 0, 2, 0)
+        layout.setSpacing(14)
+
+        self._dot_labels = {}
+        for key in ('network', 'local', 'offline', 'full_offline'):
+            item_layout = QHBoxLayout()
+            item_layout.setSpacing(4)
+            dot = QLabel("●")
+            text = QLabel(self._LABELS[key])
+            # Текст ВСЕГДА жирный (и активный, и неактивный) - раньше
+            # жирность включалась только у активной подписи, из-за чего
+            # её ширина увеличивалась и соседние подписи слегка
+            # "прыгали" влево-вправо при переключении режима. Меняется
+            # только цвет, начертание - всегда одинаковое.
+            font = QFont("Segoe UI", 7, QFont.Bold)
+            dot.setFont(font)
+            text.setFont(font)
+            item_layout.addWidget(dot)
+            item_layout.addWidget(text)
+            layout.addLayout(item_layout)
+            self._dot_labels[key] = (dot, text)
+        layout.addStretch(1)
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._on_blink)
+        self._timer.start(600)  # пол-секунды примерно на "вдох-выдох" мигания
+
+        self._refresh()
+
+    def set_active_mode(self, mode):
+        """mode - 'network' / 'local' / 'offline' / 'full_offline'."""
+        if mode not in self._LABELS:
+            mode = 'local'
+        self._active_mode = mode
+        self._refresh()
+
+    def _on_blink(self):
+        self._blink_on = not self._blink_on
+        self._refresh()
+
+    def _active_color(self):
+        if self._active_mode == 'full_offline':
+            # Единственный режим, зависящий от темы - чёрный на светлой,
+            # белый на тёмной (у остальных трёх цвет фиксированный и
+            # одинаково яркий на обеих темах)
+            return (28, 30, 33) if styles.is_light_theme() else (245, 245, 245)
+        return self._COLORS[self._active_mode]
+
+    def _refresh(self):
+        active_color = self._active_color()
+        for key, (dot, text) in self._dot_labels.items():
+            if key == self._active_mode:
+                r, g, b = active_color
+                # Мигание - кружок то в полную силу цвета, то заметно
+                # приглушённый (не совсем гаснет - иначе было бы похоже
+                # на "неактивно", а не на "мигает")
+                if self._blink_on:
+                    dot_color = f"rgb({r}, {g}, {b})"
+                else:
+                    dot_color = f"rgba({r}, {g}, {b}, 90)"
+                dot.setStyleSheet(f"color: {dot_color}; background: transparent;")
+                text.setStyleSheet(f"color: rgb({r}, {g}, {b}); background: transparent;")
+            else:
+                r, g, b = self._INACTIVE_COLOR
+                dot.setStyleSheet(f"color: rgb({r}, {g}, {b}); background: transparent;")
+                text.setStyleSheet(f"color: rgb({r}, {g}, {b}); background: transparent;")
+
+
 class _RowHighlightOverlay(QWidget):
     """Полупрозрачная подсветка поверх строки таблицы. В отличие от ячеек
     QTableWidget, это настоящий QWidget с настоящим Qt-свойством - поэтому
@@ -418,6 +523,12 @@ class LeftPanel(QWidget):
             styles.apply_calendar_style(self.date_from.calendarWidget())
         if hasattr(self, 'date_to'):
             styles.apply_calendar_style(self.date_to.calendarWidget())
+
+    def set_db_status(self, mode):
+        """Обновляет индикатор режима базы данных (Network/Local/
+        Offline) над строкой поиска - см. _DbStatusIndicator. mode -
+        'network' / 'local' / 'offline'."""
+        self.db_status_indicator.set_active_mode(mode)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -530,8 +641,13 @@ class LeftPanel(QWidget):
       # свечением по всем четырём сторонам (см. класс _GlowFrame)
       filters_panel = _GlowFrame()
       filters_layout = QVBoxLayout(filters_panel)
-      filters_layout.setContentsMargins(14, 12, 14, 12)
+      filters_layout.setContentsMargins(14, 6, 14, 12)
       filters_layout.setSpacing(8)
+
+      # Индикатор режима работы с базой данных (Network/Local/Offline) -
+      # прямо над строкой поиска, чтобы всегда быть на виду
+      self.db_status_indicator = _DbStatusIndicator()
+      filters_layout.addWidget(self.db_status_indicator)
 
       # Ряд 1: Поиск
       search_layout = QHBoxLayout()

@@ -7,6 +7,7 @@ from PyQt5.QtGui import QFontDatabase
 from .gui import MainWindow
 from . import database as db
 from . import styles
+from . import db_sync
 from .widgets.dialogs import _DialogBackgroundManager
 
 RESOURCES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
@@ -98,6 +99,12 @@ def set_app_user_model_id():
 
 
 def main():
+    # Сверка с сетевой базой (если включён сетевой режим - иначе
+    # ничего не делает и не влияет на локальный режим) - обязательно
+    # ДО init_db(), чтобы миграция схемы применилась к финальной версии
+    # локального файла, даже если её только что скопировали с сети
+    sync_status, sync_message = db_sync.check_and_sync_at_startup()
+
     db.init_db()
     _DialogBackgroundManager.load_settings()
     styles.load_theme_setting()
@@ -112,8 +119,21 @@ def main():
     app = QApplication(sys.argv)
     load_custom_fonts()
     window = MainWindow()
+
+    # Индикатор режима базы данных (Network/Local/Offline/Full offline)
+    # в панели фильтров
+    window.left_panel.set_db_status(db_sync.get_indicator_mode(sync_status))
+
     window.show()
     apply_title_bar_color(window)
+
+    if sync_message:
+        from .widgets.dialogs import GlowMessageDialog
+        if sync_status == 'network_unreachable':
+            GlowMessageDialog.show_error(window, "База данных", sync_message)
+        else:
+            GlowMessageDialog.show_success(window, "База данных", sync_message)
+
     sys.exit(app.exec_())
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ from .widgets.right_panel import RightPanel
 from .widgets.status_bar import StatusBar, _GlowLine
 from .widgets.dialogs import PasswordDialog, AddModificationDialog, AddOrderDialog, SettingsDialog, AddPumpDialog, _clamp_to_screen, GlowMessageDialog, PrintChoiceDialog, _DialogBackgroundManager
 from . import database as db
+from . import db_sync
 from . import excel_importer as importer
 from . import utils
 from . import styles
@@ -722,6 +723,29 @@ class MainWindow(QMainWindow):
                 self.update_status()
         if self.showing_stats: self.toggle_statistics()
 
+    def apply_db_settings_change(self):
+        """Применяет смену расположения/режима базы данных БЕЗ перезапуска
+        программы - вызывается сразу после сохранения в диалоге
+        "Расположение базы данных" (dialogs.py, DatabaseLocationDialog).
+
+        Делает ровно то же самое, что происходит при обычном старте
+        программы (см. main.py): сверяет версии и при необходимости
+        копирует более свежую сетевую копию, затем убеждается, что схема
+        локального файла актуальна (безопасно и для уже актуальной базы -
+        миграция идемпотентна), обновляет индикатор режима и полностью
+        перезагружает данные панели, чтобы в списке насосов сразу
+        отобразилось содержимое ТЕПЕРЬ активной базы данных.
+
+        Возвращает (status, message) - как db_sync.check_and_sync_at_startup(),
+        чтобы вызывающий код (сам диалог) мог показать точное сообщение
+        о результате, а не просто "перезапустите программу"."""
+        sync_status, sync_message = db_sync.check_and_sync_at_startup()
+        db.init_db()
+        self.left_panel.set_db_status(db_sync.get_indicator_mode(sync_status))
+        self.left_panel.load_data()
+        self.update_status()
+        return sync_status, sync_message
+
     def apply_theme(self, is_day):
         """Переключает всю программу между тёмной и светлой темой.
 
@@ -943,8 +967,9 @@ class MainWindow(QMainWindow):
         last_update = db.get_last_update_date()
         if last_update and last_update != "нет данных":
             last_update = utils.format_date_display(last_update)
+        revision = db.format_revision_display(db.get_current_revision())
         self.status_bar.set_status("Готово", count=count, good_count=good_count, filters=filters_text,
-                                   selected_pump=selected_pump, last_update=last_update)
+                                   selected_pump=selected_pump, last_update=last_update, revision=revision)
 
     def on_edit_requested(self, pump_id):
         pump_data = db.get_pump_by_id(pump_id)

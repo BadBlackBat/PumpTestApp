@@ -124,7 +124,8 @@ class StatusBar(QStatusBar):
         self._glow_line.setGeometry(0, 0, self.width(), styles.STATUS_BAR_GLOW_HEIGHT)
         self._glow_line.raise_()
     
-    def set_status(self, message, count=None, good_count=None, filters=None, last_update=None, selected_pump=None):
+    def set_status(self, message, count=None, good_count=None, filters=None, last_update=None,
+                    selected_pump=None, revision=None):
         # Левая часть
         if selected_pump:
             self.selected_label.setText(f"Выбран образец: {selected_pump}")
@@ -148,6 +149,9 @@ class StatusBar(QStatusBar):
         else:
             self.count_label.setText("")
         if last_update is not None:
-            self.update_label.setText(f"Последнее обновление: {last_update}")
+            text = f"Последнее обновление: {last_update}"
+            if revision:
+                text += f", <span style='font-size: 8pt;'>rev. {revision}</span>"
+            self.update_label.setText(text)
         else:
             self.update_label.setText("")

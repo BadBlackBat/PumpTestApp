@@ -71,7 +71,7 @@ def get_glow_shadow_params():
     эту особенность рискованно (можно сломать отрисовку, как уже было
     с WA_NoSystemBackground), поэтому смягчаем тень, а не убираем совсем."""
     if is_light_theme():
-        return 20, 75
+        return 26, 100
     return LEFT_PANEL_GLOW_SHADOW_BLUR, 150
 
 

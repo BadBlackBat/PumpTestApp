@@ -145,9 +145,18 @@ def init_db():
 
 
 def bump_revision(description, conn=None):
-    """Увеличивает ревизию базы на 1 и записывает, что именно произошло -
+    """Увеличивает ревизию базы и записывает, что именно произошло -
     вызывать при любой операции записи (добавление/изменение/удаление
     насоса, модификации, заказа).
+
+    Ревизия хранится как одно целое число ГГММДД*1000 + счётчик (год
+    идёт первым - чтобы обычное числовое сравнение "какая ревизия
+    больше" совпадало с хронологическим порядком; если бы день шёл
+    первым - как в привычном отображении, см. format_revision_display -
+    сравнение чисел ломалось бы на стыке месяцев/годов, например
+    01.01.27 -> 010127 оказалось бы МЕНЬШЕ, чем 31.12.26 -> 311226,
+    хотя по факту позже). Счётчик растёт в течение дня при каждом
+    изменении и сбрасывается на 1 с началом нового дня.
 
     conn - если операция уже идёт внутри своего соединения/транзакции
     (обычный случай - большинство функций ниже открывают with
@@ -163,16 +172,43 @@ def bump_revision(description, conn=None):
         conn = get_connection()
     try:
         cursor = conn.cursor()
+        cursor.execute('SELECT revision FROM db_meta WHERE id = 1')
+        row = cursor.fetchone()
+        current_revision = row[0] if row and row[0] else 0
+
+        now = datetime.now()
+        today_prefix = int(now.strftime('%y%m%d'))  # ГГММДД
+        current_prefix = current_revision // 1000
+        current_counter = current_revision % 1000
+
+        new_counter = current_counter + 1 if current_prefix == today_prefix else 1
+        new_revision = today_prefix * 1000 + new_counter
+
         cursor.execute(
-            'UPDATE db_meta SET revision = revision + 1, last_modified_at = ?, '
+            'UPDATE db_meta SET revision = ?, last_modified_at = ?, '
             'last_action_description = ? WHERE id = 1',
-            (datetime.now().isoformat(timespec='seconds'), description)
+            (new_revision, now.isoformat(timespec='seconds'), description)
         )
         if own_conn:
             conn.commit()
     finally:
         if own_conn:
             conn.close()
+
+
+def format_revision_display(revision):
+    """Преобразует внутреннее значение ревизии (см. bump_revision - там
+    год идёт первым, для правильной сортировки) в привычный человеку вид
+    ДДММГГ.счётчик - например, 280726.1 для 28 июля 2026 года, первое
+    изменение за день."""
+    if not revision:
+        return "—"
+    prefix = revision // 1000
+    counter = revision % 1000
+    yy = prefix // 10000
+    mm = (prefix // 100) % 100
+    dd = prefix % 100
+    return f"{dd:02d}{mm:02d}{yy:02d}.{counter}"
 
 
 def get_current_revision():
