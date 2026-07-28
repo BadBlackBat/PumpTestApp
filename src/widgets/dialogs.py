@@ -19,6 +19,7 @@ from .. import utils
 from .. import styles
 from .. import icon_utils
 from .. import db_settings
+from .. import db_lock
 from .left_panel import _GlowFrame, _GlowScrollBar
 from .status_bar import _GlowLine
 from matplotlib.figure import Figure
@@ -1757,22 +1758,26 @@ class ViewModificationsDialog(_GlowDialog):
         if dialog.exec_() != QDialog.Accepted:
             return
         data = dialog.get_data()
-        db.update_modification(
-            mod_id,
-            name=data['name'],
-            norm_graph1_min=json.dumps(data['graph1_min']),
-            norm_graph1_max=json.dumps(data['graph1_max']),
-            norm_graph1_x=json.dumps(data['graph1_x']),
-            norm_graph2_min=json.dumps(data['graph2_min']),
-            norm_graph2_max=json.dumps(data['graph2_max']),
-            norm_graph2_x=json.dumps(data['graph2_x']),
-            norm_graph3_min=json.dumps(data['graph3_min']),
-            norm_graph3_max=json.dumps(data['graph3_max']),
-            norm_graph3_x=json.dumps(data['graph3_x']),
-            pressure_min=data['pressure_min'],
-            pressure_max=data['pressure_max'],
-            seal_rules=json.dumps(data['seal_rules']),
-        )
+        try:
+            db.update_modification(
+                mod_id,
+                name=data['name'],
+                norm_graph1_min=json.dumps(data['graph1_min']),
+                norm_graph1_max=json.dumps(data['graph1_max']),
+                norm_graph1_x=json.dumps(data['graph1_x']),
+                norm_graph2_min=json.dumps(data['graph2_min']),
+                norm_graph2_max=json.dumps(data['graph2_max']),
+                norm_graph2_x=json.dumps(data['graph2_x']),
+                norm_graph3_min=json.dumps(data['graph3_min']),
+                norm_graph3_max=json.dumps(data['graph3_max']),
+                norm_graph3_x=json.dumps(data['graph3_x']),
+                pressure_min=data['pressure_min'],
+                pressure_max=data['pressure_max'],
+                seal_rules=json.dumps(data['seal_rules']),
+            )
+        except db_lock.DatabaseLockedError as e:
+            GlowMessageDialog.show_error(self, "База данных занята", str(e))
+            return
         self._reload_list()
         GlowMessageDialog.show_success(self, "Успех", f"Модификация «{data['name']}» обновлена.")
 
@@ -1799,7 +1804,11 @@ class ViewModificationsDialog(_GlowDialog):
         if pwd_dialog.exec_() != QDialog.Accepted:
             return
         # Пароль уже проверен внутри диалога - если дошли сюда, значит верный
-        db.delete_modification(mod_id)
+        try:
+            db.delete_modification(mod_id)
+        except db_lock.DatabaseLockedError as e:
+            GlowMessageDialog.show_error(self, "База данных занята", str(e))
+            return
         self._reload_list()
         self.show_details(None)
         self._update_buttons()
@@ -2097,21 +2106,26 @@ class SettingsDialog(_GlowDialog):
             data = dialog.get_data()
             # Пароль уже проверен внутри диалога (try_accept) - если дошли
             # сюда, значит он верный
-            db.add_modification(
-                name=data['name'],
-                norm_graph1_min=json.dumps(data['graph1_min']),
-                norm_graph1_max=json.dumps(data['graph1_max']),
-                norm_graph1_x=json.dumps(data['graph1_x']),
-                norm_graph2_min=json.dumps(data['graph2_min']),
-                norm_graph2_max=json.dumps(data['graph2_max']),
-                norm_graph2_x=json.dumps(data['graph2_x']),
-                norm_graph3_min=json.dumps(data['graph3_min']),
-                norm_graph3_max=json.dumps(data['graph3_max']),
-                norm_graph3_x=json.dumps(data['graph3_x']),
-                pressure_min=data['pressure_min'],
-                pressure_max=data['pressure_max'],
-                seal_rules=json.dumps(data['seal_rules']),
-            )
+            try:
+                db.add_modification(
+                    name=data['name'],
+                    norm_graph1_min=json.dumps(data['graph1_min']),
+                    norm_graph1_max=json.dumps(data['graph1_max']),
+                    norm_graph1_x=json.dumps(data['graph1_x']),
+                    norm_graph2_min=json.dumps(data['graph2_min']),
+                    norm_graph2_max=json.dumps(data['graph2_max']),
+                    norm_graph2_x=json.dumps(data['graph2_x']),
+                    norm_graph3_min=json.dumps(data['graph3_min']),
+                    norm_graph3_max=json.dumps(data['graph3_max']),
+                    norm_graph3_x=json.dumps(data['graph3_x']),
+                    pressure_min=data['pressure_min'],
+                    pressure_max=data['pressure_max'],
+                    seal_rules=json.dumps(data['seal_rules']),
+                )
+            except db_lock.DatabaseLockedError as e:
+                GlowMessageDialog.show_error(self, "База данных занята", str(e))
+                self.show()
+                return
             GlowMessageDialog.show_success(self.parent(), "Успех", f"Модификация «{data['name']}» сохранена.")
         self.show()
 

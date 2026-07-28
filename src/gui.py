@@ -18,6 +18,7 @@ from .widgets.status_bar import StatusBar, _GlowLine
 from .widgets.dialogs import PasswordDialog, AddModificationDialog, AddOrderDialog, SettingsDialog, AddPumpDialog, _clamp_to_screen, GlowMessageDialog, PrintChoiceDialog, _DialogBackgroundManager
 from . import database as db
 from . import db_sync
+from . import db_lock
 from . import excel_importer as importer
 from . import utils
 from . import styles
@@ -389,7 +390,46 @@ class MainWindow(QMainWindow):
         # безопасен и для тёмной темы тоже - тогда это просто повторное
         # применение уже верных стилей, без видимого эффекта.
         self.apply_theme(styles.is_light_theme())
-    
+
+        # Периодический опрос сетевой базы на предмет изменений другими
+        # пользователями - ВО ВРЕМЯ работы программы, а не только при
+        # старте (см. db_sync.check_for_remote_changes). Мгновенность
+        # не требуется - раз в 8 секунд достаточно и не нагружает сеть.
+        # Тихо ничего не делает, если сетевой режим не используется.
+        # ВАЖНО: инициализируем именно сетевым значением (а не
+        # database.get_current_revision() - локальным) - локальная и
+        # сетевая ревизии могут ЗАКОННО отличаться (например,
+        # check_and_sync_at_startup() мог решить "мы не старше сети,
+        # всё в порядке", не будучи РОВНО равной ей). Раньше отслеживание
+        # стартовало с локального значения, из-за чего каждая проверка
+        # сравнивала сеть с числом, которое никогда с ней не совпадёт -
+        # бегущая строка срабатывала постоянно, с самого начала работы.
+        self._last_known_revision = db_sync.get_network_revision_now()
+        self._remote_check_timer = QTimer(self)
+        self._remote_check_timer.timeout.connect(self._check_remote_changes)
+        # Первая проверка - не сразу, а через паузу: сверка версий уже
+        # произошла один раз при самом старте программы (см. main.py) -
+        # запускать её почти сразу же ещё раз ни к чему, а сама пауза
+        # даёт время окончательно "устаканиться" всем данным, снижая шанс
+        # того, что бегущая строка при самом старте сработает на основе
+        # уже неактуального "последнего действия" из базы.
+        QTimer.singleShot(15000, lambda: self._remote_check_timer.start(8000))
+
+    def _check_remote_changes(self):
+        """Опрашивает сетевую базу - изменилась ли она с прошлой
+        проверки (кто-то другой добавил/изменил/удалил что-то, пока
+        программа уже была открыта). Если да - показывает мягкое
+        всплывающее уведомление в панели фильтров, не перезагружая
+        данные автоматически (пользователь сам решает, когда обновить -
+        следующий шаг развития этой функции)."""
+        result = db_sync.check_for_remote_changes(self._last_known_revision)
+        if result is None:
+            return
+        new_revision, description = result
+        self._last_known_revision = new_revision
+        message = description or "База данных изменена другим пользователем"
+        self.left_panel.show_db_notification(message)
+
     def reset_layout_to_default(self):
         """Возвращает интерфейс к исходному виду, как при запуске:
         компактный (сокращённый) список слева и видимая правая панель,
@@ -869,18 +909,22 @@ class MainWindow(QMainWindow):
             data['results'], data['seal_results'], mod
         )
 
-        db.add_pump(
-            pump_number=data['pump_number'],
-            test_date=data['test_date'],
-            test_type=data['test_type'],
-            modification_id=data['modification_id'],
-            order_id=order_id,
-            results_json=data['results'],
-            seal_results_json=data['seal_results'],
-            verdict=verdict,
-            is_sealed=is_sealed,
-            note=data.get('note', '')
-        )
+        try:
+            db.add_pump(
+                pump_number=data['pump_number'],
+                test_date=data['test_date'],
+                test_type=data['test_type'],
+                modification_id=data['modification_id'],
+                order_id=order_id,
+                results_json=data['results'],
+                seal_results_json=data['seal_results'],
+                verdict=verdict,
+                is_sealed=is_sealed,
+                note=data.get('note', '')
+            )
+        except db_lock.DatabaseLockedError as e:
+            GlowMessageDialog.show_error(self, "База данных занята", str(e))
+            return
 
         self.left_panel.refresh()
         self.update_status()
@@ -899,7 +943,11 @@ class MainWindow(QMainWindow):
                 "Вы уверены, что хотите удалить эту запись? Это действие необратимо."
             ):
                 return
-            db.delete_pump(pump_id)
+            try:
+                db.delete_pump(pump_id)
+            except db_lock.DatabaseLockedError as e:
+                GlowMessageDialog.show_error(self, "База данных занята", str(e))
+                return
             self.left_panel.refresh()
             self.update_status()
             GlowMessageDialog.show_success(self, "Удаление", "Запись удалена.")
@@ -1062,21 +1110,25 @@ class MainWindow(QMainWindow):
 
         # Сохраняем только если что-то реально поменялось (поля или примечание)
         if changed_fields or new_note.strip() != old_note.strip():
-            db.update_pump(
-                pump_id,
-                test_date=data['test_date'],
-                test_type=data['test_type'],
-                modification_id=data['modification_id'],
-                order_id=order_id,
-                results_json=data['results'],
-                seal_results_json=data['seal_results'],
-                verdict=verdict,
-                is_sealed=is_sealed,
-                note=new_note,
-                edit_history=new_history,
-                edit_date=edit_date_str,
-                changed_fields_json=json.dumps(changed_fields),
-            )
+            try:
+                db.update_pump(
+                    pump_id,
+                    test_date=data['test_date'],
+                    test_type=data['test_type'],
+                    modification_id=data['modification_id'],
+                    order_id=order_id,
+                    results_json=data['results'],
+                    seal_results_json=data['seal_results'],
+                    verdict=verdict,
+                    is_sealed=is_sealed,
+                    note=new_note,
+                    edit_history=new_history,
+                    edit_date=edit_date_str,
+                    changed_fields_json=json.dumps(changed_fields),
+                )
+            except db_lock.DatabaseLockedError as e:
+                GlowMessageDialog.show_error(self, "База данных занята", str(e))
+                return
             self.left_panel.refresh()
             current_selected = self.right_panel.current_data
             updated = db.get_pump_by_id(pump_id)

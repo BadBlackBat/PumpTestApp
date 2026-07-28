@@ -3,6 +3,7 @@ import os
 import json
 from datetime import datetime
 from . import db_settings
+from . import db_lock
 
 def get_active_db_path():
     """Возвращает путь к файлу базы, с которым программа реально
@@ -229,7 +230,7 @@ def add_modification(name, norm_graph1_min, norm_graph1_max, norm_graph1_x,
     Добавляет новую модификацию (или заменяет существующую с тем же именем).
     Все norm_* - это строки JSON (массивы чисел).
     """
-    with get_connection() as conn:
+    with db_lock.acquire_write_lock(), get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             INSERT OR REPLACE INTO modifications 
@@ -303,7 +304,7 @@ def update_modification(mod_id, name, norm_graph1_min, norm_graph1_max, norm_gra
     """Обновляет существующую модификацию по её id (а не через INSERT OR
     REPLACE по имени, как add_modification) - id остаётся тем же, поэтому
     ссылки насосов на эту модификацию (modification_id) не теряются."""
-    with get_connection() as conn:
+    with db_lock.acquire_write_lock(), get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             UPDATE modifications SET
@@ -323,7 +324,7 @@ def delete_modification(mod_id):
     """Удаляет модификацию. У насосов, которые на неё ссылались, поле
     modification_id автоматически станет NULL (см. FOREIGN KEY ... ON
     DELETE SET NULL в схеме) - сами протоколы насосов не удаляются."""
-    with get_connection() as conn:
+    with db_lock.acquire_write_lock(), get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT name FROM modifications WHERE id = ?', (mod_id,))
         row = cursor.fetchone()
@@ -354,7 +355,7 @@ def add_order(order_number):
         return None
     # Нормализация: убираем .0
     order_number = str(order_number).replace('.0', '').strip()
-    with get_connection() as conn:
+    with db_lock.acquire_write_lock(), get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('INSERT OR IGNORE INTO orders (order_number) VALUES (?)', (order_number,))
         conn.commit()
@@ -401,7 +402,7 @@ def add_pump(pump_number, test_date, test_type, modification_id, order_id,
     results_json: dict с ключами 'g5'..'g32' (или список)
     seal_results_json: dict с ключами 'g33'..'g37'
     """
-    with get_connection() as conn:
+    with db_lock.acquire_write_lock(), get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO pumps 
@@ -545,7 +546,7 @@ def get_all_pumps(filters=None, order_by='test_date DESC', limit=None, offset=No
         return result
     
 def delete_pump(pump_id):
-    with get_connection() as conn:
+    with db_lock.acquire_write_lock(), get_connection() as conn:
         cursor = conn.cursor()
 
         # Узнаём номер насоса и заказ, к которому была привязана запись,
@@ -570,7 +571,7 @@ def delete_pump(pump_id):
 
 def update_pump(pump_id, **kwargs):
     """Обновляет поля записи, включая edit_history."""
-    with get_connection() as conn:
+    with db_lock.acquire_write_lock(), get_connection() as conn:
         cursor = conn.cursor()
         set_clause = []
         params = []

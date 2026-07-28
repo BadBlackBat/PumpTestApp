@@ -1855,16 +1855,21 @@ class RightPanel(QWidget):
     def manage_history(self, data):
         from ..widgets.dialogs import EditHistoryDialog
         from .. import database as db
+        from .. import db_lock
         from PyQt5.QtWidgets import QDialog
 
         dialog = EditHistoryDialog(data.get('edit_history', ''), data['id'], self)
         if dialog.exec_() == QDialog.Accepted:
             new_history = dialog.result_history
-            # Обновляем историю
-            db.update_pump(data['id'], edit_history=new_history)
-            # Если нужно очистить примечание
-            if dialog.clear_note:
-                db.update_pump(data['id'], note='')
+            try:
+                # Обновляем историю
+                db.update_pump(data['id'], edit_history=new_history)
+                # Если нужно очистить примечание
+                if dialog.clear_note:
+                    db.update_pump(data['id'], note='')
+            except db_lock.DatabaseLockedError as e:
+                GlowMessageDialog.show_error(self, "База данных занята", str(e))
+                return
             # Обновляем отображение протокола
             updated = db.get_pump_by_id(data['id'])
             if updated:

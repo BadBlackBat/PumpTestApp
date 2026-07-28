@@ -3,7 +3,8 @@ from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QPushButton, QLabel, QCheckBox,
     QDateEdit, QHeaderView, QAbstractItemView, QMenu,
     QStyledItemDelegate, QStyle, QStyleOptionViewItem, QApplication,
-    QFrame, QGraphicsDropShadowEffect, QGridLayout, QScrollBar, QStyleOptionSlider
+    QFrame, QGraphicsDropShadowEffect, QGridLayout, QScrollBar, QStyleOptionSlider,
+    QGraphicsOpacityEffect
 )
 from PyQt5.QtCore import (
     Qt, pyqtSignal, QDate, QPoint, QTimer, QEvent, QEasingCurve,
@@ -371,6 +372,198 @@ class _NoSelectionPaintDelegate(QStyledItemDelegate):
         super().paint(painter, opt, index)
 
 
+class _DbNotificationBanner(QWidget):
+    """Настоящая бегущая строка - уведомление о том, что кто-то другой
+    изменил сетевую базу данных, пока программа уже была открыта (см.
+    MainWindow._check_remote_changes, gui.py - опрашивает сеть раз в
+    несколько секунд).
+
+    Устроено из ДВУХ отдельных дочерних виджетов - фона (self._bg_widget,
+    со своим собственным QGraphicsOpacityEffect для плавного появления/
+    исчезания) и текста (self._text_label, полностью независимого от
+    прозрачности фона - иначе при затухании/появлении фона точно так же
+    тускнел бы и сам текст, а он должен оставаться ярким всегда). Текст
+    едет через видимую область слева направо и обратно средствами
+    QPropertyAnimation, естественно обрезаясь по границам этого виджета.
+
+    Точная последовательность показа:
+        1) фон плавно появляется (1с) - текст в это время уже уведён за
+           правый край (не виден) - иначе на этот момент он на мгновение
+           показывался бы статично там, где остался с прошлого раза
+        2) текст въезжает с правого края и пробегает в левую часть
+        3) через 1с паузы (фон остаётся как есть, не гаснет) - второй круг
+        4) фон плавно гаснет (1с)
+
+    Все шаги защищены "номером текущего показа" (self._seq) - если новое
+    уведомление прерывает ещё не закончившуюся последовательность, все
+    отложенные обратные вызовы от СТАРОЙ последовательности проверяют
+    номер и просто ничего не делают.
+
+    Абсолютное позиционирование самого окошка (задаётся в
+    _DbStatusIndicator.resizeEvent) - специально, чтобы не увеличивать
+    высоту панели фильтров добавлением ещё одной строки в обычный layout."""
+    LAPS = 2
+    LAP_DURATION_MS = 9000
+    GAP_BETWEEN_LAPS_MS = 1000
+    FADE_MS = 1000
+    # Пик непрозрачности ФОНА (не текста - он теперь отдельный виджет и всегда полностью непрозрачный/яркий) 
+    # (0.0 — полностью прозрачный, 1.0 — полностью непрозрачный)
+    BG_PEAK_OPACITY = 0.35
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._seq = 0
+        self._laps_done = 0
+
+        # Фон - отдельный виджет-подложка на всю область (см. resizeEvent),
+        # со своим собственным эффектом прозрачности
+        self._bg_widget = QWidget(self)
+        self._bg_widget.setAttribute(Qt.WA_StyledBackground, True)
+        self._bg_opacity_effect = QGraphicsOpacityEffect(self._bg_widget)
+        self._bg_opacity_effect.setOpacity(0.0)
+        self._bg_widget.setGraphicsEffect(self._bg_opacity_effect)
+
+        # Текст - отдельный виджет ПОВЕРХ фона, без какого-либо эффекта
+        # прозрачности - всегда полностью яркий, независимо от фона
+        self._text_label = QLabel(self)
+        self._text_label.setWordWrap(False)
+        self._text_label.setFont(QFont("Segoe UI", 11, QFont.Bold))
+
+        self.hide()
+
+        self._bg_fade_in = QPropertyAnimation(self._bg_opacity_effect, b"opacity", self)
+        self._bg_fade_in.setDuration(self.FADE_MS)
+        self._bg_fade_in.setStartValue(0.0)
+        self._bg_fade_in.setEndValue(self.BG_PEAK_OPACITY)
+
+        self._bg_fade_out = QPropertyAnimation(self._bg_opacity_effect, b"opacity", self)
+        self._bg_fade_out.setDuration(self.FADE_MS)
+        self._bg_fade_out.setStartValue(self.BG_PEAK_OPACITY)
+        self._bg_fade_out.setEndValue(0.0)
+
+        # Линейная (постоянная скорость) анимация пробега - без плавного
+        # разгона/торможения, как и положено настоящей бегущей строке.
+        # Раньше движение выглядело "дёрганным" - разделение фона и
+        # текста на два независимых виджета (см. выше) снимает лишнюю
+        # нагрузку на композитинг при одновременной анимации прозрачности
+        # и позиции одного и того же слоя, что и было вероятной причиной.
+        self._scroll_anim = QPropertyAnimation(self._text_label, b"pos", self)
+        self._scroll_anim.setEasingCurve(QEasingCurve.Linear)
+
+        self._gap_timer = QTimer(self)
+        self._gap_timer.setSingleShot(True)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._bg_widget.setGeometry(0, 0, self.width(), self.height())
+
+    def show_message(self, text):
+        """Показывает текст бегущей строкой - см. описание класса для
+        точной последовательности. Прерывает и полностью отменяет любую
+        ещё не закончившуюся предыдущую последовательность."""
+        self._seq += 1
+        seq = self._seq
+
+        self._bg_fade_in.stop()
+        self._bg_fade_out.stop()
+        self._scroll_anim.stop()
+        self._gap_timer.stop()
+
+        # Цвета - под текущую тему. Текст - тот же контрастный бирюзовый,
+        # что и раньше. Фон - НЕ нейтральный чёрный/белый, а чуть светлее
+        # (тёмная тема) или чуть темнее (светлая тема) собственного фона
+        # панели фильтров - тонкая, но узнаваемая разница, а не резкий
+        # контраст. Фон - горизонтальный градиент, гаснущий к обоим краям
+        # (тень в тон самого фона) - ощущение "парящей" плашки.
+        if styles.is_light_theme():
+            bg_rgb = "184, 188, 194"    # чуть темнее светлого фона панели
+            text_color = "#0d7a99"
+        else:
+            bg_rgb = "77, 80, 88"       # чуть светлее тёмного фона панели
+            text_color = "#4fd1ff"
+        self._bg_widget.setStyleSheet(f"""
+            QWidget {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 rgba({bg_rgb}, 0),
+                    stop:0.12 rgba({bg_rgb}, 255),
+                    stop:0.88 rgba({bg_rgb}, 255),
+                    stop:1 rgba({bg_rgb}, 0));
+                border-radius: 4px;
+            }}
+        """)
+        self._text_label.setStyleSheet(f"background: transparent; color: {text_color};")
+
+        self._text_label.setText(text)
+        self._text_label.adjustSize()
+
+        # Сразу уводим текст за правый край - иначе на время появления
+        # фона (1с) он на мгновение показывался бы статично на месте
+        # своей ПРЕЖНЕЙ позиции (например, прижатым к верхнему краю от
+        # прошлого прогона) - именно так и проявлялся замеченный баг
+        y = (self.height() - self._text_label.height()) // 2
+        self._text_label.move(self.width(), y)
+
+        self.show()
+        self.raise_()
+        self._laps_done = 0
+
+        self._connect_once(self._bg_fade_in, lambda: self._start_first_lap(seq))
+        self._bg_fade_in.start()
+
+    def _connect_once(self, animation, slot):
+        """Переподключает finished к ровно одному, новому обработчику -
+        без накопления старых подключений от прошлых вызовов show_message."""
+        try:
+            animation.finished.disconnect()
+        except TypeError:
+            pass
+        animation.finished.connect(slot)
+
+    def _start_first_lap(self, seq):
+        if seq != self._seq:
+            return
+        self._run_lap(seq)
+
+    def _run_lap(self, seq):
+        if seq != self._seq:
+            return
+        text_w = self._text_label.width()
+        y = (self.height() - self._text_label.height()) // 2
+        start_point = QPoint(self.width(), y)
+        end_point = QPoint(-text_w, y)
+        self._text_label.move(start_point)
+        self._scroll_anim.setDuration(self.LAP_DURATION_MS)
+        self._scroll_anim.setStartValue(start_point)
+        self._scroll_anim.setEndValue(end_point)
+        self._connect_once(self._scroll_anim, lambda: self._on_lap_finished(seq))
+        self._scroll_anim.start()
+
+    def _on_lap_finished(self, seq):
+        if seq != self._seq:
+            return
+        self._laps_done += 1
+        if self._laps_done < self.LAPS:
+            # Пауза между кругами - фон остаётся как есть, не гаснет
+            self._connect_once_timer(lambda: self._run_lap(seq))
+            self._gap_timer.start(self.GAP_BETWEEN_LAPS_MS)
+        else:
+            self._connect_once(self._bg_fade_out, lambda: self._on_fade_out_finished(seq))
+            self._bg_fade_out.start()
+
+    def _connect_once_timer(self, slot):
+        try:
+            self._gap_timer.timeout.disconnect()
+        except TypeError:
+            pass
+        self._gap_timer.timeout.connect(slot)
+
+    def _on_fade_out_finished(self, seq):
+        if seq != self._seq:
+            return
+        self.hide()
+
+
+
 class _DbStatusIndicator(QWidget):
     """Четыре мелкие подписи (Network/Local/Offline/Full offline) с
     кружком-индикатором перед каждой - наглядно показывает, с какой
@@ -402,7 +595,7 @@ class _DbStatusIndicator(QWidget):
     }
     _INACTIVE_COLOR = (140, 144, 150)  # серый - для неактивных подписей
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, banner_parent=None):
         super().__init__(parent)
         self._active_mode = 'local'
         self._blink_on = True
@@ -431,11 +624,43 @@ class _DbStatusIndicator(QWidget):
             self._dot_labels[key] = (dot, text)
         layout.addStretch(1)
 
+        # Уведомление об изменениях сетевой базы во время работы - поверх
+        # правой половины этой же строки (см. resizeEvent). Родитель -
+        # ВСЯ панель фильтров (banner_parent), а НЕ эта строка сама по
+        # себе - дочерний виджет Qt всегда обрезается по границам своего
+        # непосредственного родителя, а строка индикатора узкая; сделав
+        # баннер дочерним у всей (более высокой) панели, ему можно
+        # свободно задавать бОльшую высоту без обрезания текста.
+        self._banner_parent = banner_parent or self
+        self.notification_banner = _DbNotificationBanner(self._banner_parent)
+
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._on_blink)
         self._timer.start(600)  # пол-секунды примерно на "вдох-выдох" мигания
 
         self._refresh()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        half_w = self.width() // 2
+        if self._banner_parent is self:
+            # Родитель не передан явно - старое поведение (баннер
+            # ограничен высотой самой строки индикатора)
+            self.notification_banner.setGeometry(self.width() - half_w, 0, half_w, self.height())
+        else:
+            # Баннер - дочерний у ВСЕЙ панели фильтров, а не у этой узкой
+            # строки - можно дать ему запас по высоте без обрезания
+            # шрифта. Стартует от НИЖНЕГО края строки индикатора (гаранти-
+            # рованно неотрицательная координата) и расширяется ВНИЗ, в
+            # сторону строки поиска - раньше расширение было в обе
+            # стороны от строки индикатора (self.y() - extra), из-за чего
+            # верхняя граница легко уходила в отрицательные координаты и
+            # обрезалась по верхнему краю панели, оставляя видимой только
+            # узкую полоску.
+            banner_height = 26
+            x = self.x() + self.width() - half_w
+            y = self.y() + self.height()
+            self.notification_banner.setGeometry(x, y, half_w, banner_height)
 
     def set_active_mode(self, mode):
         """mode - 'network' / 'local' / 'offline' / 'full_offline'."""
@@ -529,6 +754,12 @@ class LeftPanel(QWidget):
         Offline) над строкой поиска - см. _DbStatusIndicator. mode -
         'network' / 'local' / 'offline'."""
         self.db_status_indicator.set_active_mode(mode)
+
+    def show_db_notification(self, text):
+        """Показывает всплывающее уведомление об изменении сетевой базы
+        данных другим пользователем (см. MainWindow._check_remote_changes,
+        gui.py) - мягкое появление/исчезание поверх строки индикатора."""
+        self.db_status_indicator.notification_banner.show_message(text)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -646,7 +877,7 @@ class LeftPanel(QWidget):
 
       # Индикатор режима работы с базой данных (Network/Local/Offline) -
       # прямо над строкой поиска, чтобы всегда быть на виду
-      self.db_status_indicator = _DbStatusIndicator()
+      self.db_status_indicator = _DbStatusIndicator(banner_parent=filters_panel)
       filters_layout.addWidget(self.db_status_indicator)
 
       # Ряд 1: Поиск

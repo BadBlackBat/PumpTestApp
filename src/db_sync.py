@@ -32,6 +32,7 @@ def is_network_reachable():
     path = db_settings.get_network_db_path()
     if not path:
         return False
+    path = os.path.normpath(path)
     try:
         return os.path.exists(path)
     except OSError:
@@ -116,6 +117,78 @@ def get_indicator_mode(sync_status):
     return 'local'
 
 
+def _read_network_revision_and_description():
+    """Читает (ревизия, описание последнего действия) прямо из сетевого
+    файла базы - общая часть для check_for_remote_changes() и
+    get_network_revision_now(). Возвращает (None, None), если сеть не
+    активна/недоступна/файл не похож на нашу базу."""
+    if not db_settings.is_network_mode_active():
+        return None, None
+    if not is_network_reachable():
+        return None, None
+
+    network_path = os.path.normpath(db_settings.get_network_db_path())
+    try:
+        conn = sqlite3.connect(network_path, timeout=2)
+        try:
+            cursor = conn.cursor()
+            cursor.execute('SELECT revision, last_action_description FROM db_meta WHERE id = 1')
+            row = cursor.fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None, None
+
+    if not row:
+        return None, None
+    return row[0], row[1]
+
+
+def get_network_revision_now():
+    """Текущая ревизия СЕТЕВОЙ базы прямо сейчас - используется для
+    инициализации отслеживания изменений (см. MainWindow.__init__,
+    gui.py) именно сетевым значением, а НЕ локальным
+    (database.get_current_revision()).
+
+    Это важно: локальная и сетевая ревизии могут ЗАКОННО отличаться (в
+    частности, check_and_sync_at_startup() может решить "мы не старше
+    сети, всё в порядке" - up_to_date - не будучи РОВНО равной сети, а
+    просто не будучи СТАРШЕ). Если бы отслеживание стартовало со
+    значения локальной базы, каждая последующая периодическая проверка
+    сравнивала бы сеть с числом, которое никогда с ней не совпадёт -
+    и бегущая строка срабатывала бы постоянно, с самого начала работы
+    программы, показывая уже неактуальное "последнее действие"."""
+    revision, _ = _read_network_revision_and_description()
+    return revision
+
+
+def check_for_remote_changes(last_known_revision):
+    """Проверяет, изменилась ли сетевая база с момента last_known_revision -
+    вызывается периодически (раз в несколько секунд) ВО ВРЕМЯ работы
+    программы, в отличие от check_and_sync_at_startup() (тот - только
+    один раз при запуске). Специально ничего не копирует и не
+    синхронизирует - только сообщает, что что-то изменилось и что именно
+    (описание последнего действия) - решение, что делать дальше (пока -
+    просто показать уведомление), остаётся за вызывающим кодом.
+
+    ВАЖНО: last_known_revision должен быть получен через
+    get_network_revision_now() (сетевое значение), а НЕ через
+    database.get_current_revision() (локальное) - см. подробное
+    объяснение в get_network_revision_now().
+
+    Возвращает (новая_ревизия, описание_последнего_действия), если
+    изменение обнаружено, иначе None (в том числе если сетевой режим не
+    активен или сеть сейчас недоступна - опрос в этом случае просто
+    тихо ничего не делает, не показывая никаких ошибок - в отличие от
+    check_and_sync_at_startup, здесь недоступность сети не повод
+    беспокоить пользователя лишним сообщением каждые несколько секунд)."""
+    revision, description = _read_network_revision_and_description()
+    if revision is not None and revision != last_known_revision:
+        return revision, description
+    return None
+
+
+
 def check_and_sync_at_startup():
     """Вызывать один раз при старте программы - ДО db.init_db(), чтобы
     миграция схемы применилась уже к финальной (возможно, только что
@@ -133,7 +206,7 @@ def check_and_sync_at_startup():
     if not db_settings.is_network_mode_active():
         return 'local', None
 
-    network_path = db_settings.get_network_db_path()
+    network_path = os.path.normpath(db_settings.get_network_db_path())
     if not is_network_reachable():
         return 'network_unreachable', (
             "Сетевая папка с базой данных недоступна.\n"
