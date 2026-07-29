@@ -18,6 +18,7 @@ from .widgets.status_bar import StatusBar, _GlowLine
 from .widgets.dialogs import PasswordDialog, AddModificationDialog, AddOrderDialog, SettingsDialog, AddPumpDialog, _clamp_to_screen, GlowMessageDialog, PrintChoiceDialog, _DialogBackgroundManager
 from . import database as db
 from . import db_sync
+from . import db_settings
 from . import db_lock
 from . import excel_importer as importer
 from . import utils
@@ -356,6 +357,7 @@ class MainWindow(QMainWindow):
         self.left_panel.request_import.connect(self.on_import_requested)
         self.left_panel.request_add.connect(self.on_add_requested)
         self.left_panel.request_delete.connect(self.on_delete_requested)
+        self.left_panel.request_upload.connect(self.on_upload_requested)
         self.left_panel.request_edit.connect(self.on_edit_requested)
         self.left_panel.filters_applied.connect(self.update_status)
         self.splitter.addWidget(self.left_panel)
@@ -367,6 +369,7 @@ class MainWindow(QMainWindow):
 
         self.right_panel.clear_requested.connect(self.on_clear_requested)
         self.right_panel.mode_changed.connect(self.on_right_panel_mode_changed)
+        self.right_panel.data_changed.connect(self.update_status)
         
         # Пропорции - при первом запуске левая панель сжата до минимальной
         # ширины, нужной блоку фильтров (а не растянута на 40% экрана) -
@@ -418,17 +421,37 @@ class MainWindow(QMainWindow):
     def _check_remote_changes(self):
         """Опрашивает сетевую базу - изменилась ли она с прошлой
         проверки (кто-то другой добавил/изменил/удалил что-то, пока
-        программа уже была открыта). Если да - показывает мягкое
-        всплывающее уведомление в панели фильтров, не перезагружая
-        данные автоматически (пользователь сам решает, когда обновить -
-        следующий шаг развития этой функции)."""
+        программа уже была открыта).
+
+        Если да - и у пользователя сейчас НЕТ несохранённых локальных
+        изменений (db_sync.is_synced()) - безопасно подтягиваем свежую
+        версию автоматически и перезагружаем данные, обновляя статус
+        индикатора. Если у пользователя ЕСТЬ несохранённые изменения -
+        автоматическое копирование рискует молча их затереть, поэтому в
+        этом случае только показываем уведомление, ничего не копируя -
+        решение (выгрузить свои правки или отбросить и подтянуть сеть)
+        остаётся за пользователем."""
         result = db_sync.check_for_remote_changes(self._last_known_revision)
         if result is None:
             return
         new_revision, description = result
         self._last_known_revision = new_revision
         message = description or "База данных изменена другим пользователем"
+
+        if db_sync.is_synced():
+            pull_status, pull_message = db_sync.force_pull_network_to_local()
+            if pull_status == 'pulled':
+                db.init_db()
+                self.left_panel.load_data()
+                self.update_status()
+                self.left_panel.set_db_status(db_sync.get_indicator_mode('synced'))
+                self.left_panel.show_db_notification(message)
+                return
+            # Не получилось подтянуть (например, сеть пропала между
+            # обнаружением изменения и попыткой скопировать) - не беда,
+            # просто покажем обычное уведомление без автообновления
         self.left_panel.show_db_notification(message)
+        self._update_sync_status_label()
 
     def reset_layout_to_default(self):
         """Возвращает интерфейс к исходному виду, как при запуске:
@@ -763,6 +786,26 @@ class MainWindow(QMainWindow):
                 self.update_status()
         if self.showing_stats: self.toggle_statistics()
 
+    def on_upload_requested(self):
+        """Выгружает локальные изменения в сетевую базу - по кнопке
+        (компактный/расширенный вид - символ-стрелка со стрелкой или
+        со стрелкой и подписью, между "Удалить" и "Импорт Excel")."""
+        status, message = db_sync.push_local_to_network()
+        if status == 'pushed':
+            GlowMessageDialog.show_success(self, "Выгрузка в сеть", message)
+        elif status == 'nothing_to_push':
+            GlowMessageDialog.show_success(self, "Выгрузка в сеть", message)
+        elif status == 'not_network_mode':
+            GlowMessageDialog.show_error(
+                self, "Выгрузка в сеть",
+                "Сетевой режим не используется - настройте его в "
+                "«Расположение базы данных», прежде чем выгружать изменения."
+            )
+        else:
+            # 'network_unreachable' / 'network_ahead' / 'locked' / 'error'
+            GlowMessageDialog.show_error(self, "Выгрузка в сеть", message)
+        self._update_sync_status_label()
+
     def apply_db_settings_change(self):
         """Применяет смену расположения/режима базы данных БЕЗ перезапуска
         программы - вызывается сразу после сохранения в диалоге
@@ -816,6 +859,11 @@ class MainWindow(QMainWindow):
         self.btn_theme._refresh_icons()
         self.left_panel.refresh_theme()
         self.right_panel.refresh_theme()
+        # Метка "синхронизировано"/"есть изменения" сама пересчитывает
+        # свой цвет только внутри set_sync_status() - без этого вызова
+        # она держала бы цвет предыдущей темы, пока что-то ДРУГОЕ (выбор
+        # протокола и т.п.) не обновило бы статус-бар заново
+        self._update_sync_status_label()
 
         self._apply_native_window_colors()
 
@@ -1018,6 +1066,17 @@ class MainWindow(QMainWindow):
         revision = db.format_revision_display(db.get_current_revision())
         self.status_bar.set_status("Готово", count=count, good_count=good_count, filters=filters_text,
                                    selected_pump=selected_pump, last_update=last_update, revision=revision)
+        self._update_sync_status_label()
+
+    def _update_sync_status_label(self):
+        """Обновляет метку "синхронизировано"/"есть изменения" рядом с
+        индикатором режима базы данных. Показывается только в сетевом
+        режиме - в локальном (или при отключённой сети) скрываем метку,
+        там нечего сравнивать с сетью."""
+        if db_settings.is_network_mode_active():
+            self.left_panel.set_sync_status(db_sync.is_synced())
+        else:
+            self.left_panel.set_sync_status(None)
 
     def on_edit_requested(self, pump_id):
         pump_data = db.get_pump_by_id(pump_id)
@@ -1130,6 +1189,7 @@ class MainWindow(QMainWindow):
                 GlowMessageDialog.show_error(self, "База данных занята", str(e))
                 return
             self.left_panel.refresh()
+            self.update_status()
             current_selected = self.right_panel.current_data
             updated = db.get_pump_by_id(pump_id)
             if current_selected and current_selected['id'] == pump_id:

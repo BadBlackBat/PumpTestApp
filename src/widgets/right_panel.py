@@ -82,6 +82,7 @@ class _OverlayScrollArea(QScrollArea):
 class RightPanel(QWidget):
     clear_requested = pyqtSignal()   # сигнал для запроса сброса
     mode_changed = pyqtSignal(str)   # 'protocol' / 'comparison' / 'stats' / 'empty'
+    data_changed = pyqtSignal()      # запись изменена прямо из правой панели (история/примечание)
 
     def refresh_theme(self):
         """Перекрашивает правую панель под текущую тему - вызывается из
@@ -1874,6 +1875,7 @@ class RightPanel(QWidget):
             updated = db.get_pump_by_id(data['id'])
             if updated:
                 self.display_protocol(updated)
+            self.data_changed.emit()
 
     def clear_protocol(self):
         """Вызывается по кнопке 'Скрыть протокол' - явный сброс просмотра,

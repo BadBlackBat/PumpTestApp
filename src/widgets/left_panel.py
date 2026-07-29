@@ -10,7 +10,7 @@ from PyQt5.QtCore import (
     Qt, pyqtSignal, QDate, QPoint, QTimer, QEvent, QEasingCurve,
     QRect, QRectF, pyqtProperty, QPropertyAnimation, QSize
 )
-from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QPolygon, QLinearGradient, QBrush, QPainterPath
+from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QPolygon, QLinearGradient, QBrush, QPainterPath, QPen
 
 from .. import database as db
 from .. import utils
@@ -21,6 +21,39 @@ import weakref
 RESOURCES_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'resources'
 )
+
+
+def _make_upload_icon(color="#2b2d31", size=22):
+    """Рисует простую иконку "выгрузка в сеть" (стрелка вверх + "лоток"
+    снизу) - программно через QPainter, без отдельного файла ресурса
+    (подходящего готового файла для этого действия не нашлось)."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(QColor(color))
+    pen.setWidth(max(2, size // 10))
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    painter.setPen(pen)
+
+    cx = size / 2
+    top = size * 0.18
+    bottom_of_shaft = size * 0.62
+    arrow_half = size * 0.20
+
+    # Вертикальная "палка" стрелки
+    painter.drawLine(QPoint(int(cx), int(bottom_of_shaft)), QPoint(int(cx), int(top)))
+    # "Наконечник" стрелки (галочкой)
+    painter.drawLine(QPoint(int(cx), int(top)), QPoint(int(cx - arrow_half), int(top + arrow_half)))
+    painter.drawLine(QPoint(int(cx), int(top)), QPoint(int(cx + arrow_half), int(top + arrow_half)))
+    # "Лоток" снизу, символизирующий место назначения (сетевая база)
+    tray_y = size * 0.82
+    painter.drawLine(QPoint(int(size * 0.22), int(tray_y)), QPoint(int(size * 0.78), int(tray_y)))
+
+    painter.end()
+    return QIcon(pixmap)
+
 
 class _ArrowHoverLineEdit(QLineEdit):
     """Обычный QLineEdit показывает I-образный курсор уже при простом
@@ -406,9 +439,9 @@ class _DbNotificationBanner(QWidget):
     LAP_DURATION_MS = 9000
     GAP_BETWEEN_LAPS_MS = 1000
     FADE_MS = 1000
-    # Пик непрозрачности ФОНА (не текста - он теперь отдельный виджет и всегда полностью непрозрачный/яркий) 
-    # (0.0 — полностью прозрачный, 1.0 — полностью непрозрачный)
-    BG_PEAK_OPACITY = 0.35
+    # Пик непрозрачности ФОНА (не текста - он теперь отдельный виджет и
+    # всегда полностью непрозрачный/яркий) - около 85-90% прозрачности
+    BG_PEAK_OPACITY = 0.13
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -477,10 +510,10 @@ class _DbNotificationBanner(QWidget):
         # (тень в тон самого фона) - ощущение "парящей" плашки.
         if styles.is_light_theme():
             bg_rgb = "184, 188, 194"    # чуть темнее светлого фона панели
-            text_color = "#0d7a99"
+            text_color = "#4fd1ff"
         else:
             bg_rgb = "77, 80, 88"       # чуть светлее тёмного фона панели
-            text_color = "#4fd1ff"
+            text_color = "#0d7a99"
         self._bg_widget.setStyleSheet(f"""
             QWidget {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
@@ -622,6 +655,14 @@ class _DbStatusIndicator(QWidget):
             item_layout.addWidget(text)
             layout.addLayout(item_layout)
             self._dot_labels[key] = (dot, text)
+
+        # Статус синхронизации локальной и сетевой базы - сразу после
+        # четырёх подписей режима. Зелёный - всё выгружено в сеть,
+        # оранжевый - есть локальные изменения, ещё не отправленные
+        self._sync_label = QLabel("")
+        self._sync_label.setFont(QFont("Segoe UI", 8, QFont.Bold))
+        layout.addWidget(self._sync_label)
+
         layout.addStretch(1)
 
         # Уведомление об изменениях сетевой базы во время работы - поверх
@@ -668,6 +709,25 @@ class _DbStatusIndicator(QWidget):
             mode = 'local'
         self._active_mode = mode
         self._refresh()
+
+    def set_sync_status(self, synced):
+        """Обновляет метку "База данных синхронизирована"/"не
+        синхронизирована. Есть изменения" - синхронизировано - тёмно-
+        зелёным на светлой теме, ярко-зелёным на тёмной; есть изменения -
+        тёмно-оранжевым на светлой теме, ярко-оранжевым на тёмной.
+        synced=None - скрывает метку (например, сетевой режим не
+        используется вообще - тут нечего показывать)."""
+        if synced is None:
+            self._sync_label.setText("")
+            return
+        if synced:
+            text = "База данных синхронизирована"
+            color = "#1a7a1a" if styles.is_light_theme() else "#3ddc3d"
+        else:
+            text = "База данных не синхронизирована. Есть изменения"
+            color = "#a05a00" if styles.is_light_theme() else "#ff8c00"
+        self._sync_label.setText(text)
+        self._sync_label.setStyleSheet(f"color: {color}; background: transparent;")
 
     def _on_blink(self):
         self._blink_on = not self._blink_on
@@ -732,6 +792,7 @@ class LeftPanel(QWidget):
     pump_status_selected = pyqtSignal(dict)
     group_selected = pyqtSignal(list)
     request_import = pyqtSignal()
+    request_upload = pyqtSignal()
     request_add = pyqtSignal()
     request_delete = pyqtSignal(int)
     request_edit = pyqtSignal(int)
@@ -754,6 +815,11 @@ class LeftPanel(QWidget):
         Offline) над строкой поиска - см. _DbStatusIndicator. mode -
         'network' / 'local' / 'offline'."""
         self.db_status_indicator.set_active_mode(mode)
+
+    def set_sync_status(self, synced):
+        """Обновляет метку "синхронизировано"/"есть изменения" рядом с
+        индикатором режима базы. synced=None - скрывает метку."""
+        self.db_status_indicator.set_sync_status(synced)
 
     def show_db_notification(self, text):
         """Показывает всплывающее уведомление об изменении сетевой базы
@@ -1057,6 +1123,23 @@ class LeftPanel(QWidget):
       self.btn_delete.setFixedHeight(26)
       self.btn_delete.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
       self.btn_delete.clicked.connect(self.on_delete_clicked)
+      # Выгрузка локальных изменений в сеть - в компактном режиме только
+      # символ-стрелка (маленькая, не растягивает общий блок), в
+      # расширенном - та же стрелка с подписью (см. toggle_view)
+      self.btn_upload = QPushButton()
+      self.btn_upload.setObjectName("chromeButton")
+      self.btn_upload.setFixedHeight(26)
+      self.btn_upload.setFixedWidth(40)
+      self.btn_upload.setToolTip("Выгрузить изменения в сетевую базу")
+      # Тот же алюминиевый стиль, что и у остальных кнопок, но со своим,
+      # минимальным паддингом - обычный (16px с каждой стороны) не
+      # оставлял места для содержимого при такой узкой ширине кнопки
+      self.btn_upload.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE + """
+          QPushButton#chromeButton { padding: 2px 4px; }
+      """)
+      self.btn_upload.setIcon(_make_upload_icon("#2b2d31", 22))
+      self.btn_upload.setIconSize(QSize(22, 22))
+      self.btn_upload.clicked.connect(self.request_upload.emit)
       self.btn_import = QPushButton("Импорт Excel")
       self.btn_import.setObjectName("chromeButton")
       self.btn_import.setFixedHeight(26)
@@ -1071,6 +1154,7 @@ class LeftPanel(QWidget):
 
       btn_layout.addWidget(self.btn_add)
       btn_layout.addWidget(self.btn_delete)
+      btn_layout.addWidget(self.btn_upload)
       btn_layout.addWidget(self.btn_import)
       btn_layout.addWidget(self.btn_view_toggle)
       bottom_layout.addLayout(btn_layout)
@@ -1141,6 +1225,9 @@ class LeftPanel(QWidget):
             # Расширенный режим
             self.compact_mode = False
             self.btn_view_toggle.setText("Свернуть список")
+            self.btn_upload.setText("Выгрузить")
+            self.btn_upload.setFont(QFont("Segoe UI", 9))
+            self.btn_upload.setFixedWidth(120)
             self._reflow_filters(expanded=True)
             # Снимаем ограничение максимальной ширины (см. gui.py,
             # _apply_minimal_left_width) - иначе панель не может занять
@@ -1156,6 +1243,8 @@ class LeftPanel(QWidget):
             # Компактный режим (минимальный)
             self.compact_mode = True
             self.btn_view_toggle.setText("Расширенный вид")
+            self.btn_upload.setText("")
+            self.btn_upload.setFixedWidth(40)
             self._reflow_filters(expanded=False)
             # Возвращаем ограничение по минимально нужной ширине - тем же
             # методом, что применяется при старте/разворачивании окна

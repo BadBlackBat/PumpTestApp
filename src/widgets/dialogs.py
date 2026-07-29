@@ -467,6 +467,7 @@ class GlowMessageDialog(_GlowDialog):
 
         msg_label = QLabel(message)
         msg_label.setWordWrap(True)
+        msg_label.setMaximumWidth(380)
         msg_label.setStyleSheet("color: #e8eaed; background: transparent;")
         content_row.addWidget(msg_label, 1)
         self.body_layout.addLayout(content_row)

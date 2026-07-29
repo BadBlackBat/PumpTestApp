@@ -805,16 +805,27 @@ def get_check_count_for_pump(pump_number):
     
 # Дата последнего обновления в статус-баре
 def get_last_update_date():
-    """Возвращает максимальную дату создания записи (created_at) или test_date."""
+    """Возвращает дату последнего изменения базы данных - ЛЮБого:
+    добавление/изменение/удаление насоса, модификации, заказа (читает
+    db_meta.last_modified_at, обновляется функцией bump_revision() при
+    каждой операции записи).
+
+    Раньше эта функция смотрела только на MAX(created_at) в таблице
+    насосов - то есть учитывала только СОЗДАНИЕ нового насоса (что
+    вручную, что через импорт из Excel), но не его последующее
+    редактирование и вообще никак не учитывала модификации/заказы."""
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT MAX(created_at) FROM pumps')
+        cursor.execute('SELECT last_modified_at FROM db_meta WHERE id = 1')
         row = cursor.fetchone()
         if row and row[0]:
-            # обрезаем время, оставляем только дату
             date_str = row[0]
             if ' ' in date_str:
                 date_str = date_str.split(' ')[0]
+            elif 'T' in date_str:
+                # datetime.isoformat() без пробела использует "T" как
+                # разделитель даты и времени (см. bump_revision)
+                date_str = date_str.split('T')[0]
             return date_str
         return "нет данных"
 

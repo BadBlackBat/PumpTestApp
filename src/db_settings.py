@@ -99,3 +99,20 @@ def is_network_mode_active():
         and bool(get_network_db_path())
         and not is_full_offline_mode()
     )
+
+
+def get_last_sync_revision():
+    """Ревизия ЛОКАЛЬНОЙ базы на момент, когда она последний раз точно
+    совпадала с сетевой копией - либо после подтягивания сети к себе
+    (pull), либо после успешной выгрузки своих изменений в сеть (push).
+
+    Сравнение database.get_current_revision() с этим значением - и есть
+    статус "синхронизировано"/"есть несохранённые изменения" (см.
+    db_sync.get_sync_status): любая последующая локальная запись меняет
+    текущую ревизию, но НЕ эту точку - расхождение между ними и означает
+    "у меня накопились изменения, которые ещё не в сети"."""
+    return _settings().value("last_sync_revision", 0, type=int)
+
+
+def set_last_sync_revision(revision):
+    _settings().setValue("last_sync_revision", int(revision))

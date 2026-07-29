@@ -18,6 +18,8 @@ import sqlite3
 import shutil
 from datetime import datetime
 from . import db_settings
+from . import db_lock
+from . import database
 
 # Сколько последних резервных копий хранить перед перезаписью локальной
 # базы сетевой версией - старые сверх этого числа удаляются
@@ -229,6 +231,13 @@ def check_and_sync_at_startup():
     local_revision = _read_revision(local_path) if local_exists else None
 
     if local_revision is not None and local_revision >= network_revision:
+        if local_revision == network_revision:
+            # Действительно совпадают - фиксируем точку синхронизации
+            db_settings.set_last_sync_revision(local_revision)
+        # local_revision > network_revision - значит, есть локальные
+        # правки, которые ещё НЕ выгружены в сеть (например, накопились
+        # до включения сетевого режима) - точку синхронизации специально
+        # НЕ трогаем, чтобы статус "не синхронизировано" остался верным
         return 'up_to_date', None
 
     # Сетевая версия новее (или локальной копии ещё нет вовсе) -
@@ -239,6 +248,7 @@ def check_and_sync_at_startup():
             _backup_local_copy(local_path)
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
         shutil.copy2(network_path, local_path)
+        db_settings.set_last_sync_revision(network_revision)
         return 'synced', (
             f"Загружена более свежая версия базы данных из сетевой папки "
             f"(ревизия {network_revision})."
@@ -248,3 +258,98 @@ def check_and_sync_at_startup():
             f"Не удалось скопировать сетевую базу данных ({e}).\n"
             "Программа продолжит работу с локальной копией данных."
         )
+
+
+def is_synced():
+    """True, если локальная база не отличается от той точки, когда она
+    последний раз точно совпадала с сетью (после подтягивания или
+    успешной выгрузки) - т.е. нет накопленных, ещё не выгруженных
+    локальных изменений. См. db_settings.get_last_sync_revision()."""
+    return database.get_current_revision() == db_settings.get_last_sync_revision()
+
+
+def push_local_to_network():
+    """Выгружает локальные изменения в сетевую базу - по кнопке (не
+    происходит автоматически).
+
+    Возвращает (status, message):
+        'not_network_mode'     - сетевой режим не используется
+        'network_unreachable'  - сеть недоступна прямо сейчас
+        'nothing_to_push'      - нет несохранённых локальных изменений
+        'network_ahead'        - сеть уже изменилась с последней точки
+                                  синхронизации - нужно сначала подтянуть
+                                  свежую версию (force_pull_network_to_local),
+                                  повторить свои правки поверх нее и
+                                  попробовать выгрузить снова
+        'locked'                - сейчас идёт запись другого пользователя
+        'error'                 - не удалось скопировать файл
+        'pushed'                - успешно выгружено
+    """
+    if not db_settings.is_network_mode_active():
+        return 'not_network_mode', "Сетевой режим не используется."
+    if not is_network_reachable():
+        return 'network_unreachable', "Сетевая папка сейчас недоступна. Попробуйте позже."
+
+    local_revision = database.get_current_revision()
+    last_sync = db_settings.get_last_sync_revision()
+    if local_revision == last_sync:
+        return 'nothing_to_push', "Нет несохранённых изменений - уже всё синхронизировано."
+
+    network_revision = get_network_revision_now()
+    if network_revision is not None and network_revision != last_sync:
+        return 'network_ahead', (
+            "Пока вы работали, сеть уже изменилась (кто-то другой успел "
+            "выгрузить свои правки). Сначала подтяните свежую версию из "
+            "сети (кнопка Network -> Local), затем внесите свои изменения "
+            "заново поверх неё и повторите выгрузку."
+        )
+
+    try:
+        with db_lock.acquire_write_lock():
+            local_path = os.path.normpath(db_settings.get_local_db_path())
+            network_path = os.path.normpath(db_settings.get_network_db_path())
+            shutil.copy2(local_path, network_path)
+    except db_lock.DatabaseLockedError as e:
+        return 'locked', str(e)
+    except OSError as e:
+        return 'error', f"Не удалось выгрузить изменения в сеть: {e}"
+
+    db_settings.set_last_sync_revision(local_revision)
+    return 'pushed', (
+        f"Изменения выгружены в сетевую базу "
+        f"(ревизия {database.format_revision_display(local_revision)})."
+    )
+
+
+def force_pull_network_to_local():
+    """Принудительно копирует сетевую базу поверх локальной - по кнопке
+    Network -> Local. В отличие от check_and_sync_at_startup(), делает
+    это БЕЗОСЛОВНО (не сравнивает ревизии) - вызывающий код должен сам
+    заранее предупредить пользователя, если у него есть несохранённые
+    локальные изменения (is_synced() == False), которые будут потеряны.
+
+    Возвращает (status, message) в том же духе, что и другие функции
+    этого модуля."""
+    if not db_settings.is_network_mode_active():
+        return 'not_network_mode', "Сетевой режим не используется."
+    if not is_network_reachable():
+        return 'network_unreachable', "Сетевая папка сейчас недоступна. Попробуйте позже."
+
+    network_revision, _ = _read_network_revision_and_description()
+    if network_revision is None:
+        return 'error', "Не удалось прочитать сетевую базу данных."
+
+    local_path = os.path.normpath(db_settings.get_local_db_path())
+    network_path = os.path.normpath(db_settings.get_network_db_path())
+    try:
+        if os.path.exists(local_path):
+            _backup_local_copy(local_path)
+        shutil.copy2(network_path, local_path)
+    except OSError as e:
+        return 'error', f"Не удалось скопировать сетевую базу данных: {e}"
+
+    db_settings.set_last_sync_revision(network_revision)
+    return 'pulled', (
+        f"Локальная копия обновлена из сети "
+        f"(ревизия {database.format_revision_display(network_revision)})."
+    )
