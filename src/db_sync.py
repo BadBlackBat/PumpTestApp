@@ -253,9 +253,10 @@ def check_and_sync_at_startup():
             f"Загружена более свежая версия базы данных из сетевой папки "
             f"(ревизия {network_revision})."
         )
-    except OSError as e:
+    except OSError:
         return 'network_unreachable', (
-            f"Не удалось скопировать сетевую базу данных ({e}).\n"
+            "Не удалось скопировать сетевую базу данных - возможно, "
+            "сеть только что стала недоступна.\n"
             "Программа продолжит работу с локальной копией данных."
         )
 
@@ -311,8 +312,11 @@ def push_local_to_network():
             shutil.copy2(local_path, network_path)
     except db_lock.DatabaseLockedError as e:
         return 'locked', str(e)
-    except OSError as e:
-        return 'error', f"Не удалось выгрузить изменения в сеть: {e}"
+    except OSError:
+        return 'error', (
+            "Не удалось выгрузить изменения в сеть - сеть, возможно, "
+            "только что стала недоступна. Попробуйте ещё раз."
+        )
 
     db_settings.set_last_sync_revision(local_revision)
     return 'pushed', (
@@ -345,8 +349,11 @@ def force_pull_network_to_local():
         if os.path.exists(local_path):
             _backup_local_copy(local_path)
         shutil.copy2(network_path, local_path)
-    except OSError as e:
-        return 'error', f"Не удалось скопировать сетевую базу данных: {e}"
+    except OSError:
+        return 'error', (
+            "Не удалось скопировать сетевую базу данных - сеть, "
+            "возможно, только что стала недоступна. Попробуйте ещё раз."
+        )
 
     db_settings.set_last_sync_revision(network_revision)
     return 'pulled', (

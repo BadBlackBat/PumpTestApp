@@ -358,6 +358,7 @@ class MainWindow(QMainWindow):
         self.left_panel.request_add.connect(self.on_add_requested)
         self.left_panel.request_delete.connect(self.on_delete_requested)
         self.left_panel.request_upload.connect(self.on_upload_requested)
+        self.left_panel.request_force_pull.connect(self.on_force_pull_requested)
         self.left_panel.request_edit.connect(self.on_edit_requested)
         self.left_panel.filters_applied.connect(self.update_status)
         self.splitter.addWidget(self.left_panel)
@@ -445,11 +446,24 @@ class MainWindow(QMainWindow):
                 self.left_panel.load_data()
                 self.update_status()
                 self.left_panel.set_db_status(db_sync.get_indicator_mode('synced'))
-                self.left_panel.show_db_notification(message)
+                self.left_panel.set_pull_glow(False)
+                # Тёмно-оранжевый - специально отличается от обычного
+                # цвета уведомлений: это не просто "кто-то что-то изменил",
+                # а "ваши локальные данные были автоматически обновлены
+                # без вашего прямого участия" - более значимое событие
+                self.left_panel.show_db_notification(
+                    f"Сетевая база была обновлена. {message}",
+                    text_color_override="#b35900"
+                )
                 return
             # Не получилось подтянуть (например, сеть пропала между
             # обнаружением изменения и попыткой скопировать) - не беда,
             # просто покажем обычное уведомление без автообновления
+        # Сетевая база ушла вперёд, а мы её не подтянули (есть свои
+        # несохранённые изменения, или подтягивание не удалось) -
+        # подсвечиваем кнопку "N -> L" голубым миганием, привлекая
+        # внимание к тому, что стоит обновить локальную копию
+        self.left_panel.set_pull_glow(True)
         self.left_panel.show_db_notification(message)
         self._update_sync_status_label()
 
@@ -792,6 +806,7 @@ class MainWindow(QMainWindow):
         со стрелкой и подписью, между "Удалить" и "Импорт Excel")."""
         status, message = db_sync.push_local_to_network()
         if status == 'pushed':
+            self.left_panel.set_pull_glow(False)
             GlowMessageDialog.show_success(self, "Выгрузка в сеть", message)
         elif status == 'nothing_to_push':
             GlowMessageDialog.show_success(self, "Выгрузка в сеть", message)
@@ -804,6 +819,41 @@ class MainWindow(QMainWindow):
         else:
             # 'network_unreachable' / 'network_ahead' / 'locked' / 'error'
             GlowMessageDialog.show_error(self, "Выгрузка в сеть", message)
+        self._update_sync_status_label()
+
+    def on_force_pull_requested(self):
+        """Принудительно копирует сетевую базу поверх локальной - по
+        кнопке "N -> L" в панели фильтров. Если есть несохранённые
+        локальные изменения - явно предупреждает, что они будут
+        потеряны, и ждёт подтверждения (не отбирает у пользователя
+        право отбросить свои правки, но не делает это молча)."""
+        if not db_settings.is_network_mode_active():
+            GlowMessageDialog.show_error(
+                self, "Network -> Local",
+                "Сетевой режим не используется - настройте его в "
+                "«Расположение базы данных»."
+            )
+            return
+
+        if not db_sync.is_synced():
+            if not GlowMessageDialog.confirm(
+                self, "Есть несохранённые изменения",
+                "У вас есть несохранённые локальные изменения - при "
+                "загрузке сетевой базы поверх локальной они будут "
+                "потеряны.\n\nПродолжить и загрузить сетевую версию?"
+            ):
+                return
+
+        status, message = db_sync.force_pull_network_to_local()
+        if status == 'pulled':
+            db.init_db()
+            self.left_panel.load_data()
+            self.update_status()
+            self.left_panel.set_db_status(db_sync.get_indicator_mode('synced'))
+            self.left_panel.set_pull_glow(False)
+            GlowMessageDialog.show_success(self, "Network -> Local", message)
+        else:
+            GlowMessageDialog.show_error(self, "Network -> Local", message)
         self._update_sync_status_label()
 
     def apply_db_settings_change(self):
@@ -1074,9 +1124,14 @@ class MainWindow(QMainWindow):
         режиме - в локальном (или при отключённой сети) скрываем метку,
         там нечего сравнивать с сетью."""
         if db_settings.is_network_mode_active():
-            self.left_panel.set_sync_status(db_sync.is_synced())
+            synced = db_sync.is_synced()
+            self.left_panel.set_sync_status(synced)
+            # Зелёное мигание кнопки "Выгрузить" - привлекает внимание,
+            # когда есть несохранённые локальные изменения
+            self.left_panel.set_upload_glow(not synced)
         else:
             self.left_panel.set_sync_status(None)
+            self.left_panel.set_upload_glow(False)
 
     def on_edit_requested(self, pump_id):
         pump_data = db.get_pump_by_id(pump_id)
@@ -1245,3 +1300,28 @@ class MainWindow(QMainWindow):
         
         # 6. Если была статистика, закрыть её
         self.showing_stats = False
+
+    def closeEvent(self, event):
+        """Подтверждение выхода из программы. Если активен сетевой режим
+        и есть несохранённые изменения (ещё не выгруженные в сеть) -
+        дополнительно, отдельным предупреждением, сообщает об этом -
+        другие пользователи иначе не увидят внесённые изменения."""
+        if not GlowMessageDialog.confirm(
+            self, "Выход из программы",
+            "Вы действительно хотите выйти из программы?"
+        ):
+            event.ignore()
+            return
+
+        if db_settings.is_network_mode_active() and not db_sync.is_synced():
+            if not GlowMessageDialog.confirm(
+                self, "Есть несохранённые изменения",
+                "У вас есть изменения в базе данных, которые ещё не "
+                "выгружены в сетевую базу - другие пользователи их не "
+                "увидят, пока вы их не выгрузите.\n\n"
+                "Всё равно выйти без выгрузки?"
+            ):
+                event.ignore()
+                return
+
+        event.accept()

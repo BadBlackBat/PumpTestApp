@@ -7,10 +7,10 @@ from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QScrollArea, QWidget, QSizePolicy,
     QApplication, QGraphicsOpacityEffect, QFrame, QHeaderView, QGridLayout,
     QGraphicsBlurEffect, QGraphicsColorizeEffect, QGraphicsScene, QGraphicsPixmapItem,
-    QCheckBox, QProgressBar, QRadioButton, QButtonGroup, QFileDialog
+    QCheckBox, QProgressBar, QRadioButton, QButtonGroup, QFileDialog, QAction
 )
 from PyQt5.QtCore import Qt, QDate, QPoint, QSize, QPropertyAnimation, QEasingCurve, QTimer, QRectF, pyqtProperty, QSettings
-from PyQt5.QtGui import QFont, QColor, QFontMetrics, QPainter, QPixmap
+from PyQt5.QtGui import QFont, QColor, QFontMetrics, QPainter, QPixmap, QIcon, QPen
 import json
 import os
 
@@ -333,6 +333,16 @@ class _GlowDialog(QDialog):
         полей, таблицы) - сначала аккуратно уменьшает окно, если оно не
         помещается на маленьком экране."""
         self.adjustSize()
+        # Принудительно "прогоняем" отложенные события layout'а - без
+        # этого geometry() дочерних виджетов (в частности, glow_frame)
+        # не всегда успевает обновиться синхронно сразу после adjustSize(),
+        # особенно для раскладок с переносом текста (расчёт итоговой
+        # ширины/высоты у таких меток нередко требует нескольких проходов
+        # layout-движка) - из-за этого self.glow_frame.width() ниже, в
+        # _position_close_button(), мог отражать не окончательное, а
+        # промежуточное значение, и крестик оказывался не у истинного
+        # правого края.
+        QApplication.processEvents()
         if clamp_to_screen:
             _clamp_to_screen(self, width_fraction=width_fraction, height_fraction=height_fraction)
         size = self.size()
@@ -372,6 +382,14 @@ class _GlowDialog(QDialog):
         # только один раз в конструкторе) - на случай, если геометрия
         # экрана/содержимого успела чуть измениться к этому моменту
         _clamp_to_screen(self)
+        # То же самое - переставляем крестик ещё раз прямо перед показом.
+        # _lock_size() (вызывается в конце __init__ каждого диалога)
+        # иногда даёт неточный результат для содержимого с не до конца
+        # определившейся шириной на тот момент (например, список с
+        # прокруткой, чья итоговая ширина/наличие самой полосы прокрутки
+        # может определиться чуть позже) - сейчас, при показе, геометрия
+        # уже точно окончательная.
+        self._position_close_button()
         # Перекрашиваем текст/акценты под текущую тему - на светлой теме
         # белый текст (зашитый буквально в коде диалога) иначе был бы не
         # виден на светлом фоне
@@ -467,9 +485,22 @@ class GlowMessageDialog(_GlowDialog):
 
         msg_label = QLabel(message)
         msg_label.setWordWrap(True)
-        msg_label.setMaximumWidth(380)
         msg_label.setStyleSheet("color: #e8eaed; background: transparent;")
-        content_row.addWidget(msg_label, 1)
+
+        # QLabel с переносом текста без явной ширины иногда получает
+        # "квадратный" естественный размер вместо ширины, нужной для
+        # одной строки - из-за этого даже короткие фразы ("Протокол
+        # обновлён") переносились на 2 строки с кучей пустого места
+        # справа. Меряем по метрикам шрифта реальную ширину самой
+        # широкой строки сообщения и используем её напрямую (с запасом,
+        # но не больше 380px) - короткие сообщения остаются в одну
+        # строку, длинные по-прежнему переносятся.
+        fm = QFontMetrics(msg_label.font())
+        natural_width = max(fm.horizontalAdvance(line) for line in message.split('\n')) if message else 0
+        msg_label.setFixedWidth(min(max(natural_width + 12, 80), 380))
+
+        content_row.addWidget(msg_label)
+        content_row.addStretch(1)
         self.body_layout.addLayout(content_row)
 
         btn_row = QHBoxLayout()
@@ -491,13 +522,16 @@ class GlowMessageDialog(_GlowDialog):
             ok_btn = QPushButton("OK")
             ok_btn.setObjectName("chromeButton")
             ok_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
-            ok_btn.setAutoDefault(False)
+            # Кнопка по умолчанию - Enter срабатывает так же, как клик
+            # (единственная кнопка реакции - разумно дать Enter её нажать)
+            ok_btn.setAutoDefault(True)
+            ok_btn.setDefault(True)
             ok_btn.clicked.connect(self.accept)
             btn_row.addWidget(ok_btn)
         btn_row.addStretch()
         self.body_layout.addLayout(btn_row)
 
-        self.setMinimumWidth(340)
+        self.setMinimumWidth(260)
         self._lock_size()
 
     @staticmethod
@@ -699,6 +733,49 @@ class InstructionsDialog(_GlowDialog):
             )
 
 
+def _make_eye_icon(color="#e8eaed", size=18):
+    """Рисует простую иконку "глаз" (кнопка показать/скрыть пароль) -
+    программно через QPainter, без отдельного файла ресурса."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(QColor(color))
+    pen.setWidth(max(1, size // 12))
+    painter.setPen(pen)
+    painter.setBrush(Qt.NoBrush)
+    eye_rect = QRectF(size * 0.06, size * 0.28, size * 0.88, size * 0.44)
+    painter.drawEllipse(eye_rect)
+    painter.setBrush(QColor(color))
+    r = size * 0.13
+    painter.drawEllipse(QRectF(size / 2 - r, size / 2 - r, r * 2, r * 2))
+    painter.end()
+    return QIcon(pixmap)
+
+
+def setup_password_field(line_edit, accept_callback=None, icon_color="#e8eaed"):
+    """Готовит обычное поле ввода пароля - добавляет кнопку-"глазок"
+    прямо внутри поля (через QLineEdit.addAction - встроенный механизм
+    Qt, без лишних виджетов в раскладке) для временного показа введённого
+    пароля, и подключает Enter к переданному обработчику (если передан) -
+    используется во всех диалогах ввода пароля для единообразия."""
+    eye_action = QAction(_make_eye_icon(icon_color), "", line_edit)
+    eye_action.setCheckable(True)
+    eye_action.setToolTip("Показать пароль")
+
+    def _toggle_visibility(checked):
+        line_edit.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
+        eye_action.setToolTip("Скрыть пароль" if checked else "Показать пароль")
+
+    eye_action.toggled.connect(_toggle_visibility)
+    line_edit.addAction(eye_action, QLineEdit.TrailingPosition)
+
+    if accept_callback is not None:
+        line_edit.returnPressed.connect(accept_callback)
+
+    return eye_action
+
+
 class PasswordDialog(_GlowDialog):
     def __init__(self, parent=None, message="Для удаления записи введите пароль:", correct_password="admin"):
         super().__init__(parent, title="Введите пароль")
@@ -713,6 +790,7 @@ class PasswordDialog(_GlowDialog):
         self.password_input.setEchoMode(QLineEdit.Password)
         self.password_input.setStyleSheet(styles.get_password_input_style())
         self.password_input.returnPressed.connect(self.try_accept)
+        setup_password_field(self.password_input)
         self.body_layout.addWidget(self.password_input)
 
         # Строка ошибки - место под неё зарезервировано СРАЗУ (текст
@@ -1208,6 +1286,7 @@ class AddModificationDialog(_GlowDialog):
             "border: 1px solid #6b6f75; border-radius: 4px; padding: 2px 6px; }"
             "QLineEdit:hover, QLineEdit:focus { border: 1px solid #2ecc71; }"
         )
+        setup_password_field(self.password_input, icon_color="#1c1e21")
         password_row.addWidget(self.password_input)
         password_row.addStretch(1)
         self.body_layout.addLayout(password_row)
@@ -1815,6 +1894,57 @@ class ViewModificationsDialog(_GlowDialog):
         self._update_buttons()
 
 
+class ChangeLogDialog(_GlowDialog):
+    """Журнал последних изменений базы данных - список действий с датой
+    и временем (см. database.get_recent_changes, database.bump_revision -
+    там же и заполняется, при каждой операции записи). Хранится только
+    последние database._CHANGE_LOG_KEEP_COUNT записей - старые
+    автоматически вытесняются."""
+    def __init__(self, parent=None):
+        super().__init__(parent, title="Журнал изменений базы данных")
+        text_color = styles.get_dialog_text_color()
+
+        hint_label = QLabel(f"Последние {db._CHANGE_LOG_KEEP_COUNT} изменений (сверху - самые новые):")
+        hint_label.setStyleSheet(f"color: {text_color}; background: transparent; font-size: 10pt;")
+        self.body_layout.addWidget(hint_label)
+
+        self.list_widget = QListWidget()
+        self.list_widget.setStyleSheet("""
+            QListWidget {
+                background-color: #f0f0f0;
+                color: #1c1e21;
+                border: 1px solid #6b6f75;
+                border-radius: 4px;
+            }
+            QListWidget::item { padding: 4px 6px; }
+        """)
+        self.list_widget.setMinimumSize(480, 320)
+
+        changes = db.get_recent_changes()
+        if not changes:
+            item = QListWidgetItem("Изменений пока не зафиксировано.")
+            self.list_widget.addItem(item)
+        else:
+            for timestamp, description, revision in changes:
+                when = timestamp
+                if timestamp:
+                    date_part, _, time_part = timestamp.partition('T')
+                    when = f"{utils.format_date_display(date_part)} {time_part[:5]}"
+                rev_display = db.format_revision_display(revision) if revision else "—"
+                item = QListWidgetItem(f"{when}  (rev. {rev_display})\n{description or ''}")
+                self.list_widget.addItem(item)
+        self.body_layout.addWidget(self.list_widget)
+
+        close_btn = QPushButton("Закрыть")
+        close_btn.setObjectName("chromeButton")
+        close_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+        close_btn.clicked.connect(self.accept)
+        self.body_layout.addWidget(close_btn)
+
+        self.setMinimumWidth(520)
+        self._lock_size(clamp_to_screen=True)
+
+
 class DatabaseLocationDialog(_GlowDialog):
     """Диалог выбора расположения базы данных - локальный ПК (по
     умолчанию, поведение как и всегда) или общая сетевая папка, плюс
@@ -1823,8 +1953,6 @@ class DatabaseLocationDialog(_GlowDialog):
     группе включён сетевой режим."""
     def __init__(self, parent=None):
         super().__init__(parent, title="Расположение базы данных")
-        left, top, right, bottom = self.frame_layout.getContentsMargins()
-        self.frame_layout.setContentsMargins(left + 10, top, right + 10, bottom)
 
         text_color = styles.get_dialog_text_color()
         label_style = f"color: {text_color}; background: transparent; font-size: 10.5pt;"
@@ -2060,6 +2188,7 @@ class SettingsDialog(_GlowDialog):
         db_label.setStyleSheet("color: #e8eaed; background: transparent; font-size: 10.5pt;")
         self.body_layout.addWidget(db_label)
         self.body_layout.addWidget(make_btn("Расположение базы данных", self.open_database_location))
+        self.body_layout.addWidget(make_btn("Журнал изменений базы данных", self.open_change_log))
 
         self.body_layout.addSpacing(22)
 
@@ -2139,6 +2268,12 @@ class SettingsDialog(_GlowDialog):
     def open_database_location(self):
         self.hide()
         dialog = DatabaseLocationDialog(self.parent())
+        dialog.exec_()
+        self.show()
+
+    def open_change_log(self):
+        self.hide()
+        dialog = ChangeLogDialog(self.parent())
         dialog.exec_()
         self.show()
 
@@ -2904,6 +3039,8 @@ class EditPumpDialog(_GlowDialog):
             "border: 1px solid #6b6f75; border-radius: 4px; padding: 2px 6px; }"
             "QLineEdit:hover, QLineEdit:focus { border: 1px solid #ff8c00; }"
         )
+        self.password_input.returnPressed.connect(self.try_accept)
+        setup_password_field(self.password_input, icon_color="#1c1e21")
         password_row.addWidget(self.password_input)
         password_row.addStretch(1)
         self.body_layout.addLayout(password_row)
@@ -3335,6 +3472,7 @@ class EditProtocolDialog(QDialog):
         layout.addWidget(QLabel("Введите пароль для подтверждения:"))
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.Password)
+        setup_password_field(self.password_input, icon_color="#1c1e21")
         layout.addWidget(self.password_input)
 
         # Кнопки

@@ -145,6 +145,11 @@ def init_db():
         print("База данных инициализирована.")
 
 
+# Сколько последних записей журнала изменений хранить (см. bump_revision,
+# get_recent_changes) - старые автоматически удаляются
+_CHANGE_LOG_KEEP_COUNT = 30
+
+
 def bump_revision(description, conn=None):
     """Увеличивает ревизию базы и записывает, что именно произошло -
     вызывать при любой операции записи (добавление/изменение/удаление
@@ -190,11 +195,41 @@ def bump_revision(description, conn=None):
             'last_action_description = ? WHERE id = 1',
             (new_revision, now.isoformat(timespec='seconds'), description)
         )
+
+        # Журнал изменений - для просмотра в "Журнал изменений базы
+        # данных" (настройки). Храним только последние
+        # _CHANGE_LOG_KEEP_COUNT записей - старые автоматически удаляются,
+        # чтобы таблица не росла бесконечно.
+        cursor.execute(
+            'INSERT INTO change_log '
+            '(timestamp, action_type, entity_type, entity_id, record_revision, description) '
+            'VALUES (?, ?, ?, ?, ?, ?)',
+            (now.isoformat(timespec='seconds'), 'write', 'unknown', None, new_revision, description)
+        )
+        cursor.execute('''
+            DELETE FROM change_log WHERE id NOT IN (
+                SELECT id FROM change_log ORDER BY id DESC LIMIT ?
+            )
+        ''', (_CHANGE_LOG_KEEP_COUNT,))
+
         if own_conn:
             conn.commit()
     finally:
         if own_conn:
             conn.close()
+
+
+def get_recent_changes(limit=_CHANGE_LOG_KEEP_COUNT):
+    """Возвращает последние записи журнала изменений (самые новые -
+    первыми) - для диалога "Журнал изменений базы данных" в настройках.
+    Каждая запись - (timestamp, description, record_revision)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT timestamp, description, record_revision FROM change_log '
+            'ORDER BY id DESC LIMIT ?', (limit,)
+        )
+        return cursor.fetchall()
 
 
 def format_revision_display(revision):

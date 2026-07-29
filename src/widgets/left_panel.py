@@ -8,51 +8,113 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import (
     Qt, pyqtSignal, QDate, QPoint, QTimer, QEvent, QEasingCurve,
-    QRect, QRectF, pyqtProperty, QPropertyAnimation, QSize
+    QRect, QRectF, pyqtProperty, QPropertyAnimation, QSize, QObject
 )
 from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QPolygon, QLinearGradient, QBrush, QPainterPath, QPen
 
 from .. import database as db
 from .. import utils
 from .. import styles
+from .. import icon_utils
 import os
 import weakref
 
 RESOURCES_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'resources'
 )
+ICONS_DIR = os.path.join(RESOURCES_DIR, 'icons')
 
 
-def _make_upload_icon(color="#2b2d31", size=22):
-    """Рисует простую иконку "выгрузка в сеть" (стрелка вверх + "лоток"
-    снизу) - программно через QPainter, без отдельного файла ресурса
-    (подходящего готового файла для этого действия не нашлось)."""
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    pen = QPen(QColor(color))
-    pen.setWidth(max(2, size // 10))
-    pen.setCapStyle(Qt.RoundCap)
-    pen.setJoinStyle(Qt.RoundJoin)
-    painter.setPen(pen)
+class _ButtonGlowBlinker(QObject):
+    """Мигающее свечение вокруг кнопки для привлечения внимания
+    (например, "есть несохранённые изменения - нужно выгрузить").
 
-    cx = size / 2
-    top = size * 0.18
-    bottom_of_shaft = size * 0.62
-    arrow_half = size * 0.20
+    Управляет разом тремя визуальными аспектами через одно анимируемое
+    свойство intensity (0..1, туда-обратно, по кругу):
+    - тень (QGraphicsDropShadowEffect) - яркая, с большим радиусом
+      размытия, только композитинг, геометрия кнопки не меняется вообще
+    - цвет рамки кнопки - тоже настоящая подсветка контура, но через
+      обычный QSS (border-color не конфликтует с градиентным фоном
+      кнопки, в отличие от background)
+    - лёгкий цветной оттенок самого фона кнопки поверх алюминиевого
+      градиента - полупрозрачный слой того же цвета, что и подсветка
 
-    # Вертикальная "палка" стрелки
-    painter.drawLine(QPoint(int(cx), int(bottom_of_shaft)), QPoint(int(cx), int(top)))
-    # "Наконечник" стрелки (галочкой)
-    painter.drawLine(QPoint(int(cx), int(top)), QPoint(int(cx - arrow_half), int(top + arrow_half)))
-    painter.drawLine(QPoint(int(cx), int(top)), QPoint(int(cx + arrow_half), int(top + arrow_half)))
-    # "Лоток" снизу, символизирующий место назначения (сетевая база)
-    tray_y = size * 0.82
-    painter.drawLine(QPoint(int(size * 0.22), int(tray_y)), QPoint(int(size * 0.78), int(tray_y)))
+    Ни один из этих трёх аспектов не меняет размеры/положение кнопки -
+    соседние элементы не перестраиваются и не двигаются.
 
-    painter.end()
-    return QIcon(pixmap)
+    В "спокойном" состоянии (intensity=0, или set_active(False)) кнопка
+    выглядит РОВНО как обычная кнопка текущей темы - базовый стиль
+    пересчитывается заново из исходного (всегда "тёмного", как написано
+    в коде) литерала через styles.retheme_stylesheet() при каждом
+    обращении, а не хранится статичным снимком с момента создания -
+    иначе после переключения темы кнопка в состоянии покоя откатывалась
+    бы к уже устаревшей теме, а не к текущей."""
+    def __init__(self, button, color_rgb, original_style):
+        super().__init__(button)
+        self._button = button
+        self._color_rgb = color_rgb
+        # Исходный, всегда "тёмный" (как написано в коде) стиль - НЕ
+        # используется напрямую, только как источник для
+        # styles.retheme_stylesheet() при каждом обращении (см. _base_style)
+        self._original_style = original_style
+        self._intensity = 0.0
+
+        self._effect = QGraphicsDropShadowEffect(button)
+        self._effect.setBlurRadius(32)
+        self._effect.setOffset(0, 0)
+        r, g, b = color_rgb
+        self._effect.setColor(QColor(r, g, b, 0))
+        button.setGraphicsEffect(self._effect)
+
+        self._anim = QPropertyAnimation(self, b"intensity", self)
+        self._anim.setDuration(1100)
+        self._anim.setLoopCount(-1)
+        self._anim.setKeyValueAt(0.0, 0.08)
+        self._anim.setKeyValueAt(0.5, 1.0)
+        self._anim.setKeyValueAt(1.0, 0.08)
+
+        self._active = False
+
+    def _base_style(self):
+        """Стиль обычной (не подсвеченной) кнопки под ТЕКУЩУЮ тему -
+        пересчитывается заново каждый раз, а не берётся из сохранённого
+        при создании кнопки снимка (см. объяснение в docstring класса)."""
+        return styles.retheme_stylesheet(self._original_style)
+
+    def _get_intensity(self):
+        return self._intensity
+
+    def _set_intensity(self, value):
+        self._intensity = value
+        r, g, b = self._color_rgb
+        # Тень - заметно ярче и крупнее, чем было
+        self._effect.setColor(QColor(r, g, b, int(40 + value * 215)))
+        # Рамка кнопки - от обычной серой (при value=0 - без всякой
+        # добавленной подсветки, никакого базового сдвига) до полностью
+        # залитой цветом подсветки; фон - лёгкий полупрозрачный оттенок
+        # того же цвета поверх обычного алюминиевого градиента
+        border_alpha = int(value * 220)
+        bg_alpha = int(value * 90)
+        self._button.setStyleSheet(self._base_style() + f"""
+            QPushButton#chromeButton {{
+                border: 2px solid rgba({r}, {g}, {b}, {border_alpha});
+                background-color: rgba({r}, {g}, {b}, {bg_alpha});
+            }}
+        """)
+
+    intensity = pyqtProperty(float, _get_intensity, _set_intensity)
+
+    def set_active(self, active):
+        if active == self._active:
+            return
+        self._active = active
+        if active:
+            self._anim.start()
+        else:
+            self._anim.stop()
+            self._set_intensity(0.0)
+            self._button.setStyleSheet(self._base_style())
+
 
 
 class _ArrowHoverLineEdit(QLineEdit):
@@ -490,10 +552,15 @@ class _DbNotificationBanner(QWidget):
         super().resizeEvent(event)
         self._bg_widget.setGeometry(0, 0, self.width(), self.height())
 
-    def show_message(self, text):
+    def show_message(self, text, text_color_override=None):
         """Показывает текст бегущей строкой - см. описание класса для
         точной последовательности. Прерывает и полностью отменяет любую
-        ещё не закончившуюся предыдущую последовательность."""
+        ещё не закончившуюся предыдущую последовательность.
+
+        text_color_override - если задан, используется вместо обычного
+        бирюзового (например, тёмно-оранжевый - для уведомления о том,
+        что база данных была автоматически обновлена из сети "тихо",
+        без спроса - см. MainWindow._check_remote_changes, gui.py)."""
         self._seq += 1
         seq = self._seq
 
@@ -503,17 +570,18 @@ class _DbNotificationBanner(QWidget):
         self._gap_timer.stop()
 
         # Цвета - под текущую тему. Текст - тот же контрастный бирюзовый,
-        # что и раньше. Фон - НЕ нейтральный чёрный/белый, а чуть светлее
-        # (тёмная тема) или чуть темнее (светлая тема) собственного фона
-        # панели фильтров - тонкая, но узнаваемая разница, а не резкий
-        # контраст. Фон - горизонтальный градиент, гаснущий к обоим краям
-        # (тень в тон самого фона) - ощущение "парящей" плашки.
+        # что и раньше (если не переопределён явно). Фон - НЕ нейтральный
+        # чёрный/белый, а чуть светлее (тёмная тема) или чуть темнее
+        # (светлая тема) собственного фона панели фильтров - тонкая, но
+        # узнаваемая разница, а не резкий контраст. Фон - горизонтальный
+        # градиент, гаснущий к обоим краям (тень в тон самого фона) -
+        # ощущение "парящей" плашки.
         if styles.is_light_theme():
             bg_rgb = "184, 188, 194"    # чуть темнее светлого фона панели
-            text_color = "#4fd1ff"
+            text_color = text_color_override or "#4fd1ff"
         else:
             bg_rgb = "77, 80, 88"       # чуть светлее тёмного фона панели
-            text_color = "#0d7a99"
+            text_color = text_color_override or "#0d7a99"
         self._bg_widget.setStyleSheet(f"""
             QWidget {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
@@ -793,6 +861,7 @@ class LeftPanel(QWidget):
     group_selected = pyqtSignal(list)
     request_import = pyqtSignal()
     request_upload = pyqtSignal()
+    request_force_pull = pyqtSignal()
     request_add = pyqtSignal()
     request_delete = pyqtSignal(int)
     request_edit = pyqtSignal(int)
@@ -821,11 +890,22 @@ class LeftPanel(QWidget):
         индикатором режима базы. synced=None - скрывает метку."""
         self.db_status_indicator.set_sync_status(synced)
 
-    def show_db_notification(self, text):
+    def set_upload_glow(self, active):
+        """Включает/выключает зелёное мигающее свечение кнопки
+        "Выгрузить" - привлекает внимание, когда есть несохранённые
+        локальные изменения."""
+        self._upload_glow.set_active(active)
+
+    def set_pull_glow(self, active):
+        """Включает/выключает голубое мигающее свечение кнопки "N->L" -
+        привлекает внимание, когда сетевая база ушла вперёд."""
+        self._pull_glow.set_active(active)
+
+    def show_db_notification(self, text, text_color_override=None):
         """Показывает всплывающее уведомление об изменении сетевой базы
         данных другим пользователем (см. MainWindow._check_remote_changes,
         gui.py) - мягкое появление/исчезание поверх строки индикатора."""
-        self.db_status_indicator.notification_banner.show_message(text)
+        self.db_status_indicator.notification_banner.show_message(text, text_color_override)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -839,6 +919,19 @@ class LeftPanel(QWidget):
         self._resize_timer.timeout.connect(self._on_resize_settled)
         self.setup_ui()
         self.load_data()
+
+    def _make_duplicates_cell(self):
+        """Объединяет чекбокс "Дубли" и кнопку принудительного скачивания
+        сети "N->L" в одной небольшой ячейке - чтобы кнопка не добавляла
+        отдельный столбец в сетке (компактный режим) и не выходила за
+        пределы блока фильтров, а делила ту же колонку, что и "Дубли"."""
+        cell = QWidget()
+        cell_layout = QHBoxLayout(cell)
+        cell_layout.setContentsMargins(0, 0, 0, 0)
+        cell_layout.setSpacing(6)
+        cell_layout.addWidget(self.only_duplicates)
+        cell_layout.addWidget(self.btn_force_pull)
+        return cell
 
     def _make_filter_chip(self, label_text, control_widget):
         """Небольшая полупрозрачная "плашка", объединяющая подпись
@@ -870,7 +963,7 @@ class LeftPanel(QWidget):
             body.addWidget(self._make_filter_chip("Заказ №:", self.filter_order))
             body.addWidget(self._make_filter_chip("С:", self.date_from))
             body.addWidget(self._make_filter_chip("По:", self.date_to))
-            body.addWidget(self.only_duplicates)
+            body.addWidget(self._make_duplicates_cell())
             body.addWidget(self.btn_reset_filters)
             body.addStretch()
         else:
@@ -880,7 +973,7 @@ class LeftPanel(QWidget):
             body.addWidget(self._make_filter_chip("Вердикт:", self.filter_verdict), 0, 0)
             body.addWidget(self._make_filter_chip("Тип проверки:", self.filter_test_type), 0, 1)
             body.addWidget(self._make_filter_chip("Герметичность:", self.filter_sealed), 0, 2)
-            body.addWidget(self.only_duplicates, 0, 3)
+            body.addWidget(self._make_duplicates_cell(), 0, 3)
             body.addWidget(self._make_filter_chip("С:", self.date_from), 1, 0)
             body.addWidget(self._make_filter_chip("По:", self.date_to), 1, 1)
             body.addWidget(self._make_filter_chip("Заказ №:", self.filter_order), 1, 2)
@@ -894,7 +987,7 @@ class LeftPanel(QWidget):
         контролы (self.filter_verdict и т.д.) пережили перестроение."""
         for w in (self.filter_verdict, self.filter_test_type, self.filter_sealed,
                   self.filter_order, self.date_from, self.date_to,
-                  self.only_duplicates, self.btn_reset_filters):
+                  self.only_duplicates, self.btn_force_pull, self.btn_reset_filters):
             w.setParent(None)
 
     def _clear_layout_and_delete(self, layout):
@@ -1003,6 +1096,23 @@ class LeftPanel(QWidget):
       self.only_duplicates.setStyleSheet(styles.LEFT_PANEL_CHECKBOX_STYLE)
       self.only_duplicates.stateChanged.connect(self.apply_filters)
 
+      # Принудительное скачивание сетевой базы поверх локальной - "N->L"
+      # текстом (второй вариант из тех, что обсуждали) - без иконки,
+      # компактно, не растягивает общий блок фильтров
+      self.btn_force_pull = QPushButton("N\u2192L")
+      self.btn_force_pull.setObjectName("chromeButton")
+      self.btn_force_pull.setFixedHeight(26)
+      self.btn_force_pull.setToolTip("Загрузить сетевую базу поверх локальной")
+      self.btn_force_pull.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE + """
+          QPushButton#chromeButton { padding: 2px 6px; font-size: 9pt; }
+      """)
+      self.btn_force_pull.clicked.connect(self.request_force_pull.emit)
+      # Голубое мигающее свечение - включается, когда сетевая база ушла
+      # вперёд (см. LeftPanel.set_pull_glow)
+      self._pull_glow = _ButtonGlowBlinker(
+          self.btn_force_pull, (79, 209, 255), self.btn_force_pull.styleSheet()
+      )
+
       self.btn_reset_filters = QPushButton("Сбросить фильтры")
       self.btn_reset_filters.setObjectName("chromeButton")
       self.btn_reset_filters.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
@@ -1025,7 +1135,7 @@ class LeftPanel(QWidget):
       self.filters_grid.addWidget(self._make_filter_chip("Вердикт:", self.filter_verdict), 0, 0)
       self.filters_grid.addWidget(self._make_filter_chip("Тип проверки:", self.filter_test_type), 0, 1)
       self.filters_grid.addWidget(self._make_filter_chip("Герметичность:", self.filter_sealed), 0, 2)
-      self.filters_grid.addWidget(self.only_duplicates, 0, 3)
+      self.filters_grid.addWidget(self._make_duplicates_cell(), 0, 3)
 
       self.filters_grid.addWidget(self._make_filter_chip("С:", self.date_from), 1, 0)
       self.filters_grid.addWidget(self._make_filter_chip("По:", self.date_to), 1, 1)
@@ -1137,9 +1247,15 @@ class LeftPanel(QWidget):
       self.btn_upload.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE + """
           QPushButton#chromeButton { padding: 2px 4px; }
       """)
-      self.btn_upload.setIcon(_make_upload_icon("#2b2d31", 22))
+      upload_icon_path = os.path.join(ICONS_DIR, 'data-transfer-upload_128x128.svg')
+      self.btn_upload.setIcon(icon_utils.tinted_icon(upload_icon_path, "#2b2d31", 22))
       self.btn_upload.setIconSize(QSize(22, 22))
       self.btn_upload.clicked.connect(self.request_upload.emit)
+      # Зелёное мигающее свечение - включается, когда есть несохранённые
+      # локальные изменения (см. LeftPanel.set_upload_glow)
+      self._upload_glow = _ButtonGlowBlinker(
+          self.btn_upload, (46, 204, 113), self.btn_upload.styleSheet()
+      )
       self.btn_import = QPushButton("Импорт Excel")
       self.btn_import.setObjectName("chromeButton")
       self.btn_import.setFixedHeight(26)
