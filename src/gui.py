@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
     QDialog, QPushButton, QLabel, QTableWidget, QTableWidgetItem,
     QApplication, QGraphicsDropShadowEffect, QSizePolicy
 )
-from PyQt5.QtCore import Qt, QTimer, QRectF, QEvent, QSize, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, QRectF, QEvent, QSize, pyqtSignal, QEventLoop
 
 from PyQt5.QtGui import QFont, QPainter, QColor, QIcon, QPixmap
 from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintPreviewWidget
@@ -419,6 +419,12 @@ class MainWindow(QMainWindow):
         # уже неактуального "последнего действия" из базы.
         QTimer.singleShot(15000, lambda: self._remote_check_timer.start(8000))
 
+        # Уведомление "база данных инициализирована" при готовности -
+        # ровно один раз (не два прогона, как обычно у остальных
+        # уведомлений) - менее значимое событие, не нужно задерживать
+        # внимание пользователя так же долго
+        self.left_panel.show_db_notification("База данных инициализирована.", laps=1)
+
     def _check_remote_changes(self):
         """Опрашивает сетевую базу - изменилась ли она с прошлой
         проверки (кто-то другой добавил/изменил/удалил что-то, пока
@@ -513,8 +519,35 @@ class MainWindow(QMainWindow):
         перетаскивание сплиттера (сузить - по-прежнему можно)."""
         # Если панель фильтров только что была пересобрана (переключение
         # компактный/расширенный вид), даём Qt закончить пересчёт layout -
-        # иначе sizeHint() ниже может вернуть ещё не обновлённое значение
-        QApplication.processEvents()
+        # иначе sizeHint() ниже может вернуть ещё не обновлённое значение.
+        # ИСКЛЮЧАЕМ пользовательский ввод (клики/клавиатуру) из обработки -
+        # без этого ограничения processEvents() мог "попутно" обработать
+        # какое-то отложенное событие (в т.ч. связанное с выбором строки
+        # в таблице), из-за чего срабатывал обработчик, открывающий
+        # протокол - хотя в развёрнутом режиме должен срабатывать другой,
+        # не открывающий его (on_pump_status_selected, а не
+        # on_pump_selected). Вероятная причина бага "при сворачивании/
+        # разворачивании окна появляется протокол, которого быть не
+        # должно" - одинаковый эффект в обоих случаях объясняется тем,
+        # что оба пути (свернуть/восстановить) вызывают один и тот же
+        # changeEvent -> _apply_minimal_left_width().
+        # В расширенном режиме списка эта функция вообще не должна
+        # ничего трогать - она предназначена только для компактного
+        # режима (сжатие под минимальную ширину блока фильтров). Раньше
+        # это не проверялось, и функция срабатывала безусловно при ЛЮБОЙ
+        # смене состояния окна (сворачивание/восстановление) - в
+        # расширенном режиме списка это принудительно сжимало таблицу
+        # обратно до узкой "компактной" ширины, из-за чего часть строк
+        # уходила за пределы видимой области, и это, судя по всему,
+        # приводило к сбросу текущей выборки в таблице - а вместе с ней
+        # и к показу заглушки "Выберите насос" в правой панели вместо
+        # ожидаемого содержимого. Это и есть, вероятно, настоящая причина
+        # бага "при сворачивании/разворачивании окна в расширенном режиме
+        # правая панель сбрасывается к заглушке".
+        if not self.left_panel.compact_mode:
+            return
+
+        QApplication.processEvents(QEventLoop.ExcludeUserInputEvents)
         left_width = self.left_panel.sizeHint().width()
         self.left_panel.setMaximumWidth(left_width)
         self.splitter.setSizes([left_width, max(200, self.width() - left_width)])

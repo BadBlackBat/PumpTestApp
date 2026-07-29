@@ -79,6 +79,65 @@ class _OverlayScrollArea(QScrollArea):
         self.overlay_bar.raise_()
 
 
+class _LogoContainer(QWidget):
+    """Контейнер заглушки "Выберите насос для просмотра протокола" -
+    водяной знак (силуэт насоса) на фоне, за текстом. Пересчитывает
+    размер и положение при каждом изменении размера панели: по ширине
+    занимает 75% от ширины контейнера, высота - пропорционально
+    исходному соотношению сторон картинки; если так не помещается по
+    высоте - ширина уменьшается, чтобы высота точно поместилась."""
+    WATERMARK_WIDTH_FRACTION = 0.75
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._source_path = os.path.join(ICONS_DIR, 'PUMP_watermark_AI.png')
+        self._current_color = None
+
+        self.watermark_label = QLabel(self)
+        self.watermark_label.setAlignment(Qt.AlignCenter)
+        self.watermark_label.setStyleSheet("background: transparent;")
+        # Под текстом - watermark_label создан первым и явно опущен вниз
+        # по z-порядку, чтобы logo_text_label (добавляется отдельно, через
+        # layout, уже ПОСЛЕ создания этого контейнера) всегда отрисовывался
+        # поверх него
+        self.watermark_label.lower()
+
+    def set_watermark_color(self, color_hex):
+        """Тонирует водяной знак под текущую тему - светлый на тёмной
+        теме, тёмный на светлой (см. вызов в refresh_theme, gui.py)."""
+        if color_hex == self._current_color:
+            return
+        self._current_color = color_hex
+        self._update_pixmap()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.watermark_label.setGeometry(0, 0, self.width(), self.height())
+        self._update_pixmap()
+
+    def _update_pixmap(self):
+        if self._current_color is None or self.width() <= 0 or self.height() <= 0:
+            return
+        source = QPixmap(self._source_path)
+        if source.isNull():
+            return
+        natural_w, natural_h = source.width(), source.height()
+
+        target_w = int(self.width() * self.WATERMARK_WIDTH_FRACTION)
+        target_h = int(target_w * natural_h / natural_w) if natural_w else 0
+        if target_h > self.height():
+            target_h = self.height()
+            target_w = int(target_h * natural_w / natural_h) if natural_h else 0
+        target_w = max(1, target_w)
+        target_h = max(1, target_h)
+
+        tinted = icon_utils.tinted_pixmap_from_image_wh(
+            self._source_path, self._current_color, target_w, target_h
+        )
+        self.watermark_label.setPixmap(tinted)
+        self.watermark_label.setGeometry(0, 0, self.width(), self.height())
+
+
 class RightPanel(QWidget):
     clear_requested = pyqtSignal()   # сигнал для запроса сброса
     mode_changed = pyqtSignal(str)   # 'protocol' / 'comparison' / 'stats' / 'empty'
@@ -91,6 +150,7 @@ class RightPanel(QWidget):
         диалогов."""
         styles.retheme_widget_tree(self)
         self.logo_label.setStyleSheet(styles.get_right_panel_logo_style())
+        self.logo_label.set_watermark_color(styles.get_watermark_color())
         self.logo_text_label.setStyleSheet(styles.get_right_panel_logo_text_style())
         self.stats_widget.setStyleSheet(styles.get_right_panel_stats_bg_style())
         self.overview_bg.setStyleSheet(styles.get_right_panel_stats_bg_style())
@@ -205,7 +265,7 @@ class RightPanel(QWidget):
         # Логотип: картинка + текст-подсказка под ней. self.logo_label -
         # контейнер (не сам QLabel с картинкой), чтобы весь остальной код
         # (show()/hide() в разных местах файла) не пришлось переписывать
-        self.logo_label = QWidget()
+        self.logo_label = _LogoContainer()
         self.logo_label.setObjectName("logoContainer")
         self.logo_label.setAttribute(Qt.WA_StyledBackground, True)
         logo_layout = QVBoxLayout(self.logo_label)
@@ -217,6 +277,7 @@ class RightPanel(QWidget):
         logo_layout.addWidget(self.logo_text_label)
 
         self.logo_label.setStyleSheet(styles.get_right_panel_logo_style())
+        self.logo_label.set_watermark_color(styles.get_watermark_color())
         self.content_layout.addWidget(self.logo_label)
 
         # Индикатор загрузки: иконка песочных часов (переворачивается по

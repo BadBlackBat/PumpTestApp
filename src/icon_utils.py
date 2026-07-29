@@ -92,6 +92,32 @@ def tinted_icon(svg_path, color, size=24):
     return QIcon(tinted_pixmap(svg_path, color, size))
 
 
+def tinted_pixmap_from_image_wh(path, color, width, height):
+    """То же самое, что tinted_pixmap_from_image(), но с произвольными
+    (не обязательно квадратными) шириной/высотой - для случаев вроде
+    водяного знака, где итоговый размер определяется долей ширины
+    контейнера с пропорциональной высотой, а не одним квадратным
+    размером."""
+    if isinstance(color, tuple):
+        color = QColor(*color)
+    else:
+        color = QColor(color)
+
+    source = QPixmap(path)
+    if source.isNull() or width <= 0 or height <= 0:
+        return QPixmap()
+    source = source.scaled(width, height, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+
+    pixmap = QPixmap(source.size())
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.drawPixmap(0, 0, source)
+    painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+    painter.fillRect(pixmap.rect(), color)
+    painter.end()
+    return pixmap
+
+
 def tinted_pixmap_from_image(path, color, size=24):
     """То же самое, что tinted_pixmap(), но источник - обычная растровая
     картинка (PNG и т.п.), а не SVG - для неё нужен QSvgRenderer, а не

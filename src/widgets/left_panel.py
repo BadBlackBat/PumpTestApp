@@ -509,6 +509,7 @@ class _DbNotificationBanner(QWidget):
         super().__init__(parent)
         self._seq = 0
         self._laps_done = 0
+        self._laps_target = self.LAPS
 
         # Фон - отдельный виджет-подложка на всю область (см. resizeEvent),
         # со своим собственным эффектом прозрачности
@@ -552,7 +553,7 @@ class _DbNotificationBanner(QWidget):
         super().resizeEvent(event)
         self._bg_widget.setGeometry(0, 0, self.width(), self.height())
 
-    def show_message(self, text, text_color_override=None):
+    def show_message(self, text, text_color_override=None, laps=None):
         """Показывает текст бегущей строкой - см. описание класса для
         точной последовательности. Прерывает и полностью отменяет любую
         ещё не закончившуюся предыдущую последовательность.
@@ -560,9 +561,15 @@ class _DbNotificationBanner(QWidget):
         text_color_override - если задан, используется вместо обычного
         бирюзового (например, тёмно-оранжевый - для уведомления о том,
         что база данных была автоматически обновлена из сети "тихо",
-        без спроса - см. MainWindow._check_remote_changes, gui.py)."""
+        без спроса - см. MainWindow._check_remote_changes, gui.py).
+
+        laps - если задан, переопределяет количество прогонов текста
+        (по умолчанию - self.LAPS, обычно 2) только для этого показа -
+        например, 1 для менее значимых/разовых уведомлений вроде "база
+        данных инициализирована" при старте программы."""
         self._seq += 1
         seq = self._seq
+        self._laps_target = laps if laps is not None else self.LAPS
 
         self._bg_fade_in.stop()
         self._bg_fade_out.stop()
@@ -643,7 +650,7 @@ class _DbNotificationBanner(QWidget):
         if seq != self._seq:
             return
         self._laps_done += 1
-        if self._laps_done < self.LAPS:
+        if self._laps_done < self._laps_target:
             # Пауза между кругами - фон остаётся как есть, не гаснет
             self._connect_once_timer(lambda: self._run_lap(seq))
             self._gap_timer.start(self.GAP_BETWEEN_LAPS_MS)
@@ -901,11 +908,11 @@ class LeftPanel(QWidget):
         привлекает внимание, когда сетевая база ушла вперёд."""
         self._pull_glow.set_active(active)
 
-    def show_db_notification(self, text, text_color_override=None):
+    def show_db_notification(self, text, text_color_override=None, laps=None):
         """Показывает всплывающее уведомление об изменении сетевой базы
         данных другим пользователем (см. MainWindow._check_remote_changes,
         gui.py) - мягкое появление/исчезание поверх строки индикатора."""
-        self.db_status_indicator.notification_banner.show_message(text, text_color_override)
+        self.db_status_indicator.notification_banner.show_message(text, text_color_override, laps)
 
     def __init__(self, parent=None):
         super().__init__(parent)
