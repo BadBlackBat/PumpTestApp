@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
     QDialog, QPushButton, QLabel, QTableWidget, QTableWidgetItem,
     QApplication, QGraphicsDropShadowEffect, QSizePolicy
 )
-from PyQt5.QtCore import Qt, QTimer, QRectF, QEvent, QSize, pyqtSignal, QEventLoop
+from PyQt5.QtCore import Qt, QTimer, QRectF, QEvent, QSize, pyqtSignal, QEventLoop, QPropertyAnimation
 
 from PyQt5.QtGui import QFont, QPainter, QColor, QIcon, QPixmap
 from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintPreviewWidget
@@ -1338,7 +1338,16 @@ class MainWindow(QMainWindow):
         """Подтверждение выхода из программы. Если активен сетевой режим
         и есть несохранённые изменения (ещё не выгруженные в сеть) -
         дополнительно, отдельным предупреждением, сообщает об этом -
-        другие пользователи иначе не увидят внесённые изменения."""
+        другие пользователи иначе не увидят внесённые изменения.
+
+        После подтверждения окно не закрывается мгновенно - сначала
+        плавно гаснет (тот же приём, что и появление при старте, см.
+        main.py), и только по завершении анимации закрывается по-
+        настоящему."""
+        if getattr(self, '_ready_to_close', False):
+            event.accept()
+            return
+
         if not GlowMessageDialog.confirm(
             self, "Выход из программы",
             "Вы действительно хотите выйти из программы?"
@@ -1357,4 +1366,11 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
 
-        event.accept()
+        event.ignore()
+        self._ready_to_close = True
+        self._fade_out_anim = QPropertyAnimation(self, b"windowOpacity", self)
+        self._fade_out_anim.setDuration(250)
+        self._fade_out_anim.setStartValue(self.windowOpacity())
+        self._fade_out_anim.setEndValue(0.0)
+        self._fade_out_anim.finished.connect(self.close)
+        self._fade_out_anim.start()

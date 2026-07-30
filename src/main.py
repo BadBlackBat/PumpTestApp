@@ -1,7 +1,7 @@
 import sys
 import os
 import ctypes
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QPropertyAnimation
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QFontDatabase
 from .gui import MainWindow
@@ -124,8 +124,18 @@ def main():
     # в панели фильтров
     window.left_panel.set_db_status(db_sync.get_indicator_mode(sync_status))
 
+    # Плавное появление окна - от полностью прозрачного к обычному виду.
+    # Ссылку на анимацию храним в самом окне (window._startup_fade_anim) -
+    # иначе сборщик мусора Python мог бы удалить объект анимации сразу
+    # после этой функции, до того как она успеет доиграть.
+    window.setWindowOpacity(0.0)
     window.show()
     apply_title_bar_color(window)
+    window._startup_fade_anim = QPropertyAnimation(window, b"windowOpacity", window)
+    window._startup_fade_anim.setDuration(300)
+    window._startup_fade_anim.setStartValue(0.0)
+    window._startup_fade_anim.setEndValue(1.0)
+    window._startup_fade_anim.start()
 
     if sync_message:
         from .widgets.dialogs import GlowMessageDialog
