@@ -20,6 +20,7 @@ from .. import styles
 from .. import icon_utils
 from .. import db_settings
 from .. import db_lock
+from .. import auth
 from .. import db_sync
 from .left_panel import _GlowFrame, _GlowScrollBar
 from .status_bar import _GlowLine
@@ -778,9 +779,8 @@ def setup_password_field(line_edit, accept_callback=None, icon_color="#e8eaed"):
 
 
 class PasswordDialog(_GlowDialog):
-    def __init__(self, parent=None, message="Для удаления записи введите пароль:", correct_password="admin"):
+    def __init__(self, parent=None, message="Для удаления записи введите пароль:"):
         super().__init__(parent, title="Введите пароль")
-        self._correct_password = correct_password
 
         msg_label = QLabel(message)
         msg_label.setStyleSheet("color: #e8eaed; background: transparent;")
@@ -833,7 +833,7 @@ class PasswordDialog(_GlowDialog):
         внутри и даёт попробовать ещё раз (вместо того чтобы закрыться
         независимо от результата, а сообщить об ошибке уже после)."""
         entered = self.password_input.text()
-        if entered != self._correct_password:
+        if not auth.check_password(entered):
             self.error_label.setText("Неверный пароль. Попробуйте ещё раз.")
             self.password_input.clear()
             self.password_input.setFocus()
@@ -1406,7 +1406,7 @@ class AddModificationDialog(_GlowDialog):
                 GlowMessageDialog.show_error(self, "Ошибка", "Заполните все требования по герметичности.")
                 return
 
-        if self.password_input.text() != "admin":
+        if not auth.check_password(self.password_input.text()):
             GlowMessageDialog.show_error(self, "Ошибка", "Неверный пароль.")
             return
 
@@ -3499,7 +3499,7 @@ class EditPumpDialog(_GlowDialog):
             GlowMessageDialog.show_error(self, "Ошибка", "Некорректное значение давления.")
             return
 
-        if self.password_input.text() != "admin":
+        if not auth.check_password(self.password_input.text()):
             GlowMessageDialog.show_error(self, "Ошибка", "Неверный пароль.")
             return
 
@@ -3575,7 +3575,7 @@ class EditProtocolDialog(QDialog):
         layout.addWidget(button_box)
 
     def try_accept(self):
-        if self.password_input.text() != "admin":
+        if not auth.check_password(self.password_input.text()):
             QMessageBox.warning(self, "Ошибка", "Неверный пароль.")
             return
         self.accept()

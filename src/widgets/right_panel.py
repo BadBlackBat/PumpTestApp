@@ -1923,6 +1923,27 @@ class RightPanel(QWidget):
         dialog = EditHistoryDialog(data.get('edit_history', ''), data['id'], self)
         if dialog.exec_() == QDialog.Accepted:
             new_history = dialog.result_history
+
+            # Та же защита от одновременного редактирования, что и в
+            # основном диалоге правки насоса (см. gui.py, on_edit_requested)
+            unchanged = db.check_pump_unchanged(data['id'], data.get('last_edited_at'))
+            if unchanged is None:
+                GlowMessageDialog.show_error(
+                    self, "Запись удалена",
+                    "Эта запись была удалена другим пользователем, пока вы "
+                    "работали с историей изменений. Сохранить невозможно."
+                )
+                return
+            if unchanged is False:
+                if not GlowMessageDialog.confirm(
+                    self, "Запись изменена другим пользователем",
+                    "Эту запись успели изменить, пока вы работали с историей "
+                    "изменений.\n\nСохранить ваши правки поверх чужих "
+                    "изменений? Если продолжить - правки другого "
+                    "пользователя будут потеряны."
+                ):
+                    return
+
             try:
                 # Обновляем историю
                 db.update_pump(data['id'], edit_history=new_history)

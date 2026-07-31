@@ -93,6 +93,12 @@ def init_db():
             cursor.execute('ALTER TABLE pumps ADD COLUMN edit_date TEXT')
         if 'changed_fields_json' not in columns:
             cursor.execute('ALTER TABLE pumps ADD COLUMN changed_fields_json TEXT')
+        if 'last_edited_at' not in columns:
+            # Точная (до секунды) метка последнего изменения ИМЕННО этой
+            # записи - в отличие от edit_date (только дата, без времени),
+            # нужна для защиты от одновременного редактирования одной и
+            # той же записи двумя пользователями (см. check_pump_unchanged)
+            cursor.execute('ALTER TABLE pumps ADD COLUMN last_edited_at TEXT')
 
         # Миграция: если БД создана до появления колонок с X-значениями - добавляем их
         cursor.execute("PRAGMA table_info(modifications)")
@@ -446,13 +452,14 @@ def add_pump(pump_number, test_date, test_type, modification_id, order_id,
     """
     with db_lock.acquire_write_lock(), get_connection() as conn:
         cursor = conn.cursor()
+        now_str = datetime.now().isoformat(timespec='seconds')
         cursor.execute('''
             INSERT INTO pumps 
             (pump_number, test_date, test_type, modification_id, order_id,
-             results_json, seal_results_json, verdict, is_sealed, note)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             results_json, seal_results_json, verdict, is_sealed, note, last_edited_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (pump_number, test_date, test_type, modification_id, order_id,
-              json.dumps(results_json), json.dumps(seal_results_json), verdict, is_sealed, note))
+              json.dumps(results_json), json.dumps(seal_results_json), verdict, is_sealed, note, now_str))
         bump_revision(f"Добавлен насос №{pump_number}", conn)
         conn.commit()
         return cursor.lastrowid
@@ -478,7 +485,8 @@ def get_pump_by_id(pump_id):
                 m.name as mod_name,
                 o.order_number,
                 p.edit_date,
-                p.changed_fields_json
+                p.changed_fields_json,
+                p.last_edited_at
             FROM pumps p
             LEFT JOIN modifications m ON p.modification_id = m.id
             LEFT JOIN orders o ON p.order_id = o.id
@@ -504,6 +512,7 @@ def get_pump_by_id(pump_id):
                 'order_number': row[14],
                 'edit_date': row[15],
                 'changed_fields': json.loads(row[16]) if row[16] else [],
+                'last_edited_at': row[17],
             }
         return None
 
@@ -633,6 +642,13 @@ def update_pump(pump_id, **kwargs):
                 set_clause.append('seal_results_json = ?')
                 params.append(json.dumps(value))
         if set_clause:
+            # last_edited_at обновляется ВСЕГДА при любом реальном
+            # изменении записи, независимо от того, какие именно поля
+            # менялись - это и есть "версия записи" для защиты от
+            # одновременного редактирования (см. check_pump_unchanged)
+            set_clause.append('last_edited_at = ?')
+            params.append(datetime.now().isoformat(timespec='seconds'))
+
             params.append(pump_id)
             cursor.execute(f'UPDATE pumps SET {", ".join(set_clause)} WHERE id = ?', params)
             pump_number = kwargs.get('pump_number')
@@ -642,6 +658,28 @@ def update_pump(pump_id, **kwargs):
                 pump_number = row[0] if row else pump_id
             bump_revision(f"Изменён насос №{pump_number}", conn)
             conn.commit()
+
+
+def check_pump_unchanged(pump_id, expected_last_edited_at):
+    """Проверяет, не изменилась ли запись насоса с момента, когда она
+    была открыта на редактирование - сверяет текущую метку last_edited_at
+    в базе с той, что была запомнена в момент открытия диалога
+    редактирования.
+
+    Возвращает:
+        True  - запись не менялась, можно спокойно сохранять
+        False - запись изменилась (кто-то другой её сохранил, пока мы
+                редактировали) - показать предупреждение, не сохранять молча
+        None  - запись больше не существует (кто-то её удалил) - сохранить
+                в принципе невозможно
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT last_edited_at FROM pumps WHERE id = ?', (pump_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return row[0] == expected_last_edited_at
 
 # Функция статистики по выбранному заказу
 def get_order_stats(order_number):

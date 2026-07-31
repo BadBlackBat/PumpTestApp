@@ -103,6 +103,7 @@ class _ButtonGlowBlinker(QObject):
         # styles.retheme_stylesheet() при каждом обращении (см. _base_style)
         self._original_style = original_style
         self._intensity = 0.0
+        self._last_applied_level = -1  # заведомо несовпадающее значение - первое обновление гарантированно применится
 
         self._effect = QGraphicsDropShadowEffect(button)
         self._effect.setBlurRadius(32)
@@ -132,6 +133,24 @@ class _ButtonGlowBlinker(QObject):
     def _set_intensity(self, value):
         self._intensity = value
         r, g, b = self._color_rgb
+
+        # Прореживание: округляем до 20 дискретных уровней (шаг 0.05)
+        # вместо непрерывного значения - и обновляем сам стиль/тень
+        # только если округлённый уровень реально изменился с прошлого
+        # раза. setStyleSheet() и смена цвета тени - операции не из
+        # дешёвых (полный пересчёт CSS и перерисовка/перекомпоновка
+        # тени), а анимация вызывала их на КАЖДОМ кадре (~60 раз в
+        # секунду) непрерывно, пока подсветка активна - глаз всё равно
+        # не различит разницу между 60 и ~15 обновлениями в секунду для
+        # такой плавной, медленной синусоиды, а нагрузка на отрисовку
+        # снижается в разы - это высвобождает время для других анимаций
+        # (в частности, бегущей строки), которые иначе делили с этим
+        # процессорное время и заметно "дёргались".
+        rounded_level = round(value * 20)
+        if rounded_level == self._last_applied_level:
+            return
+        self._last_applied_level = rounded_level
+
         # Тень - заметно ярче и крупнее, чем было
         self._effect.setColor(QColor(r, g, b, int(40 + value * 215)))
         # Рамка кнопки - от обычной серой (при value=0 - без всякой

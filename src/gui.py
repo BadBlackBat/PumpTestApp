@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
     QDialog, QPushButton, QLabel, QTableWidget, QTableWidgetItem,
     QApplication, QGraphicsDropShadowEffect, QSizePolicy
 )
-from PyQt5.QtCore import Qt, QTimer, QRectF, QEvent, QSize, pyqtSignal, QEventLoop, QPropertyAnimation
+from PyQt5.QtCore import Qt, QTimer, QRectF, QEvent, QSize, pyqtSignal, QEventLoop, QPropertyAnimation, QThread
 
 from PyQt5.QtGui import QFont, QPainter, QColor, QIcon, QPixmap
 from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintPreviewWidget
@@ -198,6 +198,39 @@ class _TopBar(QWidget):
         h = styles.STATUS_BAR_GLOW_HEIGHT
         self._glow_line.setGeometry(0, self.height() - h, self.width(), h)
         self._glow_line.raise_()
+
+
+class _RemoteCheckWorker(QThread):
+    """Выполняет проверку сети (изменения в базе + присутствие
+    пользователей) в ФОНОВОМ потоке, а не в основном.
+
+    Раньше вся эта работа (db_sync.check_for_remote_changes,
+    db_sync.update_presence, db_sync.get_active_user_count) выполнялась
+    прямо по таймеру в основном потоке программы - а эти операции
+    обращаются к сети (проверка доступности сетевой папки, SQLite-
+    соединение по сетевому пути), которая может ненадолго подвиснуть на
+    медленной/нестабильной связи. Любое такое подвисание блокировало
+    основной поток целиком, а вместе с ним - и все анимации Qt,
+    включая бегущую строку уведомлений, которая из-за этого заметно
+    дёргалась при движении (особенно заметно, раз проверка происходит
+    каждые 8 секунд, а один прогон строки длится 9 - почти на каждый
+    прогон приходится хотя бы одна такая проверка).
+
+    Сама запись в базу (автоматическое подтягивание сети, перезагрузка
+    данных) по-прежнему выполняется в основном потоке - она обязана
+    быть там, поскольку трогает виджеты интерфейса напрямую. Здесь, в
+    фоне, выполняется только ЧТЕНИЕ (сетевая ревизия, файлы присутствия)."""
+    finished_result = pyqtSignal(object, object)  # (remote_change_result, active_user_count)
+
+    def __init__(self, last_known_revision, parent=None):
+        super().__init__(parent)
+        self._last_known_revision = last_known_revision
+
+    def run(self):
+        db_sync.update_presence()
+        count = db_sync.get_active_user_count()
+        result = db_sync.check_for_remote_changes(self._last_known_revision)
+        self.finished_result.emit(result, count)
 
 
 class MainWindow(QMainWindow):
@@ -409,8 +442,9 @@ class MainWindow(QMainWindow):
         # сравнивала сеть с числом, которое никогда с ней не совпадёт -
         # бегущая строка срабатывала постоянно, с самого начала работы.
         self._last_known_revision = db_sync.get_network_revision_now()
+        self._remote_check_worker = None
         self._remote_check_timer = QTimer(self)
-        self._remote_check_timer.timeout.connect(self._check_remote_changes)
+        self._remote_check_timer.timeout.connect(self._start_remote_check)
         # Первая проверка - не сразу, а через паузу: сверка версий уже
         # произошла один раз при самом старте программы (см. main.py) -
         # запускать её почти сразу же ещё раз ни к чему, а сама пауза
@@ -431,18 +465,45 @@ class MainWindow(QMainWindow):
         # Уведомление "база данных инициализирована" при готовности -
         # ровно один раз (не два прогона, как обычно у остальных
         # уведомлений) - менее значимое событие, не нужно задерживать
-        # внимание пользователя так же долго
-        self.left_panel.show_db_notification("База данных инициализирована.", laps=1)
+        # внимание пользователя так же долго.
+        #
+        # QTimer.singleShot - вызывается ПОСЛЕ показа окна (window.show()
+        # происходит уже в main.py, после завершения этого __init__), а
+        # не прямо сейчас. Без этой отсрочки на момент вызова у панели
+        # ещё нет окончательных, правильно рассчитанных размеров (Qt
+        # обычно устанавливает реальную геометрию виджетов только когда
+        # окно уже показано и цикл событий обработал раскладку) - из-за
+        # этого бегущая строка стартовала с неверной (нулевой/дефолтной)
+        # ширины, и текст на старте программы выглядел статичным вместо
+        # по-настоящему движущегося.
+        QTimer.singleShot(
+            300,
+            lambda: self.left_panel.show_db_notification("База данных инициализирована.", laps=1)
+        )
 
     def _update_presence_indicator(self):
         """Обновляет иконку количества активных пользователей сетевой
         базы - см. db_sync.get_active_user_count()."""
         self.left_panel.set_active_user_count(db_sync.get_active_user_count())
 
-    def _check_remote_changes(self):
-        """Опрашивает сетевую базу - изменилась ли она с прошлой
-        проверки (кто-то другой добавил/изменил/удалил что-то, пока
-        программа уже была открыта).
+    def _start_remote_check(self):
+        """Запускает фоновую проверку сети (см. _RemoteCheckWorker) - не
+        выполняет саму проверку напрямую в основном потоке (как было
+        раньше), чтобы не блокировать интерфейс/анимации на время сетевого
+        обращения. Если предыдущая фоновая проверка почему-то ещё не
+        завершилась (сеть очень медленная) - просто пропускает этот тик,
+        не запуская вторую проверку поверх первой."""
+        if self._remote_check_worker is not None and self._remote_check_worker.isRunning():
+            return
+        self._remote_check_worker = _RemoteCheckWorker(self._last_known_revision, self)
+        self._remote_check_worker.finished_result.connect(self._on_remote_check_finished)
+        self._remote_check_worker.start()
+
+    def _on_remote_check_finished(self, result, count):
+        """Обрабатывает результат фоновой проверки (см. _start_remote_check) -
+        эта часть уже выполняется в основном потоке (Qt безопасно
+        переносит сигнал из фонового потока обратно в основной), поэтому
+        здесь можно спокойно трогать виджеты интерфейса и писать в базу.
 
         Если да - и у пользователя сейчас НЕТ несохранённых локальных
         изменений (db_sync.is_synced()) - безопасно подтягиваем свежую
@@ -452,14 +513,8 @@ class MainWindow(QMainWindow):
         этом случае только показываем уведомление, ничего не копируя -
         решение (выгрузить свои правки или отбросить и подтянуть сеть)
         остаётся за пользователем."""
-        # Присутствие - обновляем свою метку и пересчитываем иконку на
-        # КАЖДОМ тике этого таймера (раз в 8 секунд), независимо от
-        # того, обнаружены ли изменения в самой базе ниже - это две
-        # независимые друг от друга вещи.
-        db_sync.update_presence()
-        self._update_presence_indicator()
+        self.left_panel.set_active_user_count(count)
 
-        result = db_sync.check_for_remote_changes(self._last_known_revision)
         if result is None:
             return
         new_revision, description = result
@@ -1282,6 +1337,27 @@ class MainWindow(QMainWindow):
 
         # Сохраняем только если что-то реально поменялось (поля или примечание)
         if changed_fields or new_note.strip() != old_note.strip():
+            # Защита от одновременного редактирования: проверяем, не
+            # успел ли кто-то другой сохранить изменения в эту же самую
+            # запись, пока мы её редактировали (см. подробности в
+            # database.check_pump_unchanged)
+            unchanged = db.check_pump_unchanged(pump_id, pump_data.get('last_edited_at'))
+            if unchanged is None:
+                GlowMessageDialog.show_error(
+                    self, "Запись удалена",
+                    "Эта запись была удалена другим пользователем, пока вы "
+                    "её редактировали. Сохранить изменения невозможно."
+                )
+                return
+            if unchanged is False:
+                if not GlowMessageDialog.confirm(
+                    self, "Запись изменена другим пользователем",
+                    "Эту запись успели изменить, пока вы её редактировали.\n\n"
+                    "Сохранить вашу версию поверх чужих изменений? Если "
+                    "продолжить - правки другого пользователя будут потеряны."
+                ):
+                    return
+
             try:
                 db.update_pump(
                     pump_id,
