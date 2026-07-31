@@ -25,6 +25,51 @@ RESOURCES_DIR = os.path.join(
 ICONS_DIR = os.path.join(RESOURCES_DIR, 'icons')
 
 
+def _make_people_icon(color, size=14, count=1):
+    """Рисует простую иконку "один монитор" (count=1) или "несколько
+    мониторов" (count>1, два внахлёст) - программно через QPainter, без
+    отдельных файлов ресурсов. Используется для индикатора количества
+    активных пользователей сетевой базы (см. db_sync.get_active_user_count).
+
+    Монитор (простой прямоугольник экрана + ножка-подставка), а не
+    силуэт человека - при таком мелком размере (строка индикатора тонкая,
+    под стать остальным подписям в ней) прямоугольная форма читается
+    заметно чётче, чем скруглённые голова+тело, которые на этом
+    масштабе превращались в нечитаемое пятно и не помещались по высоте."""
+    pixmap = QPixmap(size, size + 2)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor(color))
+
+    def draw_monitor(cx, scale):
+        screen_w = size * 0.62 * scale
+        screen_h = size * 0.44 * scale
+        screen_top = size * 0.06
+        painter.drawRoundedRect(
+            QRectF(cx - screen_w / 2, screen_top, screen_w, screen_h), 1, 1
+        )
+        stand_w = screen_w * 0.3
+        stand_h = size * 0.12
+        stand_top = screen_top + screen_h
+        painter.drawRect(QRectF(cx - stand_w / 2, stand_top, stand_w, stand_h))
+        base_w = screen_w * 0.55
+        base_h = size * 0.07
+        painter.drawRoundedRect(
+            QRectF(cx - base_w / 2, stand_top + stand_h, base_w, base_h), 1, 1
+        )
+
+    if count <= 1:
+        draw_monitor(size / 2, 1.0)
+    else:
+        draw_monitor(size * 0.38, 0.72)
+        draw_monitor(size * 0.66, 0.72)
+
+    painter.end()
+    return pixmap
+
+
 class _ButtonGlowBlinker(QObject):
     """Мигающее свечение вокруг кнопки для привлечения внимания
     (например, "есть несохранённые изменения - нужно выгрузить").
@@ -738,6 +783,13 @@ class _DbStatusIndicator(QWidget):
         self._sync_label.setFont(QFont("Segoe UI", 8, QFont.Bold))
         layout.addWidget(self._sync_label)
 
+        # Индикатор количества активных пользователей сетевой базы -
+        # иконка одного человека или группы (см. db_sync.get_active_user_count)
+        self._presence_icon_label = QLabel()
+        self._presence_icon_label.setToolTip("Пользователей активно с базой: неизвестно")
+        layout.addWidget(self._presence_icon_label)
+        self._presence_count = None
+
         layout.addStretch(1)
 
         # Уведомление об изменениях сетевой базы во время работы - поверх
@@ -803,6 +855,28 @@ class _DbStatusIndicator(QWidget):
             color = "#a05a00" if styles.is_light_theme() else "#ff8c00"
         self._sync_label.setText(text)
         self._sync_label.setStyleSheet(f"color: {color}; background: transparent;")
+
+    def set_active_user_count(self, count, force=False):
+        """Обновляет иконку количества пользователей, активных с сетевой
+        базой прямо сейчас (см. db_sync.get_active_user_count).
+        count=None - сеть недоступна/не используется, скрываем иконку.
+        force=True - пересчитать в любом случае, даже если число не
+        изменилось (нужно при переключении темы - цвет иконки иначе не
+        пересчитался бы, если количество осталось прежним)."""
+        if count == self._presence_count and not force:
+            return
+        self._presence_count = count
+        if count is None:
+            self._presence_icon_label.setPixmap(QPixmap())
+            self._presence_icon_label.setToolTip("")
+            return
+        color = "#4fd1ff" if not styles.is_light_theme() else "#0d7a99"
+        pixmap = _make_people_icon(color, size=13, count=count)
+        self._presence_icon_label.setPixmap(pixmap)
+        if count <= 1:
+            self._presence_icon_label.setToolTip("Сейчас с базой работаете только вы")
+        else:
+            self._presence_icon_label.setToolTip(f"Сейчас активно пользователей: {count}")
 
     def _on_blink(self):
         self._blink_on = not self._blink_on
@@ -896,6 +970,11 @@ class LeftPanel(QWidget):
         """Обновляет метку "синхронизировано"/"есть изменения" рядом с
         индикатором режима базы. synced=None - скрывает метку."""
         self.db_status_indicator.set_sync_status(synced)
+
+    def set_active_user_count(self, count, force=False):
+        """Обновляет иконку количества активных пользователей сетевой
+        базы. count=None - скрывает иконку."""
+        self.db_status_indicator.set_active_user_count(count, force=force)
 
     def set_upload_glow(self, active):
         """Включает/выключает зелёное мигающее свечение кнопки

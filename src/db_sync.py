@@ -14,6 +14,9 @@ db_sync.py - сверка локальной и сетевой копии баз
 действий - следующие отдельные шаги.
 """
 import os
+import re
+import time
+import getpass
 import sqlite3
 import shutil
 from datetime import datetime
@@ -72,14 +75,19 @@ def _read_revision(path):
 def _backup_local_copy(local_path):
     """Резервная копия локальной базы перед тем, как её перезапишет
     более свежая сетевая версия - в папку резервных копий из настроек
-    (или рядом с самой базой, если папка не указана явно)."""
+    (или рядом с самой базой, если папка не указана явно). Имя файла
+    включает ревизию на момент копирования - удобно для экрана
+    "Восстановить из резервной копии" (видно не просто дату, а конкретное
+    состояние базы, к которому можно вернуться)."""
     backup_dir = db_settings.get_backup_path()
     if not backup_dir:
         backup_dir = os.path.join(os.path.dirname(local_path), 'backups')
     os.makedirs(backup_dir, exist_ok=True)
 
+    revision = database.get_current_revision()
+    revision_display = database.format_revision_display(revision).replace('.', '_')
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    backup_name = f"pumps_before_sync_{timestamp}.db"
+    backup_name = f"pumps_rev{revision_display}_{timestamp}.db"
     shutil.copy2(local_path, os.path.join(backup_dir, backup_name))
 
     _cleanup_old_backups(backup_dir)
@@ -87,11 +95,14 @@ def _backup_local_copy(local_path):
 
 def _cleanup_old_backups(backup_dir):
     """Оставляет только последние _BACKUP_KEEP_COUNT резервных копий,
-    созданных этим механизмом - чтобы папка не росла бесконечно."""
+    созданных этим механизмом - чтобы папка не росла бесконечно.
+    Учитывает и старый формат имени файла (pumps_before_sync_...), и
+    новый, с ревизией (pumps_rev...) - на случай, если старые копии уже
+    существуют на диске с прошлых версий программы."""
     try:
         files = [
             os.path.join(backup_dir, f) for f in os.listdir(backup_dir)
-            if f.startswith('pumps_before_sync_') and f.endswith('.db')
+            if (f.startswith('pumps_before_sync_') or f.startswith('pumps_rev')) and f.endswith('.db')
         ]
         files.sort(key=os.path.getmtime, reverse=True)
         for old_file in files[_BACKUP_KEEP_COUNT:]:
@@ -259,6 +270,129 @@ def check_and_sync_at_startup():
             "сеть только что стала недоступна.\n"
             "Программа продолжит работу с локальной копией данных."
         )
+
+
+def _get_backup_dir():
+    """Папка резервных копий - из настроек, или рядом с локальной базой,
+    если явно не указана (та же логика, что и в _backup_local_copy)."""
+    backup_dir = db_settings.get_backup_path()
+    if not backup_dir:
+        local_path = os.path.normpath(db_settings.get_local_db_path())
+        backup_dir = os.path.join(os.path.dirname(local_path), 'backups')
+    return backup_dir
+
+
+def list_backups():
+    """Список доступных резервных копий - для диалога "Восстановить из
+    резервной копии" (настройки). Каждый элемент -
+    (путь_к_файлу, дата_время_создания, ревизия_или_None) - новые
+    сначала. Ревизия - None для копий старого формата имени (до того,
+    как мы стали дописывать её в название файла)."""
+    backup_dir = _get_backup_dir()
+    if not os.path.isdir(backup_dir):
+        return []
+
+    results = []
+    for fname in os.listdir(backup_dir):
+        if not fname.endswith('.db'):
+            continue
+        if not (fname.startswith('pumps_before_sync_') or fname.startswith('pumps_rev')):
+            continue
+        full_path = os.path.join(backup_dir, fname)
+        revision_display = None
+        m = re.match(r'pumps_rev(\d+_\d+)_', fname)
+        if m:
+            revision_display = m.group(1).replace('_', '.')
+        try:
+            mtime = os.path.getmtime(full_path)
+        except OSError:
+            continue
+        results.append((full_path, datetime.fromtimestamp(mtime), revision_display))
+
+    results.sort(key=lambda item: item[1], reverse=True)
+    return results
+
+
+def restore_backup(backup_path):
+    """Восстанавливает локальную базу из выбранной резервной копии -
+    просто перезаписывает локальный файл содержимым резервной копии.
+    Не трогает сетевую базу и точку синхронизации никак не обновляет -
+    после восстановления локальная база, скорее всего, будет "не
+    синхронизирована" (что и корректно - раз мы вернулись к более
+    старому состоянию, отличному от того, что видела сеть)."""
+    local_path = os.path.normpath(db_settings.get_local_db_path())
+    try:
+        shutil.copy2(backup_path, local_path)
+    except OSError as e:
+        return 'error', f"Не удалось восстановить базу данных: {e}"
+    return 'restored', "Локальная база данных восстановлена из резервной копии."
+
+
+# Порог "устарел" для метки присутствия - если файл не обновлялся
+# дольше этого времени, считаем, что пользователь закрыл программу.
+# Обновление метки привязано к тому же тику опроса сети (раз в 8 секунд,
+# см. gui.py), поэтому 30 секунд дают достаточный запас (3-4 обновления),
+# но всё ещё быстро отражают реальность, а не спустя долгие минуты.
+PRESENCE_STALE_SECONDS = 30
+_PRESENCE_SUBDIR = 'active_users'
+
+
+def _presence_dir():
+    network_path = os.path.normpath(db_settings.get_network_db_path())
+    return os.path.join(os.path.dirname(network_path), _PRESENCE_SUBDIR)
+
+
+def update_presence():
+    """Обновляет метку "я тут" - маленький файл с именем текущего
+    пользователя, внутри - время последнего отклика (по НАШИМ собственным
+    часам, не полагаемся на метаданные файловой системы сетевой шары -
+    та же история, что и с лок-файлом в db_lock.py, где mtime сетевой
+    папки оказался ненадёжен). Молча ничего не делает, если сетевой
+    режим не используется или сеть недоступна прямо сейчас."""
+    if not db_settings.is_network_mode_active():
+        return
+    if not is_network_reachable():
+        return
+    try:
+        presence_dir = _presence_dir()
+        os.makedirs(presence_dir, exist_ok=True)
+        user = getpass.getuser()
+        path = os.path.join(presence_dir, f"{user}.presence")
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(str(time.time()))
+    except OSError:
+        pass
+
+
+def get_active_user_count():
+    """Сколько пользователей сейчас активно работают с сетевой базой -
+    по свежести меток присутствия (см. update_presence). Возвращает
+    None, если сетевой режим не используется или сеть недоступна прямо
+    сейчас (не можем узнать) - иначе число активных пользователей
+    (минимум 1 - мы сами, раз смогли дойти до этой проверки)."""
+    if not db_settings.is_network_mode_active():
+        return None
+    if not is_network_reachable():
+        return None
+    try:
+        presence_dir = _presence_dir()
+        if not os.path.isdir(presence_dir):
+            return 1
+        now = time.time()
+        count = 0
+        for fname in os.listdir(presence_dir):
+            if not fname.endswith('.presence'):
+                continue
+            try:
+                with open(os.path.join(presence_dir, fname), 'r', encoding='utf-8') as f:
+                    ts = float(f.read().strip())
+                if now - ts <= PRESENCE_STALE_SECONDS:
+                    count += 1
+            except (OSError, ValueError):
+                continue
+        return max(count, 1)
+    except OSError:
+        return None
 
 
 def is_synced():

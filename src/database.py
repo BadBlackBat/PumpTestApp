@@ -177,6 +177,13 @@ def bump_revision(description, conn=None):
     if own_conn:
         conn = get_connection()
     try:
+        # Имя пользователя, внёсшего изменение - то же самое (учётная
+        # запись Windows), что уже используется для лок-файла (db_lock.py)
+        # - единообразно, не нужно ничего отдельно настраивать
+        import getpass
+        user = getpass.getuser()
+        description_with_user = f"{user}: {description}"
+
         cursor = conn.cursor()
         cursor.execute('SELECT revision FROM db_meta WHERE id = 1')
         row = cursor.fetchone()
@@ -192,8 +199,8 @@ def bump_revision(description, conn=None):
 
         cursor.execute(
             'UPDATE db_meta SET revision = ?, last_modified_at = ?, '
-            'last_action_description = ? WHERE id = 1',
-            (new_revision, now.isoformat(timespec='seconds'), description)
+            'last_modified_by = ?, last_action_description = ? WHERE id = 1',
+            (new_revision, now.isoformat(timespec='seconds'), user, description_with_user)
         )
 
         # Журнал изменений - для просмотра в "Журнал изменений базы
@@ -204,7 +211,7 @@ def bump_revision(description, conn=None):
             'INSERT INTO change_log '
             '(timestamp, action_type, entity_type, entity_id, record_revision, description) '
             'VALUES (?, ?, ?, ?, ?, ?)',
-            (now.isoformat(timespec='seconds'), 'write', 'unknown', None, new_revision, description)
+            (now.isoformat(timespec='seconds'), 'write', 'unknown', None, new_revision, description_with_user)
         )
         cursor.execute('''
             DELETE FROM change_log WHERE id NOT IN (

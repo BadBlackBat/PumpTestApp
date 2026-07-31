@@ -20,6 +20,7 @@ from .. import styles
 from .. import icon_utils
 from .. import db_settings
 from .. import db_lock
+from .. import db_sync
 from .left_panel import _GlowFrame, _GlowScrollBar
 from .status_bar import _GlowLine
 from matplotlib.figure import Figure
@@ -1894,6 +1895,83 @@ class ViewModificationsDialog(_GlowDialog):
         self._update_buttons()
 
 
+class RestoreBackupDialog(_GlowDialog):
+    """Восстановление локальной базы данных из резервной копии - список
+    доступных копий (см. db_sync.list_backups) с датой/временем и
+    ревизией, если она известна (новые копии её всегда содержат в
+    имени файла - см. db_sync._backup_local_copy)."""
+    def __init__(self, parent=None):
+        super().__init__(parent, title="Восстановить из резервной копии")
+        text_color = styles.get_dialog_text_color()
+
+        hint_label = QLabel("Доступные резервные копии (сверху - самые новые):")
+        hint_label.setStyleSheet(f"color: {text_color}; background: transparent; font-size: 10pt;")
+        self.body_layout.addWidget(hint_label)
+
+        self.list_widget = QListWidget()
+        self.list_widget.setStyleSheet("""
+            QListWidget {
+                background-color: #f0f0f0;
+                color: #1c1e21;
+                border: 1px solid #6b6f75;
+                border-radius: 4px;
+            }
+            QListWidget::item { padding: 4px 6px; }
+        """)
+        self.list_widget.setMinimumSize(480, 280)
+
+        self._backups = db_sync.list_backups()
+        if not self._backups:
+            self.list_widget.addItem(QListWidgetItem("Резервных копий пока нет."))
+        else:
+            for full_path, created_at, revision_display in self._backups:
+                when = created_at.strftime('%d.%m.%Y %H:%M')
+                rev_text = f"ревизия {revision_display}" if revision_display else "ревизия неизвестна (старый формат)"
+                self.list_widget.addItem(QListWidgetItem(f"{when} - {rev_text}"))
+        self.body_layout.addWidget(self.list_widget)
+
+        btn_row = QHBoxLayout()
+        restore_btn = QPushButton("Восстановить выбранную")
+        restore_btn.setObjectName("chromeButton")
+        restore_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+        restore_btn.clicked.connect(self._on_restore_clicked)
+        close_btn = QPushButton("Закрыть")
+        close_btn.setObjectName("chromeButton")
+        close_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+        close_btn.clicked.connect(self.reject)
+        btn_row.addWidget(restore_btn)
+        btn_row.addWidget(close_btn)
+        self.body_layout.addLayout(btn_row)
+
+        self.setMinimumWidth(520)
+        self._lock_size(clamp_to_screen=True)
+
+    def _on_restore_clicked(self):
+        row = self.list_widget.currentRow()
+        if row < 0 or not self._backups:
+            GlowMessageDialog.show_error(self, "Восстановление", "Сначала выберите резервную копию из списка.")
+            return
+
+        full_path, created_at, revision_display = self._backups[row]
+        when = created_at.strftime('%d.%m.%Y %H:%M')
+        rev_text = f"ревизия {revision_display}" if revision_display else "ревизия неизвестна"
+        if not GlowMessageDialog.confirm(
+            self, "Подтверждение восстановления",
+            f"Восстановить локальную базу данных из копии {when} ({rev_text})?\n\n"
+            "Текущее состояние локальной базы будет заменено - все "
+            "изменения, сделанные после этой копии, будут потеряны, если "
+            "они не выгружены в сеть."
+        ):
+            return
+
+        status, message = db_sync.restore_backup(full_path)
+        if status == 'restored':
+            GlowMessageDialog.show_success(self, "Восстановление", message)
+            self.accept()
+        else:
+            GlowMessageDialog.show_error(self, "Восстановление", message)
+
+
 class ChangeLogDialog(_GlowDialog):
     """Журнал последних изменений базы данных - список действий с датой
     и временем (см. database.get_recent_changes, database.bump_revision -
@@ -2122,10 +2200,6 @@ class SettingsDialog(_GlowDialog):
         left, top, right, bottom = self.frame_layout.getContentsMargins()
         self.frame_layout.setContentsMargins(left + 10, top, right + 10, bottom)
 
-        label = QLabel("Модификации насосов ГУР:")
-        label.setStyleSheet("color: #e8eaed; background: transparent; font-size: 10.5pt;")
-        self.body_layout.addWidget(label)
-
         # Крупнее шрифт и отступы кнопок, чем стандартный chromeButton -
         # добавляем сверху ту же шапку стиля, но с более крупными числами
         big_button_style = styles.LEFT_PANEL_RESET_BTN_STYLE + """
@@ -2142,7 +2216,20 @@ class SettingsDialog(_GlowDialog):
             btn.clicked.connect(slot)
             return btn
 
-        # Блок 1: управление модификациями
+        # Блок 1: расположение базы данных (локальный ПК / сетевая папка)
+        db_label = QLabel("База данных:")
+        db_label.setStyleSheet("color: #e8eaed; background: transparent; font-size: 10.5pt;")
+        self.body_layout.addWidget(db_label)
+        self.body_layout.addWidget(make_btn("Расположение базы данных", self.open_database_location))
+        self.body_layout.addWidget(make_btn("Журнал изменений базы данных", self.open_change_log))
+        self.body_layout.addWidget(make_btn("Восстановить из резервной копии", self.open_restore_backup))
+
+        self.body_layout.addSpacing(22)
+
+        # Блок 2: управление модификациями
+        mod_label = QLabel("Модификации насосов ГУР:")
+        mod_label.setStyleSheet("color: #e8eaed; background: transparent; font-size: 10.5pt;")
+        self.body_layout.addWidget(mod_label)
         self.body_layout.addWidget(make_btn("Добавить модификацию", self.open_add_modification))
         self.body_layout.addWidget(make_btn("Просмотреть модификации", self.open_view_modifications))
 
@@ -2150,7 +2237,7 @@ class SettingsDialog(_GlowDialog):
         # модификациями от служебных действий (инструкция/закрытие)
         self.body_layout.addSpacing(22)
 
-        # Блок 2: настройки интерфейса - пока только размытие фона за
+        # Блок 3: настройки интерфейса - пока только размытие фона за
         # диалогами; при добавлении переключателя темы в будущем стоит
         # сделать по тому же принципу (QCheckBox + QSettings)
         interface_label = QLabel("Интерфейс:")
@@ -2180,15 +2267,6 @@ class SettingsDialog(_GlowDialog):
         """)
         self.blur_checkbox.toggled.connect(_DialogBackgroundManager.set_enabled)
         self.body_layout.addWidget(self.blur_checkbox)
-
-        self.body_layout.addSpacing(22)
-
-        # Блок 3: расположение базы данных (локальный ПК / сетевая папка)
-        db_label = QLabel("База данных:")
-        db_label.setStyleSheet("color: #e8eaed; background: transparent; font-size: 10.5pt;")
-        self.body_layout.addWidget(db_label)
-        self.body_layout.addWidget(make_btn("Расположение базы данных", self.open_database_location))
-        self.body_layout.addWidget(make_btn("Журнал изменений базы данных", self.open_change_log))
 
         self.body_layout.addSpacing(22)
 
@@ -2275,6 +2353,20 @@ class SettingsDialog(_GlowDialog):
         self.hide()
         dialog = ChangeLogDialog(self.parent())
         dialog.exec_()
+        self.show()
+
+    def open_restore_backup(self):
+        self.hide()
+        dialog = RestoreBackupDialog(self.parent())
+        if dialog.exec_() == QDialog.Accepted:
+            # Локальный файл базы был заменён - перезагружаем данные и
+            # статус-бар во всей программе, раз это применимо
+            main_window = self.parent()
+            if main_window is not None and hasattr(main_window, 'left_panel'):
+                db.init_db()
+                main_window.left_panel.load_data()
+                if hasattr(main_window, 'update_status'):
+                    main_window.update_status()
         self.show()
 
 
