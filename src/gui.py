@@ -925,8 +925,37 @@ class MainWindow(QMainWindow):
                 "Сетевой режим не используется - настройте его в "
                 "«Расположение базы данных», прежде чем выгружать изменения."
             )
+        elif status == 'network_ahead':
+            # Вместо простого отказа - предлагаем умное слияние: если
+            # локально накопились только НОВЫЕ добавления (не правки
+            # существующих записей), можно безопасно подтянуть сеть и
+            # перенести эти добавления обратно, без необходимости вручную
+            # повторять всё редактирование заново
+            if GlowMessageDialog.confirm(
+                self, "Сеть ушла вперёд",
+                "Пока вы работали, сеть уже изменилась.\n\n"
+                "Можно попробовать умное слияние: сетевая версия будет "
+                "подтянута, а ваши локально добавленные насосы (только "
+                "добавленные - не правки уже существующих записей) будут "
+                "перенесены в неё автоматически. Правки существующих "
+                "записей, если такие есть, слиянием не переносятся - о них "
+                "будет сообщено отдельно.\n\n"
+                "Попробовать умное слияние?"
+            ):
+                merge_status, merge_message = db_sync.smart_merge_push()
+                if merge_status == 'merged':
+                    db.init_db()
+                    self.left_panel.load_data()
+                    self.update_status()
+                    self.left_panel.set_db_status(db_sync.get_indicator_mode('synced'))
+                    self.left_panel.set_pull_glow(False)
+                    GlowMessageDialog.show_success(self, "Умное слияние", merge_message)
+                else:
+                    GlowMessageDialog.show_error(self, "Умное слияние", merge_message)
+            else:
+                GlowMessageDialog.show_error(self, "Выгрузка в сеть", message)
         else:
-            # 'network_unreachable' / 'network_ahead' / 'locked' / 'error'
+            # 'network_unreachable' / 'locked' / 'error'
             GlowMessageDialog.show_error(self, "Выгрузка в сеть", message)
         self._update_sync_status_label()
 
@@ -1469,6 +1498,10 @@ class MainWindow(QMainWindow):
 
         event.ignore()
         self._ready_to_close = True
+        # Убираем за собой метку присутствия - раз пользователь явно
+        # уходит, она больше не нужна (не критично, если не получится -
+        # метка сама перестанет считаться активной через полминуты)
+        db_sync.remove_presence()
         self._fade_out_anim = QPropertyAnimation(self, b"windowOpacity", self)
         self._fade_out_anim.setDuration(250)
         self._fade_out_anim.setStartValue(self.windowOpacity())

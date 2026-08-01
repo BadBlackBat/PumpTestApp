@@ -1972,6 +1972,53 @@ class RestoreBackupDialog(_GlowDialog):
             GlowMessageDialog.show_error(self, "Восстановление", message)
 
 
+class KnownUsersDialog(_GlowDialog):
+    """Список всех пользователей, когда-либо подключавшихся к сетевой
+    базе данных - см. db_sync.get_known_users(). Отдельный лёгкий файл
+    в сетевой папке, не в самой синхронизируемой базе (иначе статус
+    "синхронизировано" дёргался бы при каждом отклике присутствия)."""
+    def __init__(self, parent=None):
+        super().__init__(parent, title="Пользователи сетевой базы")
+        text_color = styles.get_dialog_text_color()
+
+        hint_label = QLabel("Все, кто когда-либо подключался к сетевой базе:")
+        hint_label.setStyleSheet(f"color: {text_color}; background: transparent; font-size: 10pt;")
+        self.body_layout.addWidget(hint_label)
+
+        self.list_widget = QListWidget()
+        self.list_widget.setStyleSheet("""
+            QListWidget {
+                background-color: #f0f0f0;
+                color: #1c1e21;
+                border: 1px solid #6b6f75;
+                border-radius: 4px;
+            }
+            QListWidget::item { padding: 4px 6px; }
+        """)
+        self.list_widget.setMinimumSize(460, 280)
+
+        users = db_sync.get_known_users()
+        if not users:
+            self.list_widget.addItem(QListWidgetItem(
+                "Список пуст - либо сетевой режим не используется, либо "
+                "ещё никто не подключался."
+            ))
+        else:
+            for user, first_seen, last_seen in users:
+                item = QListWidgetItem(f"{user}\nПервое подключение: {first_seen}\nПоследнее: {last_seen}")
+                self.list_widget.addItem(item)
+        self.body_layout.addWidget(self.list_widget)
+
+        close_btn = QPushButton("Закрыть")
+        close_btn.setObjectName("chromeButton")
+        close_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+        close_btn.clicked.connect(self.accept)
+        self.body_layout.addWidget(close_btn)
+
+        self.setMinimumWidth(500)
+        self._lock_size(clamp_to_screen=True)
+
+
 class ChangeLogDialog(_GlowDialog):
     """Журнал последних изменений базы данных - список действий с датой
     и временем (см. database.get_recent_changes, database.bump_revision -
@@ -2152,6 +2199,8 @@ class DatabaseLocationDialog(_GlowDialog):
 
     def save_and_close(self):
         new_mode = db_settings.MODE_NETWORK if self.radio_network.isChecked() else db_settings.MODE_LOCAL
+        new_full_offline = self.offline_checkbox.isChecked()
+
         if new_mode == db_settings.MODE_NETWORK and not self.network_path_field.text().strip():
             GlowMessageDialog.show_error(
                 self, "Ошибка",
@@ -2159,11 +2208,26 @@ class DatabaseLocationDialog(_GlowDialog):
             )
             return
 
+        # Если сетевой режим СЕЙЧАС активен, а после сохранения новых
+        # настроек перестанет быть активным (переключение на локальный
+        # режим или включение "полного офлайна") - убираем за собой
+        # метку присутствия, пока настройки ещё не перезаписаны (иначе
+        # remove_presence() искала бы уже в НОВОЙ сетевой папке, а не в
+        # той, которую мы на самом деле покидаем)
+        was_network_active = db_settings.is_network_mode_active()
+        will_be_network_active = (
+            new_mode == db_settings.MODE_NETWORK
+            and bool(self.network_path_field.text().strip())
+            and not new_full_offline
+        )
+        if was_network_active and not will_be_network_active:
+            db_sync.remove_presence()
+
         db_settings.set_db_mode(new_mode)
         db_settings.set_local_db_path(self.local_path_field.text().strip())
         db_settings.set_network_db_path(self.network_path_field.text().strip())
         db_settings.set_backup_path(self.backup_path_field.text().strip())
-        db_settings.set_full_offline_mode(self.offline_checkbox.isChecked())
+        db_settings.set_full_offline_mode(new_full_offline)
 
         # Применяем сразу, без перезапуска программы - MainWindow делает
         # то же самое, что происходит при обычном старте (сверка/
@@ -2223,6 +2287,7 @@ class SettingsDialog(_GlowDialog):
         self.body_layout.addWidget(make_btn("Расположение базы данных", self.open_database_location))
         self.body_layout.addWidget(make_btn("Журнал изменений базы данных", self.open_change_log))
         self.body_layout.addWidget(make_btn("Восстановить из резервной копии", self.open_restore_backup))
+        self.body_layout.addWidget(make_btn("Пользователи сетевой базы", self.open_known_users))
 
         self.body_layout.addSpacing(22)
 
@@ -2352,6 +2417,12 @@ class SettingsDialog(_GlowDialog):
     def open_change_log(self):
         self.hide()
         dialog = ChangeLogDialog(self.parent())
+        dialog.exec_()
+        self.show()
+
+    def open_known_users(self):
+        self.hide()
+        dialog = KnownUsersDialog(self.parent())
         dialog.exec_()
         self.show()
 

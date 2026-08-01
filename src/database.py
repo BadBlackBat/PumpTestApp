@@ -1,6 +1,7 @@
 import sqlite3
 import os
 import json
+import uuid
 from datetime import datetime
 from . import db_settings
 from . import db_lock
@@ -99,6 +100,20 @@ def init_db():
             # нужна для защиты от одновременного редактирования одной и
             # той же записи двумя пользователями (см. check_pump_unchanged)
             cursor.execute('ALTER TABLE pumps ADD COLUMN last_edited_at TEXT')
+        if 'uuid' not in columns:
+            # Уникальный идентификатор записи, НЕ зависящий от внутреннего
+            # автоинкрементного id - тот может совпасть у двух записей,
+            # независимо созданных на разных компьютерах (оба стартовали
+            # с одной и той же версии базы). uuid нужен для надёжного
+            # сопоставления "это та же самая запись или разные" при умном
+            # слиянии добавлений (см. db_sync.smart_merge_push).
+            cursor.execute('ALTER TABLE pumps ADD COLUMN uuid TEXT')
+            # Существующие записи (созданные до этой доработки) ещё не
+            # имеют uuid - генерируем его задним числом, чтобы умное
+            # слияние могло работать и со старыми данными тоже
+            cursor.execute('SELECT id FROM pumps WHERE uuid IS NULL')
+            for (pump_id,) in cursor.fetchall():
+                cursor.execute('UPDATE pumps SET uuid = ? WHERE id = ?', (str(uuid.uuid4()), pump_id))
 
         # Миграция: если БД создана до появления колонок с X-значениями - добавляем их
         cursor.execute("PRAGMA table_info(modifications)")
@@ -445,21 +460,28 @@ def get_pump_by_number_and_date(pump_number, test_date):
         return row[0] if row else None
 
 def add_pump(pump_number, test_date, test_type, modification_id, order_id,
-             results_json, seal_results_json, verdict, is_sealed, note=''):
+             results_json, seal_results_json, verdict, is_sealed, note='', pump_uuid=None):
     """
     results_json: dict с ключами 'g5'..'g32' (или список)
     seal_results_json: dict с ключами 'g33'..'g37'
+
+    pump_uuid - если не задан, генерируется новый (обычное добавление).
+    При повторном добавлении в рамках умного слияния (см.
+    db_sync.smart_merge_push) передаётся исходный uuid записи - это
+    делает повторный запуск слияния безопасным (идентификатор не
+    задвоится, если процесс случайно выполнится дважды).
     """
     with db_lock.acquire_write_lock(), get_connection() as conn:
         cursor = conn.cursor()
         now_str = datetime.now().isoformat(timespec='seconds')
+        final_uuid = pump_uuid or str(uuid.uuid4())
         cursor.execute('''
             INSERT INTO pumps 
             (pump_number, test_date, test_type, modification_id, order_id,
-             results_json, seal_results_json, verdict, is_sealed, note, last_edited_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             results_json, seal_results_json, verdict, is_sealed, note, last_edited_at, uuid)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (pump_number, test_date, test_type, modification_id, order_id,
-              json.dumps(results_json), json.dumps(seal_results_json), verdict, is_sealed, note, now_str))
+              json.dumps(results_json), json.dumps(seal_results_json), verdict, is_sealed, note, now_str, final_uuid))
         bump_revision(f"Добавлен насос №{pump_number}", conn)
         conn.commit()
         return cursor.lastrowid
@@ -486,7 +508,8 @@ def get_pump_by_id(pump_id):
                 o.order_number,
                 p.edit_date,
                 p.changed_fields_json,
-                p.last_edited_at
+                p.last_edited_at,
+                p.uuid
             FROM pumps p
             LEFT JOIN modifications m ON p.modification_id = m.id
             LEFT JOIN orders o ON p.order_id = o.id
@@ -513,6 +536,7 @@ def get_pump_by_id(pump_id):
                 'edit_date': row[15],
                 'changed_fields': json.loads(row[16]) if row[16] else [],
                 'last_edited_at': row[17],
+                'uuid': row[18],
             }
         return None
 
@@ -619,6 +643,42 @@ def delete_pump(pump_id):
 
         bump_revision(f"Удалён насос №{pump_number}", conn)
         conn.commit()
+
+def get_all_pumps_full_for_merge():
+    """Возвращает ПОЛНЫЕ данные всех насосов (включая uuid, результаты
+    испытаний и last_edited_at) - специально для умного слияния (см.
+    db_sync.smart_merge_push). В отличие от get_all_pumps() (только
+    сводные поля для таблицы списка), здесь нужны все поля, чтобы можно
+    было заново добавить запись целиком, если выяснится, что её нет в
+    сетевой базе."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, uuid, pump_number, test_date, test_type, modification_id,
+                   order_id, results_json, seal_results_json, verdict, is_sealed,
+                   note, last_edited_at
+            FROM pumps
+            WHERE uuid IS NOT NULL
+        ''')
+        return [
+            {
+                'id': row[0],
+                'uuid': row[1],
+                'pump_number': row[2],
+                'test_date': row[3],
+                'test_type': row[4],
+                'modification_id': row[5],
+                'order_id': row[6],
+                'results_json': json.loads(row[7]) if row[7] else {},
+                'seal_results_json': json.loads(row[8]) if row[8] else {},
+                'verdict': row[9],
+                'is_sealed': bool(row[10]) if row[10] is not None else None,
+                'note': row[11],
+                'last_edited_at': row[12],
+            }
+            for row in cursor.fetchall()
+        ]
+
 
 def update_pump(pump_id, **kwargs):
     """Обновляет поля записи, включая edit_history."""

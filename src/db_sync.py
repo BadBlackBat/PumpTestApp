@@ -78,7 +78,16 @@ def _backup_local_copy(local_path):
     (или рядом с самой базой, если папка не указана явно). Имя файла
     включает ревизию на момент копирования - удобно для экрана
     "Восстановить из резервной копии" (видно не просто дату, а конкретное
-    состояние базы, к которому можно вернуться)."""
+    состояние базы, к которому можно вернуться).
+
+    Если копия с ТАКОЙ ЖЕ ревизией уже существует - пропускаем: раз
+    ревизия однозначно определяет состояние базы на тот момент,
+    содержимое было бы полностью идентично уже существующей копии, и
+    плодить дубликаты нет смысла (это может происходить, если резервное
+    копирование срабатывает несколько раз подряд без реальных изменений
+    базы между вызовами - например, автоматическое подтягивание сети
+    сработало, а вручную нажатая кнопка N->L почти сразу следом
+    попыталась сделать то же самое)."""
     backup_dir = db_settings.get_backup_path()
     if not backup_dir:
         backup_dir = os.path.join(os.path.dirname(local_path), 'backups')
@@ -86,11 +95,28 @@ def _backup_local_copy(local_path):
 
     revision = database.get_current_revision()
     revision_display = database.format_revision_display(revision).replace('.', '_')
+
+    if _backup_with_revision_exists(backup_dir, revision_display):
+        return
+
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     backup_name = f"pumps_rev{revision_display}_{timestamp}.db"
     shutil.copy2(local_path, os.path.join(backup_dir, backup_name))
 
     _cleanup_old_backups(backup_dir)
+
+
+def _backup_with_revision_exists(backup_dir, revision_display):
+    """Проверяет, есть ли уже среди резервных копий файл с такой же
+    ревизией в названии - см. пояснение в _backup_local_copy()."""
+    try:
+        prefix = f"pumps_rev{revision_display}_"
+        return any(
+            fname.startswith(prefix) and fname.endswith('.db')
+            for fname in os.listdir(backup_dir)
+        )
+    except OSError:
+        return False
 
 
 def _cleanup_old_backups(backup_dir):
@@ -349,6 +375,66 @@ def _presence_dir():
     return os.path.join(os.path.dirname(network_path), _PRESENCE_SUBDIR)
 
 
+_KNOWN_USERS_FILE = 'known_users.txt'
+
+
+def _known_users_path():
+    return os.path.join(_presence_dir(), _KNOWN_USERS_FILE)
+
+
+def _record_known_user(user):
+    """Добавляет/обновляет запись о пользователе в списке "все, кто
+    когда-либо подключался" - отдельный простой текстовый файл (не в
+    самой синхронизируемой базе данных - иначе статус "синхронизировано"
+    дёргался бы почти постоянно, при каждом отклике присутствия раз в
+    8 секунд, что перепутало бы служебную телеметрию с настоящими
+    изменениями данных).
+
+    Формат файла - построчно: имя_пользователя|первое_подключение|последнее_подключение
+    Читается/переписывается целиком - список пользователей крошечный
+    (5-10 человек), лишней нагрузки это не создаёт."""
+    try:
+        path = _known_users_path()
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M')
+        entries = {}
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    parts = line.strip().split('|')
+                    if len(parts) == 3:
+                        entries[parts[0]] = (parts[1], parts[2])
+
+        if user in entries:
+            first_seen, _ = entries[user]
+            entries[user] = (first_seen, now_str)
+        else:
+            entries[user] = (now_str, now_str)
+
+        with open(path, 'w', encoding='utf-8') as f:
+            for uname, (first_seen, last_seen) in sorted(entries.items()):
+                f.write(f"{uname}|{first_seen}|{last_seen}\n")
+    except OSError:
+        pass
+
+
+def get_known_users():
+    """Возвращает список всех когда-либо подключавшихся пользователей -
+    [(имя, первое_подключение, последнее_подключение), ...]."""
+    try:
+        path = _known_users_path()
+        if not os.path.exists(path):
+            return []
+        results = []
+        with open(path, 'r', encoding='utf-8') as f:
+            for line in f:
+                parts = line.strip().split('|')
+                if len(parts) == 3:
+                    results.append((parts[0], parts[1], parts[2]))
+        return sorted(results, key=lambda r: r[0])
+    except OSError:
+        return []
+
+
 def update_presence():
     """Обновляет метку "я тут" - маленький файл с именем текущего
     пользователя, внутри - время последнего отклика (по НАШИМ собственным
@@ -367,6 +453,25 @@ def update_presence():
         path = os.path.join(presence_dir, f"{user}.presence")
         with open(path, 'w', encoding='utf-8') as f:
             f.write(str(time.time()))
+        _record_known_user(user)
+    except OSError:
+        pass
+
+
+def remove_presence():
+    """Удаляет метку присутствия этого пользователя - вызывается при
+    закрытии программы и при сознательном переключении в локальный/
+    полный офлайн режим. Не является критичной операцией - если не
+    получилось (сеть уже недоступна и т.п.) - молча ничего не делает,
+    метка сама перестанет считаться активной примерно через
+    PRESENCE_STALE_SECONDS секунд на стороне остальных пользователей."""
+    if not db_settings.is_network_mode_active():
+        return
+    try:
+        user = getpass.getuser()
+        path = os.path.join(_presence_dir(), f"{user}.presence")
+        if os.path.exists(path):
+            os.remove(path)
     except OSError:
         pass
 
@@ -496,6 +601,128 @@ def push_local_to_network():
         f"Изменения выгружены в сетевую базу "
         f"(ревизия {database.format_revision_display(local_revision)})."
     )
+
+
+def _read_network_pumps_snapshot():
+    """Читает минимальный снимок насосов из сетевой базы - для каждой
+    записи (uuid, last_edited_at, pump_number) - используется для
+    умного слияния (см. smart_merge_push), чтобы понять, каких записей,
+    имеющихся локально, ещё нет в сети (новые добавления - можно
+    безопасно перенести), а какие есть и там, и там, но отличаются
+    (правки существующих - настоящий конфликт, автоматически не
+    переносим). Возвращает None, если не удалось прочитать сетевую базу."""
+    network_path = os.path.normpath(db_settings.get_network_db_path())
+    try:
+        conn = sqlite3.connect(network_path, timeout=3)
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT uuid, last_edited_at, pump_number FROM pumps WHERE uuid IS NOT NULL"
+            )
+            return {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+
+
+def smart_merge_push():
+    """Умное слияние - вариант выгрузки для случая "сеть ушла вперёд",
+    когда локально накопились изменения. Безопасно переносит в сеть
+    ТОЛЬКО те записи, которых там ещё нет (новые добавления, сделанные
+    локально, пока мы были "позади" сети) - определяется по uuid записи
+    (не по внутреннему id - тот может случайно совпасть у двух записей,
+    независимо созданных на разных компьютерах).
+
+    Правки уже существующих в сети записей (uuid есть и там, и там, но
+    last_edited_at отличается) автоматически НЕ переносятся - это
+    настоящий конфликт данных, а не безопасное добавление. О таких
+    записях просто сообщается пользователю (какие именно правки не
+    сохранены), без попытки угадать, чья версия правильнее.
+
+    Возвращает (status, message) в том же духе, что и другие функции
+    этого модуля. При успехе ('merged') message включает, сколько
+    записей добавлено и список тех, чьи правки не были перенесены."""
+    if not db_settings.is_network_mode_active():
+        return 'not_network_mode', "Сетевой режим не используется."
+    if not is_network_reachable():
+        return 'network_unreachable', "Сетевая папка сейчас недоступна. Попробуйте позже."
+
+    network_snapshot = _read_network_pumps_snapshot()
+    if network_snapshot is None:
+        return 'error', "Не удалось прочитать сетевую базу данных для слияния."
+
+    local_pumps = database.get_all_pumps_full_for_merge()
+
+    new_local_pumps = []          # записей нет в сети - новые добавления, безопасно перенести
+    conflicted_pump_numbers = []  # записи есть и там, и там, но отличаются - правка, конфликт
+
+    for pump in local_pumps:
+        pump_uuid = pump['uuid']
+        if pump_uuid not in network_snapshot:
+            new_local_pumps.append(pump)
+        else:
+            net_last_edited, _ = network_snapshot[pump_uuid]
+            if pump['last_edited_at'] != net_last_edited:
+                conflicted_pump_numbers.append(pump['pump_number'])
+
+    # Подтягиваем сетевую версию - как обычная кнопка Network -> Local
+    pull_status, pull_message = force_pull_network_to_local()
+    if pull_status != 'pulled':
+        return pull_status, pull_message
+
+    # Заново добавляем те записи, которых не было в сети - сохраняя их
+    # исходный uuid (чтобы повторный запуск слияния, если вдруг случайно
+    # произойдёт дважды, не задвоил их ещё раз)
+    for pump in new_local_pumps:
+        database.add_pump(
+            pump_number=pump['pump_number'],
+            test_date=pump['test_date'],
+            test_type=pump['test_type'],
+            modification_id=pump['modification_id'],
+            order_id=pump['order_id'],
+            results_json=pump['results_json'],
+            seal_results_json=pump['seal_results_json'],
+            verdict=pump['verdict'],
+            is_sealed=pump['is_sealed'],
+            note=pump['note'],
+            pump_uuid=pump['uuid'],
+        )
+
+    # Выгружаем объединённый результат обратно в сеть - без этого шага
+    # слияние осталось бы только локальным, а заново добавленные записи
+    # не попали бы обратно в сетевую базу
+    local_revision = database.get_current_revision()
+    try:
+        with db_lock.acquire_write_lock():
+            local_path = os.path.normpath(db_settings.get_local_db_path())
+            network_path = os.path.normpath(db_settings.get_network_db_path())
+            shutil.copy2(local_path, network_path)
+    except db_lock.DatabaseLockedError as e:
+        return 'locked', (
+            f"Локальные данные подтянуты и объединены (добавлено записей - "
+            f"{len(new_local_pumps)}), но выгрузить результат в сеть не "
+            f"удалось - {e} Попробуйте выгрузить ещё раз кнопкой «Выгрузить»."
+        )
+    except OSError:
+        return 'error', (
+            f"Локальные данные подтянуты и объединены (добавлено записей - "
+            f"{len(new_local_pumps)}), но выгрузить результат в сеть не "
+            f"удалось - сеть, возможно, только что стала недоступна. "
+            f"Попробуйте выгрузить ещё раз кнопкой «Выгрузить»."
+        )
+
+    db_settings.set_last_sync_revision(local_revision)
+
+    message = f"Слияние выполнено: добавлено записей в сеть - {len(new_local_pumps)}."
+    if conflicted_pump_numbers:
+        pump_list = ", ".join(f"№{p}" for p in conflicted_pump_numbers)
+        message += (
+            f"\n\nВНИМАНИЕ: правки для следующих записей НЕ сохранены "
+            f"(были изменены и локально, и в сети параллельно) - {pump_list}. "
+            f"Повторите редактирование при необходимости."
+        )
+    return 'merged', message
 
 
 def force_pull_network_to_local():
