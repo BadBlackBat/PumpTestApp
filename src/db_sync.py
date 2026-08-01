@@ -336,6 +336,13 @@ def restore_backup(backup_path):
 PRESENCE_STALE_SECONDS = 30
 _PRESENCE_SUBDIR = 'active_users'
 
+# Кэш: для каждого файла присутствия - (последнее замеченное содержимое,
+# когда мы его в последний раз ЗАМЕТИЛИ - по нашим собственным часам).
+# Используется в get_active_user_count(), чтобы не сравнивать чужое
+# встроенное время с текущим временем этого компьютера напрямую (часы
+# разных компьютеров в сети не обязательно синхронизированы).
+_presence_seen_cache = {}
+
 
 def _presence_dir():
     network_path = os.path.normpath(db_settings.get_network_db_path())
@@ -369,7 +376,18 @@ def get_active_user_count():
     по свежести меток присутствия (см. update_presence). Возвращает
     None, если сетевой режим не используется или сеть недоступна прямо
     сейчас (не можем узнать) - иначе число активных пользователей
-    (минимум 1 - мы сами, раз смогли дойти до этой проверки)."""
+    (минимум 1 - мы сами, раз смогли дойти до этой проверки).
+
+    ВАЖНО: не сравнивает встроенное в чужой файл время напрямую с
+    текущим временем этого компьютера - на практике часы разных
+    компьютеров в сети не обязательно синхронизированы (даже на
+    несколько минут расхождение приводит к тому, что один компьютер
+    всегда видит метки другого как "протухшие", хотя они свежие).
+    Вместо этого отслеживается, изменилось ли СОДЕРЖИМОЕ конкретного
+    файла с момента последней проверки - а "сколько времени прошло с
+    последнего замеченного изменения" меряется ИСКЛЮЧИТЕЛЬНО по
+    собственным часам этого компьютера (см. _presence_seen_cache) -
+    чужое время в этом сравнении не участвует вообще."""
     if not db_settings.is_network_mode_active():
         return None
     if not is_network_reachable():
@@ -380,16 +398,37 @@ def get_active_user_count():
             return 1
         now = time.time()
         count = 0
+        seen_files = set()
         for fname in os.listdir(presence_dir):
             if not fname.endswith('.presence'):
                 continue
+            seen_files.add(fname)
             try:
                 with open(os.path.join(presence_dir, fname), 'r', encoding='utf-8') as f:
-                    ts = float(f.read().strip())
-                if now - ts <= PRESENCE_STALE_SECONDS:
-                    count += 1
-            except (OSError, ValueError):
+                    current_value = f.read().strip()
+            except OSError:
                 continue
+
+            cached = _presence_seen_cache.get(fname)
+            if cached is None or cached[0] != current_value:
+                # Значение изменилось (или видим этот файл впервые) -
+                # прямо сейчас, по нашим собственным часам, точно "свежее"
+                _presence_seen_cache[fname] = (current_value, now)
+                count += 1
+            else:
+                _, last_seen_locally = cached
+                if now - last_seen_locally <= PRESENCE_STALE_SECONDS:
+                    count += 1
+                # иначе - значение не менялось дольше порога (по нашим
+                # же часам) - считаем пользователя неактивным
+
+        # Подчищаем кэш от файлов, которые вообще исчезли (пользователь
+        # закрыл программу достаточно давно, файл мог быть удалён кем-то
+        # ещё, или просто больше не существует) - не даём кэшу расти
+        # бесконечно
+        for stale_fname in list(_presence_seen_cache.keys()):
+            if stale_fname not in seen_files:
+                del _presence_seen_cache[stale_fname]
         return max(count, 1)
     except OSError:
         return None
