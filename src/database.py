@@ -109,11 +109,45 @@ def init_db():
             # слиянии добавлений (см. db_sync.smart_merge_push).
             cursor.execute('ALTER TABLE pumps ADD COLUMN uuid TEXT')
             # Существующие записи (созданные до этой доработки) ещё не
-            # имеют uuid - генерируем его задним числом, чтобы умное
-            # слияние могло работать и со старыми данными тоже
-            cursor.execute('SELECT id FROM pumps WHERE uuid IS NULL')
-            for (pump_id,) in cursor.fetchall():
-                cursor.execute('UPDATE pumps SET uuid = ? WHERE id = ?', (str(uuid.uuid4()), pump_id))
+            # имеют uuid - генерируем его задним числом ПРЕДСКАЗУЕМО (не
+            # случайно!) - по стабильным полям (id, created_at), которые
+            # уже были одинаковыми на всех синхронизированных копиях этой
+            # записи. Если бы здесь использовался uuid.uuid4() (случайный),
+            # запись, уже синхронизированная между компьютерами ДО
+            # появления uuid, получила бы РАЗНЫЕ значения на разных
+            # машинах (миграция выполняется независимо на каждой) - из-за
+            # этого умное слияние не находило бы совпадений вообще ни для
+            # одной старой записи и считало бы все их "новыми", приводя к
+            # полному дублированию базы. uuid.uuid5() с одинаковым входом
+            # всегда даёт одинаковый результат - на любом компьютере.
+            cursor.execute('SELECT id, created_at FROM pumps WHERE uuid IS NULL')
+            for pump_id, created_at in cursor.fetchall():
+                stable_key = f"pump-{pump_id}-{created_at}"
+                deterministic_uuid = str(uuid.uuid5(uuid.NAMESPACE_OID, stable_key))
+                cursor.execute('UPDATE pumps SET uuid = ? WHERE id = ?', (deterministic_uuid, pump_id))
+        else:
+            # Отдельный, безусловный шаг (выполняется при каждом запуске,
+            # но дёшево - трогает только реально расходящиеся значения):
+            # пересчитывает uuid по той же предсказуемой формуле для ВСЕХ
+            # записей и обновляет только те, что не совпадают с уже
+            # сохранённым значением.
+            #
+            # Нужен, чтобы исправить уже существующие базы, успевшие
+            # получить НЕПРАВИЛЬНЫЕ, случайные uuid от более ранней
+            # (ошибочной) версии этой миграции - та использовала
+            # uuid.uuid4() (случайный), из-за чего одна и та же, уже
+            # синхронизированная между компьютерами запись получала на
+            # разных машинах разные uuid, и умное слияние считало все
+            # старые записи "новыми", приводя к полному дублированию базы
+            # при первой же попытке слияния. Безопасно применять и к
+            # записям, у которых uuid уже был правильным - формула даёт
+            # тот же результат, реального обновления не происходит.
+            cursor.execute('SELECT id, created_at, uuid FROM pumps')
+            for pump_id, created_at, current_uuid in cursor.fetchall():
+                stable_key = f"pump-{pump_id}-{created_at}"
+                deterministic_uuid = str(uuid.uuid5(uuid.NAMESPACE_OID, stable_key))
+                if current_uuid != deterministic_uuid:
+                    cursor.execute('UPDATE pumps SET uuid = ? WHERE id = ?', (deterministic_uuid, pump_id))
 
         # Миграция: если БД создана до появления колонок с X-значениями - добавляем их
         cursor.execute("PRAGMA table_info(modifications)")
