@@ -1893,6 +1893,13 @@ class RightPanel(QWidget):
             history_label.setWordWrap(True)
             self.notes_layout.addWidget(history_label)
 
+            for line in edit_history.strip().split('\n'):
+                if line.strip():
+                    line_label = QLabel(f"  {line.strip()}")
+                    line_label.setWordWrap(True)
+                    self.notes_layout.addWidget(line_label)
+
+            # Кнопка - после всех записей истории, а не перед ними
             self.history_btn = QPushButton("Редактирование истории")
             self.history_btn.setObjectName("chromeButton")
             self.history_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
@@ -1903,22 +1910,23 @@ class RightPanel(QWidget):
             btn_manage_row.addStretch(1)
             self.notes_layout.addLayout(btn_manage_row)
 
-            for line in edit_history.strip().split('\n'):
-                if line.strip():
-                    line_label = QLabel(f"  {line.strip()}")
-                    line_label.setWordWrap(True)
-                    self.notes_layout.addWidget(line_label)
-
         # Не показываем панель прямо здесь - её видимость выставляется в
         # финальном блоке display_protocol()/display_comparison(), вместе
         # со всем остальным содержимым, а не сразу же во время загрузки
         return bool(note or edit_history)
 
     def manage_history(self, data):
-        from ..widgets.dialogs import EditHistoryDialog
+        from ..widgets.dialogs import EditHistoryDialog, PasswordDialog
         from .. import database as db
         from .. import db_lock
         from PyQt5.QtWidgets import QDialog
+
+        # Пароль спрашивается сразу при нажатии кнопки - до открытия
+        # самого диалога редактирования истории, а не в момент удаления
+        # записей внутри него
+        pwd_dialog = PasswordDialog(self, message="Для редактирования истории введите пароль:")
+        if pwd_dialog.exec_() != QDialog.Accepted:
+            return
 
         dialog = EditHistoryDialog(data.get('edit_history', ''), data['id'], self)
         if dialog.exec_() == QDialog.Accepted:
