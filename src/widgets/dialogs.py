@@ -21,6 +21,7 @@ from .. import icon_utils
 from .. import db_settings
 from .. import db_lock
 from .. import auth
+from .. import version
 from .. import db_sync
 from .left_panel import _GlowFrame, _GlowScrollBar
 from .status_bar import _GlowLine
@@ -2338,6 +2339,12 @@ class SettingsDialog(_GlowDialog):
         # Блок 4: служебные действия
         self.body_layout.addWidget(make_btn("Инструкция", self.open_instructions))
         self.body_layout.addWidget(make_btn("Закрыть", self.accept))
+
+        self.body_layout.addSpacing(14)
+        version_label = QLabel(f"Версия {version.VERSION}")
+        version_label.setAlignment(Qt.AlignCenter)
+        version_label.setStyleSheet("color: #8a8f96; background: transparent; font-size: 8.5pt;")
+        self.body_layout.addWidget(version_label)
 
         self.setMinimumWidth(340)
         self._lock_size()
