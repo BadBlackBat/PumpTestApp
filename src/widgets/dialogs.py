@@ -1581,7 +1581,8 @@ class ViewModificationsDialog(_GlowDialog):
         lbl = QLabel(text)
         weight = "bold" if bold else "normal"
         size_css = f"font-size: {size}pt;" if size else ""
-        lbl.setStyleSheet(f"color: #e8eaed; font-weight: {weight}; {size_css} background: transparent;")
+        text_color = styles.get_dialog_text_color()
+        lbl.setStyleSheet(f"color: {text_color}; font-weight: {weight}; {size_css} background: transparent;")
         lbl.setWordWrap(True)
         return lbl
 
@@ -1674,12 +1675,13 @@ class ViewModificationsDialog(_GlowDialog):
         seal_grid = QGridLayout()
         seal_grid.setHorizontalSpacing(10)
         seal_grid.setVerticalSpacing(2)
+        text_color = styles.get_dialog_text_color()
         for row, key in enumerate(utils.SEAL_KEYS):
             label = QLabel(utils.SEAL_LABELS[key] + ":")
-            label.setStyleSheet("color: #e8eaed; background: transparent;")
+            label.setStyleSheet(f"color: {text_color}; background: transparent;")
             label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             value = QLabel(mod['seal_rules'].get(key, '—'))
-            value.setStyleSheet("color: #e8eaed; background: transparent;")
+            value.setStyleSheet(f"color: {text_color}; background: transparent;")
             value.setWordWrap(True)
             seal_grid.addWidget(label, row, 0)
             seal_grid.addWidget(value, row, 1)
@@ -1813,12 +1815,13 @@ class ViewModificationsDialog(_GlowDialog):
         ax.plot(x_values, min_values, color='#4fd1ff', linewidth=1.8)
         ax.plot(x_values, max_values, color='#4fd1ff', linewidth=1.8)
         ax.fill_between(x_values, min_values, max_values, color='#4fd1ff', alpha=0.2)
-        ax.set_xlabel(x_label, fontsize=8, color='#e8eaed')
-        ax.set_ylabel("Q, л/мин", fontsize=8, color='#e8eaed')
-        ax.tick_params(labelsize=7.5, colors='#e8eaed')
+        graph_text_color = styles.get_dialog_text_color()
+        ax.set_xlabel(x_label, fontsize=8, color=graph_text_color)
+        ax.set_ylabel("Q, л/мин", fontsize=8, color=graph_text_color)
+        ax.tick_params(labelsize=7.5, colors=graph_text_color)
         if x_major_step:
             ax.xaxis.set_major_locator(MultipleLocator(x_major_step))
-        ax.grid(True, color='#e8eaed', alpha=0.15, linewidth=0.6)
+        ax.grid(True, color=graph_text_color, alpha=0.15, linewidth=0.6)
         ax.set_axisbelow(True)  # сетка под линиями графика, а не поверх них
         for spine in ax.spines.values():
             spine.set_color('#6b6f75')
