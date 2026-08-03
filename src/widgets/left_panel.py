@@ -256,10 +256,16 @@ class _GlowScrollBar(QScrollBar):
     """Полоса прокрутки в фирменном стиле - собственная отрисовка (QSS не
     умеет ни плавную анимацию ширины, ни "бегущую" динамическую подсветку).
 
+    Работает в ОБЕИХ ориентациях (вертикальной и горизонтальной) - при
+    вертикальной "толщина" полосы - это её ширина, а бегунок растягивается
+    по высоте; при горизонтальной - наоборот, толщина - высота, бегунок
+    растягивается по ширине. Вся геометрия в paintEvent считается через
+    self.orientation(), а не через отдельно хранимый флаг.
+
     Желоб не рисуется вовсе (полностью прозрачный) - виден только сам
     бегунок. В состоянии покоя - тонкая линия акцентного цвета. При
     наведении мыши плавно расширяется СИММЕТРИЧНО в обе стороны от центра
-    до полного вида со скруглёнными краями (35% от ширины) и настоящим
+    до полного вида со скруглёнными краями (35% от толщины) и настоящим
     свечением (ярче по центру бегунка, гаснет к его краям - тот же приём,
     что и у _GlowFrame/_GlowLine). Такое же временное раскрытие
     происходит и просто при прокрутке колесом мыши, даже если курсор не
@@ -268,18 +274,19 @@ class _GlowScrollBar(QScrollBar):
 
     color - RGB кортеж акцентного цвета (по умолчанию фирменный
     бирюзовый) - можно задать другой (зелёный/оранжевый) для диалогов с
-    другой акцентной подсветкой."""
+    другой акцентной подсветкой.
+    orientation - Qt.Vertical (по умолчанию) или Qt.Horizontal."""
 
-    THIN_WIDTH = 3
-    FULL_WIDTH = 8
-    MARGIN_TOP = 4
-    MARGIN_BOTTOM = 4
-    MARGIN_RIGHT = 5          # отступ справа - ощущение "парящей" полосы
+    THIN_THICKNESS = 3
+    FULL_THICKNESS = 8
+    MARGIN_START = 4          # отступ с "начала" полосы (сверху/слева)
+    MARGIN_END = 4             # отступ с "конца" полосы (снизу/справа)
+    MARGIN_OUTER = 5          # отступ от внешнего края контейнера - ощущение "парящей" полосы
     SCROLL_ACTIVITY_LEVEL = 0.65  # насколько раскрывается при прокрутке колесом (без наведения)
     SCROLL_ACTIVITY_HOLD_MS = 700  # сколько ждать после остановки прокрутки перед затуханием
 
-    def __init__(self, parent=None, color=None):
-        super().__init__(Qt.Vertical, parent)
+    def __init__(self, parent=None, color=None, orientation=Qt.Vertical):
+        super().__init__(orientation, parent)
         self._explicit_color = color  # None - подстраивается под тему динамически, см. _color
         self._hover_progress = 0.0  # 0 - состояние покоя, 1 - полностью раскрыта
         self._is_hovering = False
@@ -339,7 +346,10 @@ class _GlowScrollBar(QScrollBar):
 
     def sizeHint(self):
         base = super().sizeHint()
-        return QSize(self.FULL_WIDTH + self.MARGIN_RIGHT, base.height())
+        if self.orientation() == Qt.Vertical:
+            return QSize(self.FULL_THICKNESS + self.MARGIN_OUTER, base.height())
+        else:
+            return QSize(base.width(), self.FULL_THICKNESS + self.MARGIN_OUTER)
 
     def _handle_rect(self):
         opt = QStyleOptionSlider()
@@ -350,23 +360,33 @@ class _GlowScrollBar(QScrollBar):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        current_width = self.THIN_WIDTH + (self.FULL_WIDTH - self.THIN_WIDTH) * self._hover_progress
-        radius = current_width * 0.35
-
-        # Центр полосы фиксирован (по максимальной ширине) - при
-        # раскрытии она растёт СИММЕТРИЧНО в обе стороны от этого центра,
-        # а не только влево
-        center_x = self.width() - self.MARGIN_RIGHT - self.FULL_WIDTH / 2
-        track_x = center_x - current_width / 2
-
+        current_thickness = self.THIN_THICKNESS + (self.FULL_THICKNESS - self.THIN_THICKNESS) * self._hover_progress
+        radius = current_thickness * 0.35
         handle_qrect = self._handle_rect()
-        handle_top = handle_qrect.top()
-        handle_h = max(1, handle_qrect.height())
-        handle_rect = QRectF(track_x, handle_top, current_width, handle_h)
+        vertical = self.orientation() == Qt.Vertical
+
+        if vertical:
+            # Центр полосы фиксирован (по максимальной толщине) - при
+            # раскрытии она растёт СИММЕТРИЧНО в обе стороны от этого
+            # центра, а не только в одну сторону
+            center = self.width() - self.MARGIN_OUTER - self.FULL_THICKNESS / 2
+            track_start = center - current_thickness / 2
+            handle_pos = handle_qrect.top()
+            handle_len = max(1, handle_qrect.height())
+            handle_rect = QRectF(track_start, handle_pos, current_thickness, handle_len)
+            shadow_rect = handle_rect.translated(0.6, 1.2)
+            gradient = QLinearGradient(0, handle_pos, 0, handle_pos + handle_len)
+        else:
+            center = self.height() - self.MARGIN_OUTER - self.FULL_THICKNESS / 2
+            track_start = center - current_thickness / 2
+            handle_pos = handle_qrect.left()
+            handle_len = max(1, handle_qrect.width())
+            handle_rect = QRectF(handle_pos, track_start, handle_len, current_thickness)
+            shadow_rect = handle_rect.translated(1.2, 0.6)
+            gradient = QLinearGradient(handle_pos, 0, handle_pos + handle_len, 0)
 
         # Лёгкая тень - слегка смещённый затемнённый дубликат формы прямо
         # под самой полосой (для контраста на светлом фоне)
-        shadow_rect = handle_rect.translated(0.6, 1.2)
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor(0, 0, 0, 60))
         painter.drawRoundedRect(shadow_rect, radius, radius)
@@ -380,12 +400,11 @@ class _GlowScrollBar(QScrollBar):
         else:
             # При раскрытии - настоящее свечение: ярче по центру бегунка,
             # гаснет к его собственным краям (тот же приём, что и у рамок)
-            handle_gradient = QLinearGradient(0, handle_top, 0, handle_top + handle_h)
-            handle_gradient.setColorAt(0.0, QColor(r, g, b, 50))
-            handle_gradient.setColorAt(0.5, QColor(r, g, b, 235))
-            handle_gradient.setColorAt(1.0, QColor(r, g, b, 50))
+            gradient.setColorAt(0.0, QColor(r, g, b, 50))
+            gradient.setColorAt(0.5, QColor(r, g, b, 235))
+            gradient.setColorAt(1.0, QColor(r, g, b, 50))
             painter.setPen(Qt.NoPen)
-            painter.setBrush(QBrush(handle_gradient))
+            painter.setBrush(QBrush(gradient))
             painter.drawRoundedRect(handle_rect, radius, radius)
 
 
@@ -1292,6 +1311,7 @@ class LeftPanel(QWidget):
 
       # Таблица
       self.table = QTableWidget()
+      self.table.setVerticalScrollBar(_GlowScrollBar(self.table))
       arrow_down_path = os.path.join(RESOURCES_DIR, 'arrow_down_red.png').replace('\\', '/')
       arrow_up_path = os.path.join(RESOURCES_DIR, 'arrow_up_red.png').replace('\\', '/')
       if not (os.path.exists(arrow_down_path) and os.path.exists(arrow_up_path)):

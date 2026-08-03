@@ -89,29 +89,45 @@ from datetime import datetime
 
 
 class _OverlayScrollArea(QScrollArea):
-    """QScrollArea с overlay-полосой прокрутки в фирменном стиле.
+    """QScrollArea с overlay-полосами прокрутки в фирменном стиле - и
+    вертикальной, и горизонтальной (горизонтальная нужна редко - только
+    если содержимое шире панели, например широкий график сравнения
+    дублей в формате 16:10).
 
-    Встроенная полоса Qt здесь ПОЛНОСТЬЮ отключена (ScrollBarAlwaysOff) -
-    поэтому QAbstractScrollArea никогда не резервирует под неё место, и
-    бороться с её внутренней логикой (как в предыдущей версии - через
+    Встроенные полосы Qt здесь ПОЛНОСТЬЮ отключены (ScrollBarAlwaysOff) -
+    поэтому QAbstractScrollArea никогда не резервирует под них место, и
+    бороться с их внутренней логикой (как в предыдущей версии - через
     переопределение resizeEvent) не нужно вовсе: фон гарантированно
     всегда занимает полную ширину, без пустот и без "дёргания" при
     появлении/исчезновении полосы.
 
-    Вместо встроенной полосы работает наша собственная _GlowScrollBar -
-    независимый виджет-оверлей поверх правого края содержимого,
-    синхронизированный по значению и диапазону с (скрытым) встроенным
-    скроллбаром через сигналы rangeChanged/valueChanged."""
+    Вместо встроенных полос работают наши собственные _GlowScrollBar -
+    независимые виджеты-оверлеи поверх правого и нижнего края содержимого,
+    синхронизированные по значению и диапазону с (скрытыми) встроенными
+    скроллбарами через сигналы rangeChanged/valueChanged."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
         self.overlay_bar = _GlowScrollBar(self.viewport())
+        self.overlay_bar_h = _GlowScrollBar(self.viewport(), orientation=Qt.Horizontal)
+
         real_bar = self.verticalScrollBar()
         real_bar.rangeChanged.connect(self._sync_overlay_range)
         real_bar.valueChanged.connect(self.overlay_bar.setValue)
         self.overlay_bar.valueChanged.connect(real_bar.setValue)
+
+        real_bar_h = self.horizontalScrollBar()
+        real_bar_h.rangeChanged.connect(self._sync_overlay_range_h)
+        real_bar_h.valueChanged.connect(self.overlay_bar_h.setValue)
+        self.overlay_bar_h.valueChanged.connect(real_bar_h.setValue)
+
+        # Обе синхронизации - только после того, как ОБА оверлея уже
+        # созданы (каждая вызывает _reposition_overlay, а та обращается
+        # к обоим объектам сразу)
         self._sync_overlay_range(real_bar.minimum(), real_bar.maximum())
+        self._sync_overlay_range_h(real_bar_h.minimum(), real_bar_h.maximum())
 
     def _sync_overlay_range(self, minimum, maximum):
         self.overlay_bar.setRange(minimum, maximum)
@@ -121,17 +137,30 @@ class _OverlayScrollArea(QScrollArea):
         self.overlay_bar.setVisible(maximum > minimum)
         self._reposition_overlay()
 
+    def _sync_overlay_range_h(self, minimum, maximum):
+        self.overlay_bar_h.setRange(minimum, maximum)
+        self.overlay_bar_h.setPageStep(self.horizontalScrollBar().pageStep())
+        self.overlay_bar_h.setVisible(maximum > minimum)
+        self._reposition_overlay()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._reposition_overlay()
 
     def _reposition_overlay(self):
-        bar_width = self.overlay_bar.sizeHint().width()
         vp = self.viewport()
-        margin = int(vp.height() * 0.01)  # по 1% сверху и снизу - крайнее положение полосы короче
-        bar_height = max(1, vp.height() - 2 * margin)
-        self.overlay_bar.setGeometry(vp.width() - bar_width, margin, bar_width, bar_height)
+
+        bar_width = self.overlay_bar.sizeHint().width()
+        margin_v = int(vp.height() * 0.01)  # по 1% сверху и снизу - крайнее положение полосы короче
+        bar_height = max(1, vp.height() - 2 * margin_v)
+        self.overlay_bar.setGeometry(vp.width() - bar_width, margin_v, bar_width, bar_height)
         self.overlay_bar.raise_()
+
+        bar_height_h = self.overlay_bar_h.sizeHint().height()
+        margin_h = int(vp.width() * 0.01)  # по 1% слева и справа - крайнее положение полосы короче
+        bar_width_h = max(1, vp.width() - 2 * margin_h)
+        self.overlay_bar_h.setGeometry(margin_h, vp.height() - bar_height_h, bar_width_h, bar_height_h)
+        self.overlay_bar_h.raise_()
 
 
 class _LogoContainer(QWidget):
@@ -247,7 +276,6 @@ class RightPanel(QWidget):
         layout = QVBoxLayout(self)
         scroll = _OverlayScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setStyleSheet(styles.get_right_panel_scroll_style())
         self.scroll_area = scroll  # нужна для временной фиксации ширины при печати
         self._apply_scroll_area_shadow()
@@ -1141,11 +1169,20 @@ class RightPanel(QWidget):
         setattr(self, marker_attr, marker)
         canvas.draw_idle()
 
-    def _make_graph_widget(self, fig, height=None):
+    def _make_graph_widget(self, fig, height=None, min_width=None):
         """Оборачивает Figure в canvas + тулбар matplotlib (зум/панорама/
         сброс масштаба кнопкой 'Home') и возвращает готовый контейнер-виджет
         и сам canvas (нужен отдельно, чтобы перерисовать график после клика
-        по ячейке таблицы - см. _highlight_graph_point)."""
+        по ячейке таблицы - см. _highlight_graph_point).
+
+        min_width - минимальная ширина контейнера в пикселях. Без неё
+        график с политикой размера Expanding просто сжимается под текущую
+        ширину панели, независимо от того, что задано в figsize самой
+        Figure - figsize влияет только на исходное соотношение сторон при
+        отрисовке, но не заставляет виджет физически стать шире, если
+        панель уже. Если панель окажется у́же min_width - появится
+        горизонтальная прокрутка (уже включена и стилизована, см.
+        styles.get_horizontal_scrollbar_style)."""
         canvas = FigureCanvas(fig)
         canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         toolbar = _FixedAspectToolbar(canvas, self)
@@ -1161,6 +1198,8 @@ class RightPanel(QWidget):
         c_layout.addWidget(canvas)
         if height:
             container.setFixedHeight(height)
+        if min_width:
+            container.setMinimumWidth(min_width)
         return container, canvas
 
     def create_graphs(self, data, graph1_height=None, graph2_height=None):
@@ -1508,6 +1547,15 @@ class RightPanel(QWidget):
                 seal = it['seal_results_json']
                 val = seal.get(key)
                 display_text = str(val) if val is not None else ''
+                # При сравнении 3 и более дублей длинный текст "Присутствуют
+                # в допускаемой степени" переносим на 3 строки - это
+                # заметно уменьшает необходимую ширину колонки (перенос
+                # "тратит" высоту вместо ширины), иначе при таком
+                # количестве колонок суммарная ширина таблицы выходила за
+                # пределы видимой области по горизонтали, и часть таблицы
+                # (обычно последняя по счёту) оказывалась обрезана.
+                if len(items) >= 3 and display_text.strip().lower() == 'присутствуют в допускаемой степени':
+                    display_text = 'Присутствуют в\nдопускаемой степени'
                 val_item = QTableWidgetItem(display_text)
                 val_item.setTextAlignment(Qt.AlignCenter)
                 if key in ('g33', 'g34', 'g35', 'g36'):
@@ -1562,7 +1610,7 @@ class RightPanel(QWidget):
 
         # График 1: расход от оборотов - линии всех дублей вместе
         # (сплошная - ECO выкл., пунктир - ECO вкл.)
-        fig1 = Figure(figsize=(4, 3), dpi=_SCREEN_DPI)
+        fig1 = Figure(figsize=(4.8, 3), dpi=_SCREEN_DPI)  # 16:10
         ax1 = fig1.add_subplot(111)
 
         for idx, it in enumerate(items):
@@ -1594,7 +1642,7 @@ class RightPanel(QWidget):
         ax1.set_title('Сравнение дублей: расход от оборотов', fontsize=_GRAPH_LEGEND_FONT_SIZE + 2)
         ax1.format_coord = lambda x, y: f"RPM={x:.1f}   Q={y:.2f}"
         fig1.subplots_adjust(left=0.14, right=0.97, top=0.90, bottom=0.26)
-        graph1_widget, graph1_canvas = self._make_graph_widget(fig1)
+        graph1_widget, graph1_canvas = self._make_graph_widget(fig1, min_width=620)
         self._graph1_ax = ax1
         self._graph1_canvas = graph1_canvas
         self._graph1_marker = None
@@ -1605,7 +1653,7 @@ class RightPanel(QWidget):
         min3 = mod['norm_graph3_min']
         max3 = mod['norm_graph3_max']
 
-        fig2 = Figure(figsize=(4, 3), dpi=_SCREEN_DPI)
+        fig2 = Figure(figsize=(4.8, 3), dpi=_SCREEN_DPI)  # 16:10
         ax2 = fig2.add_subplot(111)
 
         for idx, it in enumerate(items):
@@ -1634,7 +1682,7 @@ class RightPanel(QWidget):
         ax2.set_ylim(4, 17)
         ax2.set_yticks(np.arange(4, 18, 1))
         fig2.subplots_adjust(left=0.14, right=0.97, top=0.90, bottom=0.22)
-        graph2_widget, graph2_canvas = self._make_graph_widget(fig2)
+        graph2_widget, graph2_canvas = self._make_graph_widget(fig2, min_width=620)
         self._graph2_ax = ax2
         self._graph2_canvas = graph2_canvas
         self._graph2_marker = None

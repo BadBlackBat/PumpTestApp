@@ -987,7 +987,52 @@ RIGHT_PANEL_SCROLL_STYLE_LIGHT = """
 
 
 def get_right_panel_scroll_style():
-    return RIGHT_PANEL_SCROLL_STYLE_LIGHT if is_light_theme() else RIGHT_PANEL_SCROLL_STYLE
+    base = RIGHT_PANEL_SCROLL_STYLE_LIGHT if is_light_theme() else RIGHT_PANEL_SCROLL_STYLE
+    return base + get_horizontal_scrollbar_style()
+
+
+def get_horizontal_scrollbar_style():
+    """Стиль горизонтальной полосы прокрутки правой панели - появляется
+    "по необходимости", когда содержимое (например, широкий график в
+    формате 16:10 в режиме сравнения дублей) шире самой панели.
+    Вертикальная полоса правой панели уже использует отдельный
+    оверлей-виджет в фирменном стиле (_GlowScrollBar) - горизонтальная же
+    использует обычную встроенную полосу Qt, поэтому стилизуется через
+    QSS, тем же принципом цвета, что и остальные акцентные элементы."""
+    if is_light_theme():
+        track_bg = "#e8eaed"
+        handle_color = "#0d7a99"
+        handle_hover = "#0a5f78"
+    else:
+        track_bg = "#2b2d31"
+        handle_color = "#4fd1ff"
+        handle_hover = "#7de0ff"
+    return f"""
+        QScrollArea QScrollBar:horizontal {{
+            background: {track_bg};
+            height: 10px;
+            margin: 2px;
+            border-radius: 5px;
+        }}
+        QScrollArea QScrollBar::handle:horizontal {{
+            background: {handle_color};
+            min-width: 24px;
+            border-radius: 5px;
+        }}
+        QScrollArea QScrollBar::handle:horizontal:hover {{
+            background: {handle_hover};
+        }}
+        QScrollArea QScrollBar::add-line:horizontal,
+        QScrollArea QScrollBar::sub-line:horizontal {{
+            width: 0px;
+            border: none;
+            background: none;
+        }}
+        QScrollArea QScrollBar::add-page:horizontal,
+        QScrollArea QScrollBar::sub-page:horizontal {{
+            background: transparent;
+        }}
+    """
 
 # Заглушка-логотип по центру правой панели - показывается, пока не
 # выбран ни один насос (и пока не идёт загрузка протокола). Без фона и
