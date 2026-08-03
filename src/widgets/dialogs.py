@@ -792,7 +792,8 @@ class PasswordDialog(_GlowDialog):
         self.password_input.setEchoMode(QLineEdit.Password)
         self.password_input.setStyleSheet(styles.get_password_input_style())
         self.password_input.returnPressed.connect(self.try_accept)
-        setup_password_field(self.password_input)
+        eye_color = "#2b2d31" if styles.is_light_theme() else "#e8eaed"
+        setup_password_field(self.password_input, icon_color=eye_color)
         self.body_layout.addWidget(self.password_input)
 
         # Строка ошибки - место под неё зарезервировано СРАЗУ (текст
