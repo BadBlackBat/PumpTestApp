@@ -18,6 +18,56 @@ from matplotlib.figure import Figure
 from matplotlib.ticker import MultipleLocator
 import numpy as np
 
+# Плотность пикселей (dpi) для графиков, отображаемых на экране - была
+# 100, стало заметно выше для более чёткого отображения (особенно
+# заметно на экранах с высокой плотностью пикселей). Не путать с
+# _FixedAspectToolbar.SAVE_DPI - тот применяется только при сохранении
+# в файл (там качество можно поднять ещё сильнее без риска замедлить
+# интерфейс, поскольку это разовая операция, а не постоянная отрисовка).
+_SCREEN_DPI = 150
+
+
+class _FixedAspectToolbar(NavigationToolbar):
+    """Обычная панель инструментов matplotlib (зум/панорама/сброс), но с
+    переопределённой кнопкой "Сохранить":
+    1) итоговое изображение всегда сохраняется в фиксированном
+       соотношении 16:10, а не в том виде, как график отображается на
+       экране прямо сейчас (ширина графика на экране меняется вместе с
+       шириной панели протокола - перетаскивание разделителя, разные
+       разрешения экрана - и раньше именно эта ширина использовалась
+       стандартной кнопкой сохранения "как есть", из-за чего картинка
+       получалась то слишком узкой, то слишком широкой);
+    2) сохраняется с заметно более высокой плотностью пикселей (dpi), чем
+       на экране - на экране график рисуется с dpi=_SCREEN_DPI (см. в
+       начале файла), а при сохранении в файл dpi временно повышается
+       ещё сильнее, до 300 - для печати/увеличения даже экранной чёткости
+       может быть недостаточно. При тех же пропорциях (16:10) итоговое
+       изображение получает в разы больше пикселей и выглядит заметно
+       чётче при печати или увеличении.
+
+    На вид самого графика на экране ни один из этих двух пунктов не
+    влияет - оба значения временно меняются только на миг вызова
+    диалога сохранения и сразу же возвращаются обратно."""
+    SAVE_WIDTH_INCHES = 8.0    # 16:10 при исходной геометрии
+    SAVE_HEIGHT_INCHES = 5.0
+    SAVE_DPI = 600             # для печати/увеличения - заметно чётче, чем 100 на экране
+
+    def save_figure(self, *args):
+        fig = self.canvas.figure
+        original_size = fig.get_size_inches()
+        original_dpi = fig.dpi
+        fig.set_size_inches(self.SAVE_WIDTH_INCHES, self.SAVE_HEIGHT_INCHES)
+        fig.set_dpi(self.SAVE_DPI)
+        try:
+            super().save_figure(*args)
+        finally:
+            # Возвращаем исходные размер и dpi - иначе сам график на
+            # экране (не только сохранённый файл) остался бы растянутым
+            # и с непривычно крупными шрифтами/линиями
+            fig.set_size_inches(*original_size)
+            fig.set_dpi(original_dpi)
+            self.canvas.draw_idle()
+
 from .. import database as db
 from .. import utils
 from ..utils import is_value_in_range
@@ -1093,7 +1143,7 @@ class RightPanel(QWidget):
         по ячейке таблицы - см. _highlight_graph_point)."""
         canvas = FigureCanvas(fig)
         canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        toolbar = NavigationToolbar(canvas, self)
+        toolbar = _FixedAspectToolbar(canvas, self)
         toolbar.setIconSize(QSize(20, 20))
         toolbar.setContentsMargins(0, 0, 0, 0)
         toolbar.setStyleSheet(styles.RIGHT_PANEL_GRAPH_TOOLBAR_STYLE)
@@ -1120,7 +1170,7 @@ class RightPanel(QWidget):
         results = data['results_json']
 
         # График 1: расход от оборотов (ECO выкл. / ECO вкл.)
-        fig1 = Figure(figsize=(4, 3), dpi=100)
+        fig1 = Figure(figsize=(4, 3), dpi=_SCREEN_DPI)
         ax1 = fig1.add_subplot(111)
         x_vals = mod.get('norm_graph1_x') or list(utils.DEFAULT_GRAPH1_X)
         y1 = [results.get(f'g{i}') for i in range(5, 13)]
@@ -1178,7 +1228,7 @@ class RightPanel(QWidget):
         self._graph1_marker = None
 
         # График 2: расход от силы тока ECO
-        fig2 = Figure(figsize=(4, 3), dpi=100)
+        fig2 = Figure(figsize=(4, 3), dpi=_SCREEN_DPI)
         ax2 = fig2.add_subplot(111)
         x_tok = mod.get('norm_graph3_x') or list(utils.DEFAULT_GRAPH3_X)
         y3 = [results.get(f'g{i}') for i in range(21, 32)]
@@ -1492,15 +1542,29 @@ class RightPanel(QWidget):
 
         colors = ['tab:blue', 'tab:red', 'tab:green', 'tab:orange', 'tab:purple', 'tab:brown', 'tab:pink']
 
-        # График 1: расход от оборотов - линии всех дублей вместе
-        # (сплошная - ECO выкл., пунктир - ECO вкл.)
-        fig1 = Figure(figsize=(4, 3), dpi=100)
-        ax1 = fig1.add_subplot(111)
+        # Количество строк легенды растёт вместе с числом сравниваемых
+        # дублей (каждый добавляет 2 записи на график 1 - ECO вкл./выкл.,
+        # и 1 запись на график 2) - раньше высота графика и отступ под
+        # легенду были рассчитаны на 1-2 дубля и не учитывали, что при
+        # большем количестве (от 4 и больше) легенда перестаёт помещаться
+        # в отведённое место и обрезается снизу.
+        n_items = len(items)
         x_vals = mod.get('norm_graph1_x') or list(utils.DEFAULT_GRAPH1_X)
         min1 = mod['norm_graph1_min']
         max1 = mod['norm_graph1_max']
         min2 = mod['norm_graph2_min']
         max2 = mod['norm_graph2_max']
+
+        entries1 = n_items * 2 + (1 if len(min1) == len(x_vals) else 0) + (1 if len(min2) == len(x_vals) else 0)
+        rows1 = max(1, -(-entries1 // 3))  # округление вверх (ceil) без импорта math
+        extra_rows1 = max(0, rows1 - 3)  # базовая раскладка уже рассчитана на 3 строки
+        fig1_height = 3 + extra_rows1 * 0.4
+        bottom1 = min(0.55, 0.26 + extra_rows1 * 0.05)
+
+        # График 1: расход от оборотов - линии всех дублей вместе
+        # (сплошная - ECO выкл., пунктир - ECO вкл.)
+        fig1 = Figure(figsize=(4, fig1_height), dpi=_SCREEN_DPI)
+        ax1 = fig1.add_subplot(111)
 
         for idx, it in enumerate(items):
             color = colors[idx % len(colors)]
@@ -1530,7 +1594,7 @@ class RightPanel(QWidget):
                   fontsize=8, frameon=False, handlelength=1.4, columnspacing=1.2)
         ax1.set_title('Сравнение дублей: расход от оборотов', fontsize=10)
         ax1.format_coord = lambda x, y: f"RPM={x:.1f}   Q={y:.2f}"
-        fig1.subplots_adjust(left=0.14, right=0.97, top=0.90, bottom=0.26)
+        fig1.subplots_adjust(left=0.14, right=0.97, top=0.90, bottom=bottom1)
         graph1_widget, graph1_canvas = self._make_graph_widget(fig1)
         self._graph1_ax = ax1
         self._graph1_canvas = graph1_canvas
@@ -1538,11 +1602,18 @@ class RightPanel(QWidget):
         self.graphs_column.addWidget(graph1_widget)
 
         # График 2: расход от силы тока ECO - линии всех дублей вместе
-        fig2 = Figure(figsize=(4, 3), dpi=100)
-        ax2 = fig2.add_subplot(111)
         x_tok = mod.get('norm_graph3_x') or list(utils.DEFAULT_GRAPH3_X)
         min3 = mod['norm_graph3_min']
         max3 = mod['norm_graph3_max']
+
+        entries2 = n_items + (1 if len(min3) == len(x_tok) else 0)
+        rows2 = max(1, -(-entries2 // 3))
+        extra_rows2 = max(0, rows2 - 2)  # базовая раскладка уже рассчитана на 2 строки
+        fig2_height = 3 + extra_rows2 * 0.4
+        bottom2 = min(0.55, 0.22 + extra_rows2 * 0.05)
+
+        fig2 = Figure(figsize=(4, fig2_height), dpi=_SCREEN_DPI)
+        ax2 = fig2.add_subplot(111)
 
         for idx, it in enumerate(items):
             color = colors[idx % len(colors)]
@@ -1569,7 +1640,7 @@ class RightPanel(QWidget):
         ax2.set_xticks(np.arange(0, 1.01, 0.1))
         ax2.set_ylim(4, 17)
         ax2.set_yticks(np.arange(4, 18, 1))
-        fig2.subplots_adjust(left=0.14, right=0.97, top=0.90, bottom=0.22)
+        fig2.subplots_adjust(left=0.14, right=0.97, top=0.90, bottom=bottom2)
         graph2_widget, graph2_canvas = self._make_graph_widget(fig2)
         self._graph2_ax = ax2
         self._graph2_canvas = graph2_canvas

@@ -1,6 +1,7 @@
 import sqlite3
 import os
 import json
+import re
 import uuid
 from datetime import datetime
 from . import db_settings
@@ -468,16 +469,30 @@ def get_order_by_number(order_number):
         return row[0] if row else None
 
 def get_all_orders():
-    """Возвращает список заказов, которые имеют хотя бы один связанный насос."""
+    """Возвращает список заказов, которые имеют хотя бы один связанный
+    насос - отсортированных по убыванию ЧИСЛОВОЙ части номера заказа,
+    без учёта буквенного префикса (например, "К5666" должен идти выше
+    "5487", несмотря на буквенный префикс - обычная текстовая сортировка
+    в SQL расставила бы их в порядке, не соответствующем реальной
+    величине числа)."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             SELECT DISTINCT o.id, o.order_number
             FROM orders o
             INNER JOIN pumps p ON p.order_id = o.id
-            ORDER BY o.order_number
         ''')
-        return cursor.fetchall()
+        rows = cursor.fetchall()
+        rows.sort(key=lambda row: _order_number_sort_key(row[1]), reverse=True)
+        return rows
+
+
+def _order_number_sort_key(order_number):
+    """Извлекает числовую часть номера заказа (игнорируя любые буквы) -
+    общая функция для сортировки заказов по убыванию величины числа, а
+    не по алфавитному порядку строки."""
+    digits = re.sub(r'\D', '', str(order_number))
+    return int(digits) if digits else 0
 
 # ---------- Работа с насосами (протоколами) ----------
 def get_pump_by_number_and_date(pump_number, test_date):
@@ -912,9 +927,11 @@ def get_statistics():
             FROM pumps p
             JOIN orders o ON p.order_id = o.id
             GROUP BY o.order_number
-            ORDER BY o.order_number
         ''')
         rows = cursor.fetchall()
+        # Сортировка по убыванию ЧИСЛОВОЙ части номера заказа, без учёта
+        # буквенного префикса - та же логика, что и в get_all_orders()
+        rows.sort(key=lambda row: _order_number_sort_key(row[0]), reverse=True)
         for row in rows:
             (order_number, total_o, good_o, good_first_o, bad_o, not_sealed_o,
              date_min, date_max) = row

@@ -711,6 +711,50 @@ _ALUMINUM_HOVER = _brushed_metal_gradient("#aeb2b8", "#8b8f95")
 _ALUMINUM_NORMAL_LIGHT = _brushed_metal_gradient("#f5f6f8", "#e6e8eb", bands=6)
 _ALUMINUM_HOVER_LIGHT = _brushed_metal_gradient("#eef0f2", "#dadde1", bands=6)
 
+# Тёмный хром - для полей, которым специально нужен контраст, обратный
+# обычным алюминиевым кнопкам (те везде остаются светлыми независимо от
+# темы) - например, поле быстрого перехода по странице: светлый хром с
+# тёмной рамкой на светлой теме, тёмный хром со светлой рамкой на тёмной
+_DARK_CHROME_NORMAL = _brushed_metal_gradient("#4a4d52", "#2b2d31")
+_DARK_CHROME_HOVER = _brushed_metal_gradient("#585b61", "#37393d")
+
+
+def get_page_jump_input_style():
+    """Стиль поля быстрого перехода по странице - металлический хром со
+    скруглёнными краями, цвет которого специально меняется местами с
+    рамкой между темами (не как у обычных кнопок, которые везде остаются
+    светлыми): светлый хром с тёмной рамкой на светлой теме, тёмный хром
+    со светлой рамкой на тёмной теме. Тонкая рамка и эффект наведения -
+    как у обычных кнопок (утолщение рамки, окрашенной в акцентный цвет)."""
+    if is_light_theme():
+        background = _ALUMINUM_NORMAL_LIGHT
+        border_color = "#2b2d31"
+        text_color = "#2b2d31"
+        # "Наш фирменный тёмный" - тот же тёмно-бирюзовый акцент, что уже
+        # используется в других местах программы для светлой темы
+        hover_color = "#0d7a99"
+    else:
+        background = _DARK_CHROME_NORMAL
+        border_color = "#e8eaed"
+        text_color = "#e8eaed"
+        hover_color = "#4fd1ff"
+    return f"""
+        QLineEdit {{
+            background: {background};
+            border: 1px solid {border_color};
+            border-radius: 6px;
+            color: {text_color};
+            font-weight: bold;
+            padding: 0px 2px;
+        }}
+        QLineEdit:hover {{
+            border: 2px solid {hover_color};
+        }}
+        QLineEdit:focus {{
+            border: 2px solid {hover_color};
+        }}
+    """
+
 LEFT_PANEL_RESET_BTN_STYLE = f"""
     QPushButton#chromeButton {{
         background: {_ALUMINUM_NORMAL};

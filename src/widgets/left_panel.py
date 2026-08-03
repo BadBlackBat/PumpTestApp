@@ -10,7 +10,7 @@ from PyQt5.QtCore import (
     Qt, pyqtSignal, QDate, QPoint, QTimer, QEvent, QEasingCurve,
     QRect, QRectF, pyqtProperty, QPropertyAnimation, QSize, QObject
 )
-from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QPolygon, QLinearGradient, QBrush, QPainterPath, QPen
+from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QPolygon, QLinearGradient, QBrush, QPainterPath, QPen, QIntValidator
 
 from .. import database as db
 from .. import utils
@@ -981,6 +981,8 @@ class LeftPanel(QWidget):
         диалогов, поэтому ей отдельно нужен этот метод, а не только
         showEvent."""
         styles.retheme_widget_tree(self)
+        if hasattr(self, 'page_jump_input'):
+            self.page_jump_input.setStyleSheet(styles.get_page_jump_input_style())
         if hasattr(self, 'date_from'):
             styles.apply_calendar_style(self.date_from.calendarWidget())
         if hasattr(self, 'date_to'):
@@ -1026,6 +1028,12 @@ class LeftPanel(QWidget):
         self.page_size = 20  # начальное значение, пересчитывается под размер окна
         self.total_records = 0
         self.current_filters = {}
+        # Текущая сортировка списка - сохраняется отдельно от текущей
+        # страницы (не сбрасывается при переходе между страницами) и
+        # применяется на уровне SQL-запроса (ORDER BY), а не только к
+        # уже загруженным строкам - см. on_header_clicked, apply_filters
+        self.sort_column_index = 1   # по умолчанию - "Дата проверки"
+        self.sort_ascending = False  # по умолчанию - от новых к старым
         self._resize_timer = QTimer(self)
         self._resize_timer.setSingleShot(True)
         self._resize_timer.timeout.connect(self._on_resize_settled)
@@ -1293,7 +1301,17 @@ class LeftPanel(QWidget):
       self.table.setSelectionMode(QAbstractItemView.SingleSelection)
       self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
       self.table.verticalHeader().setVisible(False)
-      self.table.setSortingEnabled(True)
+      # Встроенная сортировка Qt отключена - она сортирует только те
+      # строки, что УЖЕ загружены в таблицу (то есть только текущую
+      # страницу), а не всю базу данных целиком. Вместо неё - клик по
+      # заголовку запускает НАСТОЯЩУЮ сортировку на уровне SQL-запроса
+      # (см. on_header_clicked, apply_filters) - результат одинаковый
+      # для пользователя (клик по заголовку сортирует список), но
+      # затрагивает всю базу, а не только видимую страницу, и сохраняется
+      # при переходе между страницами.
+      self.table.setSortingEnabled(False)
+      self.table.horizontalHeader().setSortIndicatorShown(True)
+      self.table.horizontalHeader().sectionClicked.connect(self.on_header_clicked)
       self.table.itemSelectionChanged.connect(self.on_selection_changed)
       self.table.setContextMenuPolicy(Qt.CustomContextMenu)
       self.table.customContextMenuRequested.connect(self.show_context_menu)
@@ -1407,6 +1425,15 @@ class LeftPanel(QWidget):
       self.btn_next.setFixedSize(30, 22)
       self.btn_next.setStyleSheet(styles.LEFT_PANEL_PAGINATION_BTN_STYLE)
       self.btn_next.clicked.connect(self.next_page)
+      # Быстрый переход на страницу по номеру - удобно при большом
+      # количестве страниц, чтобы не листать по одной кнопками
+      self.page_jump_input = _ArrowHoverLineEdit()
+      self.page_jump_input.setFixedSize(38, 22)
+      self.page_jump_input.setAlignment(Qt.AlignCenter)
+      self.page_jump_input.setPlaceholderText("№")
+      self.page_jump_input.setValidator(QIntValidator(1, 999999, self.page_jump_input))
+      self.page_jump_input.setStyleSheet(styles.get_page_jump_input_style())
+      self.page_jump_input.returnPressed.connect(self.jump_to_page)
       self.page_label = QLabel("1/1")
       self.page_label.setAlignment(Qt.AlignCenter)
       self.page_label.setStyleSheet(styles.LEFT_PANEL_FILTER_LABEL_STYLE)
@@ -1422,6 +1449,7 @@ class LeftPanel(QWidget):
       pagination_layout.addWidget(self.btn_prev)
       pagination_layout.addWidget(self.page_label)
       pagination_layout.addWidget(self.btn_next)
+      pagination_layout.addWidget(self.page_jump_input)
       pagination_layout.addStretch()
       pagination_layout.addWidget(self.duplicates_note_label)
       pagination_layout.addStretch()
@@ -1443,6 +1471,12 @@ class LeftPanel(QWidget):
 
     def toggle_view(self, checked):
         """Переключает компактный/расширенный режим списка."""
+        # Сброс сортировки - набор и порядок столбцов разный в компактном
+        # и расширенном режиме, поэтому запомненный индекс столбца из
+        # одного режима не имеет смысла в другом
+        self.sort_column_index = 1
+        self.sort_ascending = False
+
         parent = self.parent()
         while parent and not hasattr(parent, 'splitter'):
             parent = parent.parent()
@@ -1614,12 +1648,6 @@ class LeftPanel(QWidget):
 
         for row, p in enumerate(pumps):
             self._fill_pump_row(row, p, compact)
-
-        self.table.setSortingEnabled(True)
-        if compact:
-            self.table.sortByColumn(1, Qt.DescendingOrder)
-        else:
-            self.table.sortByColumn(0, Qt.AscendingOrder)
 
     def populate_table_grouped(self, pumps, compact=True):
         """Отображает насосы, сгруппированные по номеру + модификации (для
@@ -2015,6 +2043,46 @@ class LeftPanel(QWidget):
         self.filter_order.blockSignals(False)
         self.apply_filters()
 
+    def on_header_clicked(self, logical_index):
+        """Клик по заголовку столбца - сортирует ВСЮ базу (не только
+        текущую страницу) по этому столбцу. Повторный клик по тому же
+        столбцу переключает направление (по возрастанию/по убыванию)."""
+        if logical_index == self.sort_column_index:
+            self.sort_ascending = not self.sort_ascending
+        else:
+            self.sort_column_index = logical_index
+            self.sort_ascending = True
+        order = Qt.AscendingOrder if self.sort_ascending else Qt.DescendingOrder
+        self.table.horizontalHeader().setSortIndicator(logical_index, order)
+        # Меняем сортировку - логично вернуться на первую страницу, а не
+        # остаться на, скажем, 5-й странице уже другого порядка записей
+        self.current_page = 0
+        self.apply_filters()
+
+    def _get_order_by_sql(self):
+        """Переводит текущий выбранный для сортировки столбец в SQL
+        ORDER BY - учитывает, что набор и порядок столбцов разный в
+        компактном и расширенном режиме списка. Список полей - жёстко
+        заданный (не пользовательский ввод), поэтому подстановка строки
+        напрямую в SQL (как это уже сделано в database.get_all_pumps)
+        безопасна."""
+        if self.compact_mode:
+            columns = ['p.pump_number', 'p.test_date', 'p.verdict', 'p.test_type', 'p.is_sealed']
+        else:
+            columns = ['p.pump_number', 'p.test_date', 'm.name', 'p.is_sealed',
+                       'p.test_type', 'o.order_number', 'p.verdict']
+        index = self.sort_column_index
+        if index is None or index >= len(columns):
+            index = 1  # запасной вариант - дата проверки
+        field = columns[index]
+        direction = 'ASC' if self.sort_ascending else 'DESC'
+        # Вторичная сортировка по дате - чтобы порядок записей с
+        # одинаковым значением сортируемого поля был предсказуемым и
+        # стабильным между обновлениями страницы, а не произвольным
+        if field != 'p.test_date':
+            return f'{field} {direction}, p.test_date DESC'
+        return f'{field} {direction}'
+
     def apply_filters(self):
         filters = {}
         search_text = self.search_input.text().strip()
@@ -2057,10 +2125,12 @@ class LeftPanel(QWidget):
         # Определяем группировку по номеру (только если включён фильтр дублей)
         group_by_number = self.only_duplicates.isChecked()
 
+        order_by_sql = self._get_order_by_sql()
+
         if group_by_number:
             # В режиме дублей группы не должны разрываться постраничной разбивкой -
             # показываем все найденные записи целиком
-            filtered = db.get_all_pumps(filters)
+            filtered = db.get_all_pumps(filters, order_by=order_by_sql)
         else:
             # Подстраховка: пересчитываем размер страницы прямо сейчас (а не
             # только по событию resize) - гарантирует актуальное значение,
@@ -2070,15 +2140,40 @@ class LeftPanel(QWidget):
                 self.page_size = fresh_page_size
                 self.current_page = 0
             offset = self.current_page * self.page_size
-            filtered = db.get_all_pumps(filters, limit=self.page_size, offset=offset)
+            filtered = db.get_all_pumps(filters, order_by=order_by_sql, limit=self.page_size, offset=offset)
 
         self.display_pumps(filtered, group_by_number=group_by_number)
+
+        # Индикатор сортировки на заголовке - устанавливается ПОСЛЕ
+        # перестроения таблицы (display_pumps -> populate_table ->
+        # _setup_table_columns пересоздаёт заголовки через
+        # setHorizontalHeaderLabels), иначе сразу же сбрасывался бы этим
+        # перестроением, и стрелка попросту не была бы видна
+        if not group_by_number:
+            order = Qt.AscendingOrder if self.sort_ascending else Qt.DescendingOrder
+            self.table.horizontalHeader().setSortIndicatorShown(True)
+            self.table.horizontalHeader().setSortIndicator(self.sort_column_index, order)
+
         self.update_stats(filtered)
 
         self.update_pagination_label()
 
         if hasattr(self, 'filters_applied'):
             self.filters_applied.emit(filters)
+
+    def _pluralize_pumps(self, count):
+        """Правильное склонение слова "насос" по числу - "1 насос",
+        "2 насоса", "5 насосов" и так далее, по стандартным правилам
+        русского языка."""
+        n = count % 100
+        if 11 <= n <= 14:
+            return "насосов"
+        n10 = count % 10
+        if n10 == 1:
+            return "насос"
+        if 2 <= n10 <= 4:
+            return "насоса"
+        return "насосов"
 
     def update_stats(self, filtered_pumps):
         if 'order_id' in self.current_filters and self.current_filters['order_id']:
@@ -2087,9 +2182,15 @@ class LeftPanel(QWidget):
             if not order_str:
                 self.stats_label.hide()
                 return
+            # Статистика должна учитывать ВСЕ записи заказа (с учётом
+            # остальных активных фильтров), а не только те, что попали на
+            # текущую страницу - filtered_pumps ограничен пагинацией и
+            # меняется в зависимости от страницы/сортировки, поэтому для
+            # статистики делаем отдельный, полный запрос без limit/offset
+            filtered_pumps = db.get_all_pumps(self.current_filters)
             total = len(filtered_pumps)
             if total == 0:
-                self.stats_label.setText(f"Для заказа №{order_str} нет данных с учётом текущих фильтров.")
+                self.stats_label.setText(f"Для заказа № <b>{order_str}</b> нет данных с учётом текущих фильтров.")
                 self.stats_label.show()
                 return
 
@@ -2101,22 +2202,22 @@ class LeftPanel(QWidget):
             not_sealed_percent = round(not_sealed / total * 100, 1)
             good_first_percent = round(good_first / total * 100, 1)
 
-            if self.compact_mode:
-                # Компактный (узкий) режим - фраза "годных с первого
-                # предъявления" явно переносится на отдельную строку,
-                # иначе слова разрываются посередине при автопереносе
-                text = (f"Для заказа №{order_str} проверено <b>{total}</b> насосов: "
-                        f"годных — <b>{good}</b> ({good_percent}%), "
-                        f"негерметичных — <b>{not_sealed}</b> ({not_sealed_percent}%)<br>"
-                        f"годных с первого предъявления — <b>{good_first}</b> ({good_first_percent}%)")
+            pumps_word = self._pluralize_pumps(total)
+
+            test_dates = [p['test_date'] for p in filtered_pumps if p.get('test_date')]
+            if test_dates:
+                period_str = (
+                    f" Период проверки {utils.format_date_display(min(test_dates))} - "
+                    f"{utils.format_date_display(max(test_dates))}."
+                )
             else:
-                # Расширенный режим - места достаточно, вся статистика в
-                # одну строку без принудительного переноса
-                text = (f"Для заказа №{order_str} проверено <b>{total}</b> насосов: "
-                        f"годных — <b>{good}</b> ({good_percent}%), "
-                        f"негерметичных — <b>{not_sealed}</b> ({not_sealed_percent}%), "
-                        f"годных с первого предъявления — <b>{good_first}</b> ({good_first_percent}%)")
-            self.stats_label.setText(text)
+                period_str = ""
+
+            line1 = f"Для заказа № <b>{order_str}</b> проверено <b>{total}</b> {pumps_word}.{period_str}"
+            line2 = (f"Годных — <b>{good}</b> ({good_percent}%), "
+                     f"годных с первого предъявления — <b>{good_first}</b> ({good_first_percent}%), "
+                     f"негерметичных — <b>{not_sealed}</b> ({not_sealed_percent}%)")
+            self.stats_label.setText(f"{line1}<br>{line2}")
             self.stats_label.show()
         else:
             self.stats_label.hide()
@@ -2131,6 +2232,10 @@ class LeftPanel(QWidget):
         self.date_to.setDate(QDate.currentDate())
         self.only_duplicates.setChecked(False)
         self.current_page = 0
+        # Сортировка тоже возвращается к значению по умолчанию - по дате,
+        # от новых к старым
+        self.sort_column_index = 1
+        self.sort_ascending = False
         self.apply_filters()
 
     def refresh(self):
@@ -2146,6 +2251,22 @@ class LeftPanel(QWidget):
         if self.current_page > 0:
             self.current_page -= 1
             self.apply_filters()
+
+    def jump_to_page(self):
+        """Переход на страницу по номеру, введённому в поле рядом с
+        пагинацией - удобно при большом количестве страниц, чтобы не
+        листать по одной. Некорректный номер (за пределами реального
+        количества страниц) мягко исправляется до ближайшей границы,
+        а не игнорируется молча."""
+        text = self.page_jump_input.text().strip()
+        if not text:
+            return
+        requested_page = int(text)
+        total_pages = max(1, (self.total_records + self.page_size - 1) // self.page_size)
+        requested_page = max(1, min(requested_page, total_pages))
+        self.current_page = requested_page - 1
+        self.page_jump_input.clear()
+        self.apply_filters()
 
     def update_pagination_label(self):
         if self.only_duplicates.isChecked():
