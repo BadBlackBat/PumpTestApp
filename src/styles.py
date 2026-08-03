@@ -719,6 +719,47 @@ _DARK_CHROME_NORMAL = _brushed_metal_gradient("#4a4d52", "#2b2d31")
 _DARK_CHROME_HOVER = _brushed_metal_gradient("#585b61", "#37393d")
 
 
+def get_table_scrollbar_style():
+    """Стиль вертикальной полосы прокрутки таблицы списка насосов -
+    единообразно с остальными акцентными элементами интерфейса: яркий
+    бирюзовый на тёмной теме, тёмно-бирюзовый на светлой (тот же принцип,
+    что уже применяется, например, в выпадающих списках)."""
+    if is_light_theme():
+        track_bg = "#e8eaed"
+        handle_color = "#0d7a99"
+        handle_hover = "#0a5f78"
+    else:
+        track_bg = "#2b2d31"
+        handle_color = "#4fd1ff"
+        handle_hover = "#7de0ff"
+    return f"""
+        QTableWidget QScrollBar:vertical {{
+            background: {track_bg};
+            width: 10px;
+            margin: 2px;
+            border-radius: 5px;
+        }}
+        QTableWidget QScrollBar::handle:vertical {{
+            background: {handle_color};
+            min-height: 24px;
+            border-radius: 5px;
+        }}
+        QTableWidget QScrollBar::handle:vertical:hover {{
+            background: {handle_hover};
+        }}
+        QTableWidget QScrollBar::add-line:vertical,
+        QTableWidget QScrollBar::sub-line:vertical {{
+            height: 0px;
+            border: none;
+            background: none;
+        }}
+        QTableWidget QScrollBar::add-page:vertical,
+        QTableWidget QScrollBar::sub-page:vertical {{
+            background: transparent;
+        }}
+    """
+
+
 def get_page_jump_input_style():
     """Стиль поля быстрого перехода по странице - металлический хром со
     скруглёнными краями, цвет которого специально меняется местами с

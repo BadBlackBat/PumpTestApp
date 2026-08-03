@@ -24,7 +24,12 @@ import numpy as np
 # _FixedAspectToolbar.SAVE_DPI - тот применяется только при сохранении
 # в файл (там качество можно поднять ещё сильнее без риска замедлить
 # интерфейс, поскольку это разовая операция, а не постоянная отрисовка).
-_SCREEN_DPI = 150
+_SCREEN_DPI = 130
+
+# Размер шрифта подписей осей, делений и легенды на графиках сравнения
+# дублей - подобран заметно меньше стандартного, чтобы компенсировать
+# визуальное укрупнение текста из-за повышенного _SCREEN_DPI выше.
+_GRAPH_LEGEND_FONT_SIZE = 5
 
 
 class _FixedAspectToolbar(NavigationToolbar):
@@ -50,7 +55,7 @@ class _FixedAspectToolbar(NavigationToolbar):
     диалога сохранения и сразу же возвращаются обратно."""
     SAVE_WIDTH_INCHES = 8.0    # 16:10 при исходной геометрии
     SAVE_HEIGHT_INCHES = 5.0
-    SAVE_DPI = 600             # для печати/увеличения - заметно чётче, чем 100 на экране
+    SAVE_DPI = 900             # для печати/увеличения - заметно чётче, чем на экране
 
     def save_figure(self, *args):
         fig = self.canvas.figure
@@ -1542,28 +1547,22 @@ class RightPanel(QWidget):
 
         colors = ['tab:blue', 'tab:red', 'tab:green', 'tab:orange', 'tab:purple', 'tab:brown', 'tab:pink']
 
-        # Количество строк легенды растёт вместе с числом сравниваемых
-        # дублей (каждый добавляет 2 записи на график 1 - ECO вкл./выкл.,
-        # и 1 запись на график 2) - раньше высота графика и отступ под
-        # легенду были рассчитаны на 1-2 дубля и не учитывали, что при
-        # большем количестве (от 4 и больше) легенда перестаёт помещаться
-        # в отведённое место и обрезается снизу.
-        n_items = len(items)
         x_vals = mod.get('norm_graph1_x') or list(utils.DEFAULT_GRAPH1_X)
         min1 = mod['norm_graph1_min']
         max1 = mod['norm_graph1_max']
         min2 = mod['norm_graph2_min']
         max2 = mod['norm_graph2_max']
 
-        entries1 = n_items * 2 + (1 if len(min1) == len(x_vals) else 0) + (1 if len(min2) == len(x_vals) else 0)
-        rows1 = max(1, -(-entries1 // 3))  # округление вверх (ceil) без импорта math
-        extra_rows1 = max(0, rows1 - 3)  # базовая раскладка уже рассчитана на 3 строки
-        fig1_height = 3 + extra_rows1 * 0.4
-        bottom1 = min(0.55, 0.26 + extra_rows1 * 0.05)
+        # Размер фигуры и раскладка - как было изначально (фиксированные,
+        # без роста по высоте вместе с числом дублей - именно это раньше
+        # тянуло за собой весь контейнер и соседние виджеты в layout,
+        # заметно растягивая шапки таблиц). Недостающее место под легенду
+        # при большом числе дублей теперь решается ТОЛЬКО уменьшенным
+        # шрифтом (_GRAPH_LEGEND_FONT_SIZE) - без изменения геометрии.
 
         # График 1: расход от оборотов - линии всех дублей вместе
         # (сплошная - ECO выкл., пунктир - ECO вкл.)
-        fig1 = Figure(figsize=(4, fig1_height), dpi=_SCREEN_DPI)
+        fig1 = Figure(figsize=(4, 3), dpi=_SCREEN_DPI)
         ax1 = fig1.add_subplot(111)
 
         for idx, it in enumerate(items):
@@ -1585,16 +1584,16 @@ class RightPanel(QWidget):
         if len(min2) == len(x_vals):
             ax1.plot(x_vals, min2, '-.', color='gray', label='Треб. ECO вкл.', alpha=0.7)
             ax1.plot(x_vals, max2, '-.', color='gray', alpha=0.7)
-        ax1.set_xlabel('Обороты, об/мин')
-        ax1.set_ylabel('Расход, л/мин')
-        ax1.tick_params(axis='both', labelsize=7)
+        ax1.set_xlabel('Обороты, об/мин', fontsize=_GRAPH_LEGEND_FONT_SIZE)
+        ax1.set_ylabel('Расход, л/мин', fontsize=_GRAPH_LEGEND_FONT_SIZE)
+        ax1.tick_params(axis='both', labelsize=_GRAPH_LEGEND_FONT_SIZE)
         ax1.yaxis.set_major_locator(MultipleLocator(2))
         ax1.grid(True, alpha=0.3)
         ax1.legend(loc='upper center', bbox_to_anchor=(0.5, -0.16), ncol=3,
-                  fontsize=8, frameon=False, handlelength=1.4, columnspacing=1.2)
-        ax1.set_title('Сравнение дублей: расход от оборотов', fontsize=10)
+                  fontsize=_GRAPH_LEGEND_FONT_SIZE, frameon=False, handlelength=1.4, columnspacing=1.2)
+        ax1.set_title('Сравнение дублей: расход от оборотов', fontsize=_GRAPH_LEGEND_FONT_SIZE + 2)
         ax1.format_coord = lambda x, y: f"RPM={x:.1f}   Q={y:.2f}"
-        fig1.subplots_adjust(left=0.14, right=0.97, top=0.90, bottom=bottom1)
+        fig1.subplots_adjust(left=0.14, right=0.97, top=0.90, bottom=0.26)
         graph1_widget, graph1_canvas = self._make_graph_widget(fig1)
         self._graph1_ax = ax1
         self._graph1_canvas = graph1_canvas
@@ -1606,13 +1605,7 @@ class RightPanel(QWidget):
         min3 = mod['norm_graph3_min']
         max3 = mod['norm_graph3_max']
 
-        entries2 = n_items + (1 if len(min3) == len(x_tok) else 0)
-        rows2 = max(1, -(-entries2 // 3))
-        extra_rows2 = max(0, rows2 - 2)  # базовая раскладка уже рассчитана на 2 строки
-        fig2_height = 3 + extra_rows2 * 0.4
-        bottom2 = min(0.55, 0.22 + extra_rows2 * 0.05)
-
-        fig2 = Figure(figsize=(4, fig2_height), dpi=_SCREEN_DPI)
+        fig2 = Figure(figsize=(4, 3), dpi=_SCREEN_DPI)
         ax2 = fig2.add_subplot(111)
 
         for idx, it in enumerate(items):
@@ -1628,19 +1621,19 @@ class RightPanel(QWidget):
         if len(min3) == len(x_tok):
             ax2.plot(x_tok, min3, ':', color='gray', label='Мин./макс. треб.', alpha=0.6)
             ax2.plot(x_tok, max3, ':', color='gray', alpha=0.6)
-        ax2.set_xlabel('Сила тока, А')
-        ax2.set_ylabel('Расход, л/мин')
-        ax2.tick_params(axis='both', labelsize=7)
+        ax2.set_xlabel('Сила тока, А', fontsize=_GRAPH_LEGEND_FONT_SIZE)
+        ax2.set_ylabel('Расход, л/мин', fontsize=_GRAPH_LEGEND_FONT_SIZE)
+        ax2.tick_params(axis='both', labelsize=_GRAPH_LEGEND_FONT_SIZE)
         ax2.grid(True, alpha=0.3)
         ax2.legend(loc='upper center', bbox_to_anchor=(0.5, -0.16), ncol=3,
-                  fontsize=8, frameon=False, handlelength=1.4, columnspacing=1.2)
-        ax2.set_title('Сравнение дублей: расход от силы тока ECO', fontsize=10)
+                  fontsize=_GRAPH_LEGEND_FONT_SIZE, frameon=False, handlelength=1.4, columnspacing=1.2)
+        ax2.set_title('Сравнение дублей: расход от силы тока ECO', fontsize=_GRAPH_LEGEND_FONT_SIZE + 2)
         ax2.format_coord = lambda x, y: f"I={x:.2f}   Q={y:.2f}"
         ax2.set_xlim(0, 1)
         ax2.set_xticks(np.arange(0, 1.01, 0.1))
         ax2.set_ylim(4, 17)
         ax2.set_yticks(np.arange(4, 18, 1))
-        fig2.subplots_adjust(left=0.14, right=0.97, top=0.90, bottom=bottom2)
+        fig2.subplots_adjust(left=0.14, right=0.97, top=0.90, bottom=0.22)
         graph2_widget, graph2_canvas = self._make_graph_widget(fig2)
         self._graph2_ax = ax2
         self._graph2_canvas = graph2_canvas

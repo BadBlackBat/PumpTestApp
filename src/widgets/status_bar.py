@@ -81,9 +81,8 @@ class StatusBar(QStatusBar):
 
         # Левая часть: выбранный насос
         self.selected_label = QLabel()
-        self.selected_label.setMinimumWidth(150)
+        self.selected_label.setFixedWidth(220)
         self.selected_label.setStyleSheet(styles.STATUS_BAR_SELECTED_LABEL_STYLE)
-        self.selected_label.setVisible(False)
         self.addWidget(self.selected_label)
         
         # Центр: фильтры (растягивается, может переноситься на 2 строки -
@@ -128,11 +127,18 @@ class StatusBar(QStatusBar):
                     selected_pump=None, revision=None):
         # Левая часть
         if selected_pump:
-            self.selected_label.setText(f"Выбран образец: {selected_pump}")
-            self.selected_label.setVisible(True)
+            full_text = f"Выбран образец: {selected_pump}"
+            metrics = self.selected_label.fontMetrics()
+            elided = metrics.elidedText(full_text, Qt.ElideRight, self.selected_label.width() - 8)
+            self.selected_label.setText(elided)
         else:
             self.selected_label.setText("")
-            self.selected_label.setVisible(False)
+        # Метка остаётся видимой всегда (даже с пустым текстом) - её
+        # фиксированная ширина (220px, не минимальная - минимальная всё
+        # равно позволяла бы расширяться при длинном тексте) всегда
+        # зарезервирована, иначе при
+        # скрытии/появлении центральная часть с фильтрами сдвигалась бы
+        # влево-вправо при выборе/снятии выбора насоса
             
         # Центр
         if filters:

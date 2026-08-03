@@ -981,6 +981,15 @@ class LeftPanel(QWidget):
         диалогов, поэтому ей отдельно нужен этот метод, а не только
         showEvent."""
         styles.retheme_widget_tree(self)
+        if hasattr(self, 'table'):
+            arrow_down_path = os.path.join(RESOURCES_DIR, 'arrow_down_red.png').replace('\\', '/')
+            arrow_up_path = os.path.join(RESOURCES_DIR, 'arrow_up_red.png').replace('\\', '/')
+            if not (os.path.exists(arrow_down_path) and os.path.exists(arrow_up_path)):
+                arrow_down_path = arrow_up_path = None
+            self.table.setStyleSheet(
+                styles.build_left_panel_table_style(arrow_down_path, arrow_up_path)
+                + styles.get_table_scrollbar_style()
+            )
         if hasattr(self, 'page_jump_input'):
             self.page_jump_input.setStyleSheet(styles.get_page_jump_input_style())
         if hasattr(self, 'date_from'):
@@ -1034,6 +1043,12 @@ class LeftPanel(QWidget):
         # уже загруженным строкам - см. on_header_clicked, apply_filters
         self.sort_column_index = 1   # по умолчанию - "Дата проверки"
         self.sort_ascending = False  # по умолчанию - от новых к старым
+        # Постраничность для режима "Дубли" - отдельная от обычной,
+        # т.к. делится по границам ГРУПП (все протоколы одного насоса
+        # вместе), а не по количеству строк - группа никогда не должна
+        # разрываться между двумя страницами
+        self.duplicates_groups_per_page = 6
+        self.total_group_pages = 1
         self._resize_timer = QTimer(self)
         self._resize_timer.setSingleShot(True)
         self._resize_timer.timeout.connect(self._on_resize_settled)
@@ -1214,7 +1229,7 @@ class LeftPanel(QWidget):
 
       self.only_duplicates = QCheckBox("Дубли")
       self.only_duplicates.setStyleSheet(styles.LEFT_PANEL_CHECKBOX_STYLE)
-      self.only_duplicates.stateChanged.connect(self.apply_filters)
+      self.only_duplicates.stateChanged.connect(self.on_duplicates_toggled)
 
       # Принудительное скачивание сетевой базы поверх локальной - "N->L"
       # текстом (второй вариант из тех, что обсуждали) - без иконки,
@@ -1287,6 +1302,7 @@ class LeftPanel(QWidget):
       # только для надписи "Лаборатория Рулевого Управления" в gui.py
       self.table.setStyleSheet(
           styles.build_left_panel_table_style(arrow_down_path, arrow_up_path)
+          + styles.get_table_scrollbar_style()
       )
       # Отключаем штатную заливку выделения Qt - иначе она перекрывает наш
       # собственный (анимированный) цвет ячейки, даже если в QSS задать
@@ -1435,6 +1451,7 @@ class LeftPanel(QWidget):
       self.page_jump_input.setStyleSheet(styles.get_page_jump_input_style())
       self.page_jump_input.returnPressed.connect(self.jump_to_page)
       self.page_label = QLabel("1/1")
+      self.page_label.setFixedWidth(110)
       self.page_label.setAlignment(Qt.AlignCenter)
       self.page_label.setStyleSheet(styles.LEFT_PANEL_FILTER_LABEL_STYLE)
       # Пояснение "Группировка по дублям" - по центру панели, между
@@ -1649,20 +1666,12 @@ class LeftPanel(QWidget):
         for row, p in enumerate(pumps):
             self._fill_pump_row(row, p, compact)
 
-    def populate_table_grouped(self, pumps, compact=True):
-        """Отображает насосы, сгруппированные по номеру + модификации (для
-        фильтра 'Дубли'): строка-заголовок 'Образец № X — N шт.', а под ней
-        сами протоколы, отсортированные по дате (сначала новые). Если у
-        насоса с одинаковым номером разные модификации - это разные группы,
-        а не дубликаты."""
-        self.table.setSortingEnabled(False)
-        self.table.clearSpans()
-        self._hovered_row = -1
-        self._selected_row = -1
-        self._hover_overlay.hide()
-        self._selection_overlay.hide()
-
-        # Группируем по (номер насоса, модификация)
+    def _group_duplicates(self, pumps):
+        """Группирует насосы по (номер, модификация) - общая логика,
+        используется и для отображения (populate_table_grouped), и для
+        разбивки по страницам групп (apply_filters), чтобы обе части
+        были гарантированно согласованы между собой (одинаковый порядок
+        групп в обоих местах)."""
         groups = {}
         for p in pumps:
             key = (p['pump_number'], p.get('mod_name'))
@@ -1675,6 +1684,29 @@ class LeftPanel(QWidget):
         # Внутри группы - сортировка протоколов по дате (сначала новые)
         for _, items in sorted_groups:
             items.sort(key=lambda p: p['test_date'] or '', reverse=True)
+
+        return sorted_groups
+
+    def populate_table_grouped(self, pumps, compact=True):
+        """Отображает насосы, сгруппированные по номеру + модификации (для
+        фильтра 'Дубли'): строка-заголовок 'Образец № X — N шт.', а под ней
+        сами протоколы, отсортированные по дате (сначала новые). Если у
+        насоса с одинаковым номером разные модификации - это разные группы,
+        а не дубликаты.
+
+        pumps здесь - уже ТОЛЬКО записи, относящиеся к группам ТЕКУЩЕЙ
+        страницы (разбивка по страницам групп сделана заранее, в
+        apply_filters - см. _group_duplicates) - группировка внутри этого
+        метода лишь восстанавливает то же самое разбиение для отображения,
+        а не решает, какие группы показывать."""
+        self.table.setSortingEnabled(False)
+        self.table.clearSpans()
+        self._hovered_row = -1
+        self._selected_row = -1
+        self._hover_overlay.hide()
+        self._selection_overlay.hide()
+
+        sorted_groups = self._group_duplicates(pumps)
 
         col_count = self._setup_table_columns(compact)
 
@@ -2083,6 +2115,14 @@ class LeftPanel(QWidget):
             return f'{field} {direction}, p.test_date DESC'
         return f'{field} {direction}'
 
+    def on_duplicates_toggled(self):
+        """Переключение режима "Дубли" - сбрасываем текущую страницу,
+        иначе номер страницы из одного режима (обычного/дублей) мог бы
+        случайно перенестись в другой, где он не имеет смысла (страницы
+        считаются по-разному - по строкам и по группам)."""
+        self.current_page = 0
+        self.apply_filters()
+
     def apply_filters(self):
         filters = {}
         search_text = self.search_input.text().strip()
@@ -2128,9 +2168,20 @@ class LeftPanel(QWidget):
         order_by_sql = self._get_order_by_sql()
 
         if group_by_number:
-            # В режиме дублей группы не должны разрываться постраничной разбивкой -
-            # показываем все найденные записи целиком
-            filtered = db.get_all_pumps(filters, order_by=order_by_sql)
+            # Нужны ВСЕ совпадающие записи, чтобы разбить именно по
+            # границам ГРУПП, а не по количеству строк - группа никогда
+            # не должна разрываться между двумя страницами
+            all_matching = db.get_all_pumps(filters, order_by=order_by_sql)
+            sorted_groups = self._group_duplicates(all_matching)
+            self.total_group_pages = max(
+                1, -(-len(sorted_groups) // self.duplicates_groups_per_page)
+            )
+            if self.current_page >= self.total_group_pages:
+                self.current_page = 0
+            start = self.current_page * self.duplicates_groups_per_page
+            end = start + self.duplicates_groups_per_page
+            page_groups = sorted_groups[start:end]
+            filtered = [p for _, items in page_groups for p in items]
         else:
             # Подстраховка: пересчитываем размер страницы прямо сейчас (а не
             # только по событию resize) - гарантирует актуальное значение,
@@ -2243,6 +2294,11 @@ class LeftPanel(QWidget):
         self.load_data()
 
     def next_page(self):
+        if self.only_duplicates.isChecked():
+            if self.current_page + 1 < self.total_group_pages:
+                self.current_page += 1
+                self.apply_filters()
+            return
         if (self.current_page + 1) * self.page_size < self.total_records:
             self.current_page += 1
             self.apply_filters()
@@ -2257,12 +2313,16 @@ class LeftPanel(QWidget):
         пагинацией - удобно при большом количестве страниц, чтобы не
         листать по одной. Некорректный номер (за пределами реального
         количества страниц) мягко исправляется до ближайшей границы,
-        а не игнорируется молча."""
+        а не игнорируется молча. Работает и в режиме дублей - там
+        страницы считаются по группам, а не по строкам."""
         text = self.page_jump_input.text().strip()
         if not text:
             return
         requested_page = int(text)
-        total_pages = max(1, (self.total_records + self.page_size - 1) // self.page_size)
+        if self.only_duplicates.isChecked():
+            total_pages = self.total_group_pages
+        else:
+            total_pages = max(1, (self.total_records + self.page_size - 1) // self.page_size)
         requested_page = max(1, min(requested_page, total_pages))
         self.current_page = requested_page - 1
         self.page_jump_input.clear()
@@ -2270,13 +2330,13 @@ class LeftPanel(QWidget):
 
     def update_pagination_label(self):
         if self.only_duplicates.isChecked():
-            # В режиме дублей показываются сразу все найденные группы,
-            # постраничная разбивка не применяется - саму панель пагинации
-            # не трогаем (просто отключаем кнопки), пояснение показываем
-            # по центру, между пагинацией и счётчиком записей
-            self.page_label.setText("Страница 1 из 1")
-            self.btn_prev.setEnabled(False)
-            self.btn_next.setEnabled(False)
+            # Режим дублей - страницы считаются по ГРУППАМ (см.
+            # apply_filters, duplicates_groups_per_page), а не по
+            # количеству строк - группа никогда не разрывается между
+            # двумя страницами
+            self.page_label.setText(f"Страница {self.current_page + 1} из {self.total_group_pages}")
+            self.btn_prev.setEnabled(self.current_page > 0)
+            self.btn_next.setEnabled(self.current_page + 1 < self.total_group_pages)
             self.duplicates_note_label.setText("Группировка по дублям")
             self.count_label.setText(f"Показано записей: {self.total_records}")
             return
