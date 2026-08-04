@@ -774,7 +774,7 @@ class MainWindow(QMainWindow):
                     sealed_text,
                 ]
             order_num = p.get('order_number')
-            order_str = str(order_num).replace('.0', '') if order_num else '—'
+            order_str = utils.format_order_number(order_num) if order_num else '—'
             return [
                 str(p.get('pump_number', '')),
                 date_str,
@@ -926,11 +926,18 @@ class MainWindow(QMainWindow):
                 "«Расположение базы данных», прежде чем выгружать изменения."
             )
         elif status == 'network_ahead':
-            # Вместо простого отказа - предлагаем умное слияние: если
-            # локально накопились только НОВЫЕ добавления (не правки
-            # существующих записей), можно безопасно подтянуть сеть и
-            # перенести эти добавления обратно, без необходимости вручную
-            # повторять всё редактирование заново
+            # Вместо простого отказа - предлагаем выбор из двух вариантов:
+            # 1) умное слияние - если локально накопились только НОВЫЕ
+            #    добавления (не правки существующих записей), можно
+            #    безопасно подтянуть сеть и перенести эти добавления
+            #    обратно, без необходимости вручную повторять всё
+            #    редактирование заново;
+            # 2) полная замена сети - для случая, когда пользователь
+            #    сознательно хочет, чтобы сеть стала ТОЧНО такой же, как
+            #    его текущая локальная копия (например, после
+            #    восстановления из более старой резервной копии сеть
+            #    "разрослась" лишними записями через умное слияние, и
+            #    теперь нужно откатить и её тоже - см. force_push_local_to_network).
             if GlowMessageDialog.confirm(
                 self, "Сеть ушла вперёд",
                 "Пока вы работали, сеть уже изменилась.\n\n"
@@ -952,6 +959,24 @@ class MainWindow(QMainWindow):
                     GlowMessageDialog.show_success(self, "Умное слияние", merge_message)
                 else:
                     GlowMessageDialog.show_error(self, "Умное слияние", merge_message)
+            elif GlowMessageDialog.confirm(
+                self, "Полная замена сетевой базы",
+                "Вместо слияния можно полностью заменить сетевую базу "
+                "вашей текущей локальной копией.\n\n"
+                "ВНИМАНИЕ: это не слияние - любые записи, которые есть в "
+                "сети, но отсутствуют в вашей локальной копии, будут "
+                "УДАЛЕНЫ из сети безвозвратно (резервная копия текущей "
+                "сетевой версии будет сохранена автоматически, из неё "
+                "можно будет вручную восстановить удалённое при "
+                "необходимости).\n\n"
+                "Заменить сетевую базу локальной копией?"
+            ):
+                force_status, force_message = db_sync.force_push_local_to_network()
+                if force_status == 'pushed':
+                    self.left_panel.set_pull_glow(False)
+                    GlowMessageDialog.show_success(self, "Полная замена сетевой базы", force_message)
+                else:
+                    GlowMessageDialog.show_error(self, "Полная замена сетевой базы", force_message)
             else:
                 GlowMessageDialog.show_error(self, "Выгрузка в сеть", message)
         else:
@@ -1193,28 +1218,6 @@ class MainWindow(QMainWindow):
             GlowMessageDialog.show_success(self, "Удаление", "Запись удалена.")
         if self.showing_stats: self.toggle_statistics()
 
-    # def update_status(self, filters=None, selected_pump=None):
-    #     all_pumps = db.get_all_pumps()
-    #     count = len(all_pumps)
-    #     filters_text = ""
-    #     if filters:
-    #         parts = []
-    #         if filters.get('pump_number'):
-    #             parts.append(f"поиск: {filters['pump_number']}")
-    #         if filters.get('verdict'):
-    #             parts.append(f"вердикт: {filters['verdict']}")
-    #         if filters.get('test_type'):
-    #             parts.append(f"тип: {filters['test_type']}")
-    #         if filters.get('is_sealed') is not None:
-    #             parts.append(f"герметичность: {'Да' if filters['is_sealed'] else 'Нет'}")
-    #         if filters.get('date_from') or filters.get('date_to'):
-    #             parts.append(f"дата: {filters.get('date_from', '')} - {filters.get('date_to', '')}")
-    #         if filters.get('only_duplicates'):
-    #             parts.append("только дубли")
-    #         filters_text = ", ".join(parts)
-    #     last_update = db.get_last_update_date()
-    #     self.status_bar.set_status("Готово", count=count, filters=filters_text, selected_pump=selected_pump, last_update=last_update)
-
     def update_status(self, filters=None, selected_pump=None):
         # Если фильтры не переданы, берём из левой панели
         if filters is None:
@@ -1223,9 +1226,7 @@ class MainWindow(QMainWindow):
         if selected_pump is None:
             selected_pump = self.current_selected_pump
 
-        all_pumps = db.get_all_pumps()
-        count = len(all_pumps)
-        good_count = sum(1 for p in all_pumps if p.get('verdict') == 'годен')
+        count, good_count = db.get_pump_counts()
         filters_text = ""
         if filters:
             parts = []
@@ -1310,7 +1311,7 @@ class MainWindow(QMainWindow):
             changed_fields.append('modification')
 
         old_order = pump_data.get('order_number')
-        old_order_str = str(old_order).replace('.0', '') if old_order else ''
+        old_order_str = utils.format_order_number(old_order) if old_order else ''
         new_order_str = data['order_number'] or ''
         if old_order_str != new_order_str:
             changed_fields.append('order_number')
@@ -1415,8 +1416,6 @@ class MainWindow(QMainWindow):
             GlowMessageDialog.show_success(self, "Успех", "Протокол обновлён.")
         else:
             GlowMessageDialog.show_success(self, "Информация", "Изменений не обнаружено.")
-
-            GlowMessageDialog.show_success(self, "Успех", "Примечание обновлено.")
     
     def on_fit_view_clicked(self):
         self.right_panel.toggle_fit_view()

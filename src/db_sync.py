@@ -120,22 +120,32 @@ def _backup_with_revision_exists(backup_dir, revision_display):
 
 
 def _cleanup_old_backups(backup_dir):
-    """Оставляет только последние _BACKUP_KEEP_COUNT резервных копий,
-    созданных этим механизмом - чтобы папка не росла бесконечно.
-    Учитывает и старый формат имени файла (pumps_before_sync_...), и
-    новый, с ревизией (pumps_rev...) - на случай, если старые копии уже
+    """Оставляет только последние _BACKUP_KEEP_COUNT резервных копий
+    каждого вида - локальных и сетевых по отдельности (не общим пулом) -
+    чтобы папка не росла бесконечно, но и частые локальные копии не
+    вытесняли редкие сетевые (см. _backup_network_copy - создаются
+    только при осознанной полной замене сети локальной копией, гораздо
+    реже обычных).
+
+    Учитывает старый формат имени локальных копий (pumps_before_sync_...)
+    вместе с новым (pumps_rev...) - на случай, если старые копии уже
     существуют на диске с прошлых версий программы."""
     try:
-        files = [
+        local_files = [
             os.path.join(backup_dir, f) for f in os.listdir(backup_dir)
             if (f.startswith('pumps_before_sync_') or f.startswith('pumps_rev')) and f.endswith('.db')
         ]
-        files.sort(key=os.path.getmtime, reverse=True)
-        for old_file in files[_BACKUP_KEEP_COUNT:]:
-            try:
-                os.remove(old_file)
-            except OSError:
-                pass
+        network_files = [
+            os.path.join(backup_dir, f) for f in os.listdir(backup_dir)
+            if f.startswith('pumps_network_') and f.endswith('.db')
+        ]
+        for files in (local_files, network_files):
+            files.sort(key=os.path.getmtime, reverse=True)
+            for old_file in files[_BACKUP_KEEP_COUNT:]:
+                try:
+                    os.remove(old_file)
+                except OSError:
+                    pass
     except OSError:
         pass
 
@@ -311,9 +321,13 @@ def _get_backup_dir():
 def list_backups():
     """Список доступных резервных копий - для диалога "Восстановить из
     резервной копии" (настройки). Каждый элемент -
-    (путь_к_файлу, дата_время_создания, ревизия_или_None) - новые
-    сначала. Ревизия - None для копий старого формата имени (до того,
-    как мы стали дописывать её в название файла)."""
+    (путь_к_файлу, дата_время_создания, ревизия_или_None, источник) -
+    новые сначала. Ревизия - None для копий старого формата имени (до
+    того, как мы стали дописывать её в название файла). Источник -
+    'local' (обычная резервная копия локальной базы, создаётся
+    автоматически при синхронизации) или 'network' (копия СЕТЕВОЙ базы,
+    создаётся перед её принудительной полной заменой - см.
+    force_push_local_to_network)."""
     backup_dir = _get_backup_dir()
     if not os.path.isdir(backup_dir):
         return []
@@ -322,18 +336,22 @@ def list_backups():
     for fname in os.listdir(backup_dir):
         if not fname.endswith('.db'):
             continue
-        if not (fname.startswith('pumps_before_sync_') or fname.startswith('pumps_rev')):
+        if fname.startswith('pumps_network_'):
+            source = 'network'
+        elif fname.startswith('pumps_before_sync_') or fname.startswith('pumps_rev'):
+            source = 'local'
+        else:
             continue
         full_path = os.path.join(backup_dir, fname)
         revision_display = None
-        m = re.match(r'pumps_rev(\d+_\d+)_', fname)
+        m = re.match(r'pumps_(?:network_)?rev(\d+_\d+)_', fname)
         if m:
             revision_display = m.group(1).replace('_', '.')
         try:
             mtime = os.path.getmtime(full_path)
         except OSError:
             continue
-        results.append((full_path, datetime.fromtimestamp(mtime), revision_display))
+        results.append((full_path, datetime.fromtimestamp(mtime), revision_display, source))
 
     results.sort(key=lambda item: item[1], reverse=True)
     return results
@@ -570,17 +588,32 @@ def push_local_to_network():
         return 'network_unreachable', "Сетевая папка сейчас недоступна. Попробуйте позже."
 
     local_revision = database.get_current_revision()
-    last_sync = db_settings.get_last_sync_revision()
-    if local_revision == last_sync:
-        return 'nothing_to_push', "Нет несохранённых изменений - уже всё синхронизировано."
-
     network_revision = get_network_revision_now()
-    if network_revision is not None and network_revision != last_sync:
+    if network_revision is None:
+        return 'error', "Не удалось прочитать сетевую базу данных."
+
+    # Сравниваем напрямую с ТЕКУЩЕЙ сетевой ревизией, а не только с
+    # запомненной точкой последней синхронизации (last_sync_revision) -
+    # та может разойтись с реальностью (например, после восстановления
+    # локальной базы из более старой резервной копии - local_revision
+    # тогда становится МЕНЬШЕ сетевой, а last_sync_revision при этом
+    # остаётся нетронутым и может случайно совпасть с текущей сетевой
+    # ревизией, из-за чего старая проверка пропускала бы выгрузку,
+    # молча перезаписывая сеть более старыми данными).
+    if local_revision <= network_revision:
+        if local_revision == network_revision:
+            # Уже совпадают - выгружать нечего. Заодно поправляем точку
+            # синхронизации, если она почему-то разошлась (например,
+            # именно после восстановления, совпавшего с текущей сетью)
+            db_settings.set_last_sync_revision(local_revision)
+            return 'nothing_to_push', "Нет несохранённых изменений - уже всё синхронизировано."
         return 'network_ahead', (
-            "Пока вы работали, сеть уже изменилась (кто-то другой успел "
-            "выгрузить свои правки). Сначала подтяните свежую версию из "
-            "сети (кнопка Network -> Local), затем внесите свои изменения "
-            "заново поверх неё и повторите выгрузку."
+            "Ваша локальная база сейчас старше сетевой - либо кто-то "
+            "другой успел выгрузить свои правки, пока вы работали, либо "
+            "локальная копия была восстановлена из более старой резервной "
+            "копии. Сначала подтяните свежую версию из сети (кнопка "
+            "Network -> Local), затем внесите свои изменения заново поверх "
+            "неё и повторите выгрузку."
         )
 
     try:
@@ -759,4 +792,108 @@ def force_pull_network_to_local():
     return 'pulled', (
         f"Локальная копия обновлена из сети "
         f"(ревизия {database.format_revision_display(network_revision)})."
+    )
+
+
+def _backup_network_copy(network_path):
+    """Резервная копия ТЕКУЩЕЙ сетевой базы - перед тем, как её
+    перезапишет force_push_local_to_network(). Похоже на
+    _backup_local_copy(), но ревизия в имени файла читается ИЗ САМОГО
+    сетевого файла (через _read_revision) - database.get_current_revision()
+    здесь не подходит, та всегда читает ЛОКАЛЬНУЮ активную базу, то есть
+    дала бы ревизию не того файла, который сейчас архивируется.
+
+    Имя файла начинается с "pumps_network_" (а не "pumps_rev...", как у
+    обычных локальных резервных копий) - специально другой префикс,
+    чтобы не перепутать с локальными копиями при восстановлении и не
+    столкнуться в проверке "такая копия уже есть" (см.
+    _backup_with_revision_exists), если ревизии local/network когда-либо
+    совпадут по значению счётчика."""
+    backup_dir = db_settings.get_backup_path()
+    if not backup_dir:
+        local_path = os.path.normpath(db_settings.get_local_db_path())
+        backup_dir = os.path.join(os.path.dirname(local_path), 'backups')
+    os.makedirs(backup_dir, exist_ok=True)
+
+    network_revision = _read_revision(network_path)
+    revision_display = (
+        database.format_revision_display(network_revision).replace('.', '_')
+        if network_revision else 'unknown'
+    )
+    prefix = f"pumps_network_rev{revision_display}_"
+    try:
+        if any(f.startswith(prefix) and f.endswith('.db') for f in os.listdir(backup_dir)):
+            return
+    except OSError:
+        pass
+
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    backup_name = f"{prefix}{timestamp}.db"
+    shutil.copy2(network_path, os.path.join(backup_dir, backup_name))
+
+    _cleanup_old_backups(backup_dir)
+
+
+def force_push_local_to_network():
+    """Принудительно копирует локальную базу поверх сетевой - ПОЛНАЯ
+    замена (обычное копирование файла поверх, а не слияние), без
+    сравнения ревизий и без предложения слияния. В отличие от обычной
+    push_local_to_network(), никогда не отказывает с 'network_ahead' -
+    просто заменяет сетевую базу локальной копией, какой бы она ни была.
+
+    ВАЖНО - именно ПОЛНАЯ замена, а не объединение: любые записи,
+    которые есть в сетевой базе, но отсутствуют в локальной копии,
+    ПОСЛЕ ЭТОЙ ОПЕРАЦИИ ПЕРЕСТАЮТ СУЩЕСТВОВАТЬ в сети - файл сетевой
+    базы просто целиком перезаписывается файлом локальной, а не
+    дополняется. Это отличает данную функцию от smart_merge_push(),
+    которая, наоборот, СОХРАНЯЕТ всё, что уже есть в сети, и только
+    добавляет к этому недостающее.
+
+    Практический сценарий, для которого эта функция предназначена:
+    пользователь восстановил локальную базу из старой резервной копии,
+    затем (например, через smart_merge_push) выгрузил её в сеть - сеть
+    при этом "разрослась" лишними, уже ненужными записями, которых не
+    было в актуальной работе. Теперь, загрузив у себя нормальную,
+    актуальную локальную копию (с МЕНЬШИМ количеством записей, чем в
+    разросшейся сети), пользователь сознательно хочет, чтобы сеть
+    целиком стала такой же, как эта актуальная локальная копия - то есть
+    именно чтобы лишние записи из сети ИСЧЕЗЛИ, а не остались за счёт
+    слияния.
+
+    ВАЖНО: перед перезаписью создаётся резервная копия ТЕКУЩЕЙ сетевой
+    базы (см. _backup_network_copy) - если удаляемые записи впоследствии
+    понадобятся, их можно будет достать из этой резервной копии вручную.
+
+    Вызывающий код ДОЛЖЕН явно и однозначно предупредить пользователя,
+    что записи, которых нет в его локальной копии, будут УДАЛЕНЫ из
+    сети - ПЕРЕД вызовом этой функции. Сама функция никаких
+    предупреждений не показывает и ничего не проверяет (кроме
+    доступности сети и блокировки записи)."""
+    if not db_settings.is_network_mode_active():
+        return 'not_network_mode', "Сетевой режим не используется."
+    if not is_network_reachable():
+        return 'network_unreachable', "Сетевая папка сейчас недоступна. Попробуйте позже."
+
+    local_path = os.path.normpath(db_settings.get_local_db_path())
+    network_path = os.path.normpath(db_settings.get_network_db_path())
+
+    try:
+        with db_lock.acquire_write_lock():
+            if os.path.exists(network_path):
+                _backup_network_copy(network_path)
+            shutil.copy2(local_path, network_path)
+    except db_lock.DatabaseLockedError as e:
+        return 'locked', str(e)
+    except OSError:
+        return 'error', (
+            "Не удалось выгрузить локальную базу в сеть - сеть, возможно, "
+            "только что стала недоступна. Попробуйте ещё раз."
+        )
+
+    local_revision = database.get_current_revision()
+    db_settings.set_last_sync_revision(local_revision)
+    return 'pushed', (
+        f"Сетевая база данных полностью заменена локальной копией "
+        f"(ревизия {database.format_revision_display(local_revision)}). "
+        f"Резервная копия предыдущей сетевой версии сохранена."
     )

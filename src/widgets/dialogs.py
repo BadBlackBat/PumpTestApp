@@ -1929,10 +1929,15 @@ class RestoreBackupDialog(_GlowDialog):
         if not self._backups:
             self.list_widget.addItem(QListWidgetItem("Резервных копий пока нет."))
         else:
-            for full_path, created_at, revision_display in self._backups:
+            for full_path, created_at, revision_display, source in self._backups:
                 when = created_at.strftime('%d.%m.%Y %H:%M')
                 rev_text = f"ревизия {revision_display}" if revision_display else "ревизия неизвестна (старый формат)"
-                self.list_widget.addItem(QListWidgetItem(f"{when} - {rev_text}"))
+                # Сетевые копии (см. db_sync._backup_network_copy - создаются
+                # перед принудительной полной заменой сети локальной копией)
+                # помечаем отдельно, чтобы не перепутать с обычными
+                # автоматическими копиями локальной базы
+                source_label = " · сетевая копия" if source == 'network' else ""
+                self.list_widget.addItem(QListWidgetItem(f"{when} - {rev_text}{source_label}"))
         self.body_layout.addWidget(self.list_widget)
 
         btn_row = QHBoxLayout()
@@ -1957,12 +1962,13 @@ class RestoreBackupDialog(_GlowDialog):
             GlowMessageDialog.show_error(self, "Восстановление", "Сначала выберите резервную копию из списка.")
             return
 
-        full_path, created_at, revision_display = self._backups[row]
+        full_path, created_at, revision_display, source = self._backups[row]
         when = created_at.strftime('%d.%m.%Y %H:%M')
         rev_text = f"ревизия {revision_display}" if revision_display else "ревизия неизвестна"
+        source_text = " (сетевая копия)" if source == 'network' else ""
         if not GlowMessageDialog.confirm(
             self, "Подтверждение восстановления",
-            f"Восстановить локальную базу данных из копии {when} ({rev_text})?\n\n"
+            f"Восстановить локальную базу данных из копии {when} ({rev_text}){source_text}?\n\n"
             "Текущее состояние локальной базы будет заменено - все "
             "изменения, сделанные после этой копии, будут потеряны, если "
             "они не выгружены в сеть."
@@ -1975,7 +1981,6 @@ class RestoreBackupDialog(_GlowDialog):
             self.accept()
         else:
             GlowMessageDialog.show_error(self, "Восстановление", message)
-
 
 class KnownUsersDialog(_GlowDialog):
     """Список всех пользователей, когда-либо подключавшихся к сетевой

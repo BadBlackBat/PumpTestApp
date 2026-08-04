@@ -451,8 +451,11 @@ def count_pumps_for_modification(mod_id):
 def add_order(order_number):
     if order_number is None:
         return None
-    # Нормализация: убираем .0
-    order_number = str(order_number).replace('.0', '').strip()
+    # Нормализация: убираем только ХВОСТОВОЙ артефакт float-преобразования
+    # (например, "5644.0" из Excel/pandas) - не любое вхождение ".0"
+    # внутри строки, иначе настоящий номер вида "5.087" искажался бы до
+    # "587"
+    order_number = re.sub(r'\.0$', '', str(order_number).strip())
     with db_lock.acquire_write_lock(), get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('INSERT OR IGNORE INTO orders (order_number) VALUES (?)', (order_number,))
@@ -692,6 +695,23 @@ def delete_pump(pump_id):
 
         bump_revision(f"Удалён насос №{pump_number}", conn)
         conn.commit()
+
+def get_pump_counts():
+    """Возвращает (общее количество насосов, количество годных) - лёгкий
+    агрегатный запрос, вызывается очень часто (update_status в gui.py -
+    при каждом выборе записи, правке, смене фильтра). В отличие от
+    get_all_pumps(), не тянет из базы полные данные каждой записи (в том
+    числе коррелированный подзапрос подсчёта дублей на КАЖДУЮ строку)
+    только ради подсчёта двух чисел."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT COUNT(*), SUM(CASE WHEN verdict = 'годен' THEN 1 ELSE 0 END)
+            FROM pumps
+        ''')
+        total, good = cursor.fetchone()
+        return total or 0, good or 0
+
 
 def get_all_pumps_full_for_merge():
     """Возвращает ПОЛНЫЕ данные всех насосов (включая uuid, результаты
@@ -948,22 +968,6 @@ def get_statistics():
 
         return stats
 
-# def get_order_by_id(order_id):
-#     with get_connection() as conn:
-#         cursor = conn.cursor()
-#         cursor.execute('SELECT order_number FROM orders WHERE id = ?', (order_id,))
-#         row = cursor.fetchone()
-#         if row:
-#             val = row[0]
-#             # Если это float, преобразуем в int (если целое) и потом в строку
-#             if isinstance(val, float):
-#                 if val.is_integer():
-#                     return str(int(val))
-#                 else:
-#                     return str(val).rstrip('0').rstrip('.')
-#             return str(val)
-#         return None
-
 def get_order_by_id(order_id):
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -971,20 +975,12 @@ def get_order_by_id(order_id):
         row = cursor.fetchone()
         if row:
             val = row[0]
-            print(f"[DEBUG get_order_by_id] Сырое значение из БД: {val}, тип: {type(val)}")
-            # Пробуем преобразовать
             if isinstance(val, float):
                 if val.is_integer():
-                    result = str(int(val))
+                    return str(int(val))
                 else:
-                    result = str(val).rstrip('0').rstrip('.')
-            elif isinstance(val, int):
-                result = str(val)
-            else:
-                result = str(val)
-            print(f"[DEBUG get_order_by_id] Результат: {result}")
-            return result
-        print("[DEBUG get_order_by_id] Заказ не найден")
+                    return str(val).rstrip('0').rstrip('.')
+            return str(val)
         return None
 
 # ---------- Вспомогательные функции ----------
