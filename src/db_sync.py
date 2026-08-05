@@ -101,7 +101,14 @@ def _backup_local_copy(local_path):
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     backup_name = f"pumps_rev{revision_display}_{timestamp}.db"
-    shutil.copy2(local_path, os.path.join(backup_dir, backup_name))
+    backup_full_path = os.path.join(backup_dir, backup_name)
+    shutil.copy2(local_path, backup_full_path)
+    # copy2() копирует время ИЗМЕНЕНИЯ ИСХОДНОГО файла на копию - если
+    # исходник сам недавно был восстановлен из более старой резервной
+    # копии, это старое время "протянется" и на новую копию. Явно
+    # выставляем текущее время - список копий сортируется по времени
+    # СОЗДАНИЯ САМОГО ФАЙЛА КОПИИ, а не по тому, когда менялся исходник.
+    os.utime(backup_full_path, None)
 
     _cleanup_old_backups(backup_dir)
 
@@ -318,16 +325,38 @@ def _get_backup_dir():
     return backup_dir
 
 
+def _count_pumps_in_backup(path):
+    """Считает количество насосов внутри конкретного файла резервной
+    копии - открывается кратко, только в режиме чтения, только для
+    одного агрегатного запроса. Возвращает None, если файл повреждён
+    или не открылся (не должно останавливать показ остального списка
+    из-за одной проблемной копии)."""
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM pumps")
+            return cursor.fetchone()[0]
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+
+
 def list_backups():
     """Список доступных резервных копий - для диалога "Восстановить из
     резервной копии" (настройки). Каждый элемент -
-    (путь_к_файлу, дата_время_создания, ревизия_или_None, источник) -
-    новые сначала. Ревизия - None для копий старого формата имени (до
-    того, как мы стали дописывать её в название файла). Источник -
-    'local' (обычная резервная копия локальной базы, создаётся
-    автоматически при синхронизации) или 'network' (копия СЕТЕВОЙ базы,
-    создаётся перед её принудительной полной заменой - см.
-    force_push_local_to_network)."""
+    (путь_к_файлу, дата_время_создания, ревизия_или_None, источник,
+    создано_вручную, количество_насосов_или_None) - новые сначала.
+    Ревизия - None для копий старого формата имени (до того, как мы
+    стали дописывать её в название файла). Источник - 'local' (обычная
+    резервная копия локальной базы, создаётся автоматически при
+    синхронизации) или 'network' (копия СЕТЕВОЙ базы, создаётся перед её
+    принудительной полной заменой - см. force_push_local_to_network).
+    "Создано вручную" - True для копий, сделанных явным нажатием кнопки
+    (см. create_manual_backup) - помогает пользователю точно знать, что
+    конкретная копия сохранена по его собственному действию, а не
+    гадать, сохранилась ли она автоматически."""
     backup_dir = _get_backup_dir()
     if not os.path.isdir(backup_dir):
         return []
@@ -342,6 +371,7 @@ def list_backups():
             source = 'local'
         else:
             continue
+        is_manual = '_manual_' in fname
         full_path = os.path.join(backup_dir, fname)
         revision_display = None
         m = re.match(r'pumps_(?:network_)?rev(\d+_\d+)_', fname)
@@ -351,10 +381,58 @@ def list_backups():
             mtime = os.path.getmtime(full_path)
         except OSError:
             continue
-        results.append((full_path, datetime.fromtimestamp(mtime), revision_display, source))
+        pump_count = _count_pumps_in_backup(full_path)
+        results.append((full_path, datetime.fromtimestamp(mtime), revision_display, source, is_manual, pump_count))
 
     results.sort(key=lambda item: item[1], reverse=True)
     return results
+
+
+def create_manual_backup():
+    """Создаёт резервную копию локальной базы ПРИНУДИТЕЛЬНО - по явному
+    нажатию кнопки пользователем. В отличие от автоматических копий
+    (создаются при синхронизации и пропускаются, если копия с такой же
+    ревизией уже есть - см. _backup_with_revision_exists), эта функция
+    ВСЕГДА создаёт новый файл, даже если копия с текущей ревизией уже
+    существует - пользователь должен точно знать, что копия сохранена
+    именно сейчас, по его собственному действию, а не гадать, есть она
+    или нет. Имя файла содержит маркер "_manual_" - отличает такие копии
+    от автоматических в списке восстановления (см. list_backups)."""
+    local_path = os.path.normpath(db_settings.get_local_db_path())
+    if not os.path.exists(local_path):
+        return 'error', "Локальная база данных не найдена."
+
+    backup_dir = db_settings.get_backup_path()
+    if not backup_dir:
+        backup_dir = os.path.join(os.path.dirname(local_path), 'backups')
+    os.makedirs(backup_dir, exist_ok=True)
+
+    revision = database.get_current_revision()
+    revision_display = database.format_revision_display(revision).replace('.', '_')
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    backup_name = f"pumps_rev{revision_display}_manual_{timestamp}.db"
+    backup_full_path = os.path.join(backup_dir, backup_name)
+    try:
+        shutil.copy2(local_path, backup_full_path)
+        os.utime(backup_full_path, None)
+    except OSError as e:
+        return 'error', f"Не удалось создать резервную копию: {e}"
+
+    _cleanup_old_backups(backup_dir)
+    return 'created', (
+        f"Резервная копия создана (ревизия {database.format_revision_display(revision)})."
+    )
+
+
+def delete_backup(backup_path):
+    """Удаляет конкретную резервную копию - по явному запросу
+    пользователя из диалога восстановления (кнопка "Удалить
+    выбранную")."""
+    try:
+        os.remove(backup_path)
+        return True
+    except OSError:
+        return False
 
 
 def restore_backup(backup_path):
@@ -829,7 +907,9 @@ def _backup_network_copy(network_path):
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     backup_name = f"{prefix}{timestamp}.db"
-    shutil.copy2(network_path, os.path.join(backup_dir, backup_name))
+    backup_full_path = os.path.join(backup_dir, backup_name)
+    shutil.copy2(network_path, backup_full_path)
+    os.utime(backup_full_path, None)
 
     _cleanup_old_backups(backup_dir)
 

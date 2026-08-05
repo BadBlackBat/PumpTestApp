@@ -15,7 +15,7 @@ from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintPreviewWid
 from .widgets.left_panel import LeftPanel, _GlowFrame
 from .widgets.right_panel import RightPanel
 from .widgets.status_bar import StatusBar, _GlowLine
-from .widgets.dialogs import PasswordDialog, AddModificationDialog, AddOrderDialog, SettingsDialog, AddPumpDialog, _clamp_to_screen, GlowMessageDialog, PrintChoiceDialog, _DialogBackgroundManager
+from .widgets.dialogs import PasswordDialog, AddModificationDialog, AddOrderDialog, SettingsDialog, AddPumpDialog, _clamp_to_screen, GlowMessageDialog, PrintChoiceDialog, _DialogBackgroundManager, NetworkAheadChoiceDialog
 from . import database as db
 from . import db_sync
 from . import db_settings
@@ -391,6 +391,7 @@ class MainWindow(QMainWindow):
         self.left_panel.request_add.connect(self.on_add_requested)
         self.left_panel.request_delete.connect(self.on_delete_requested)
         self.left_panel.request_upload.connect(self.on_upload_requested)
+        self.left_panel.request_manual_backup.connect(self.on_manual_backup_requested)
         self.left_panel.request_force_pull.connect(self.on_force_pull_requested)
         self.left_panel.request_edit.connect(self.on_edit_requested)
         self.left_panel.filters_applied.connect(self.update_status)
@@ -898,6 +899,11 @@ class MainWindow(QMainWindow):
 
     def on_import_requested(self):
         """Импорт Excel."""
+        pwd_dialog = PasswordDialog(self, message="Для импорта из Excel введите пароль:")
+        if pwd_dialog.exec_() != QDialog.Accepted:
+            return
+        # Пароль уже проверен внутри диалога - если дошли сюда, значит верный
+
         from PyQt5.QtWidgets import QFileDialog
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Выберите файл Excel", "", "Excel files (*.xlsx *.xls)"
@@ -908,6 +914,16 @@ class MainWindow(QMainWindow):
                 self.left_panel.refresh()
                 self.update_status()
         if self.showing_stats: self.toggle_statistics()
+
+    def on_manual_backup_requested(self):
+        """Принудительное создание резервной копии локальной базы - по
+        явному нажатию кнопки. Работает независимо от того, активен ли
+        сетевой режим - копируется всегда именно локальная база."""
+        status, message = db_sync.create_manual_backup()
+        if status == 'created':
+            GlowMessageDialog.show_success(self, "Резервная копия", message)
+        else:
+            GlowMessageDialog.show_error(self, "Резервная копия", message)
 
     def on_upload_requested(self):
         """Выгружает локальные изменения в сетевую базу - по кнопке
@@ -926,29 +942,16 @@ class MainWindow(QMainWindow):
                 "«Расположение базы данных», прежде чем выгружать изменения."
             )
         elif status == 'network_ahead':
-            # Вместо простого отказа - предлагаем выбор из двух вариантов:
-            # 1) умное слияние - если локально накопились только НОВЫЕ
-            #    добавления (не правки существующих записей), можно
-            #    безопасно подтянуть сеть и перенести эти добавления
-            #    обратно, без необходимости вручную повторять всё
-            #    редактирование заново;
-            # 2) полная замена сети - для случая, когда пользователь
-            #    сознательно хочет, чтобы сеть стала ТОЧНО такой же, как
-            #    его текущая локальная копия (например, после
-            #    восстановления из более старой резервной копии сеть
-            #    "разрослась" лишними записями через умное слияние, и
-            #    теперь нужно откатить и её тоже - см. force_push_local_to_network).
-            if GlowMessageDialog.confirm(
-                self, "Сеть ушла вперёд",
-                "Пока вы работали, сеть уже изменилась.\n\n"
-                "Можно попробовать умное слияние: сетевая версия будет "
-                "подтянута, а ваши локально добавленные насосы (только "
-                "добавленные - не правки уже существующих записей) будут "
-                "перенесены в неё автоматически. Правки существующих "
-                "записей, если такие есть, слиянием не переносятся - о них "
-                "будет сообщено отдельно.\n\n"
-                "Попробовать умное слияние?"
-            ):
+            # Единый диалог с тремя вариантами сразу (умное слияние /
+            # полная замена сети / отмена) - раньше это была цепочка из
+            # двух последовательных confirm-диалогов, в которой было
+            # легко перепутать, что именно выбираешь при отказе от
+            # умного слияния (не всем было очевидно, что дальше
+            # предложат полную замену, а не просто отмену)
+            choice_dialog = NetworkAheadChoiceDialog(self)
+            if choice_dialog.exec_() != QDialog.Accepted:
+                GlowMessageDialog.show_error(self, "Выгрузка в сеть", message)
+            elif choice_dialog.choice == "merge":
                 merge_status, merge_message = db_sync.smart_merge_push()
                 if merge_status == 'merged':
                     db.init_db()
@@ -959,26 +962,13 @@ class MainWindow(QMainWindow):
                     GlowMessageDialog.show_success(self, "Умное слияние", merge_message)
                 else:
                     GlowMessageDialog.show_error(self, "Умное слияние", merge_message)
-            elif GlowMessageDialog.confirm(
-                self, "Полная замена сетевой базы",
-                "Вместо слияния можно полностью заменить сетевую базу "
-                "вашей текущей локальной копией.\n\n"
-                "ВНИМАНИЕ: это не слияние - любые записи, которые есть в "
-                "сети, но отсутствуют в вашей локальной копии, будут "
-                "УДАЛЕНЫ из сети безвозвратно (резервная копия текущей "
-                "сетевой версии будет сохранена автоматически, из неё "
-                "можно будет вручную восстановить удалённое при "
-                "необходимости).\n\n"
-                "Заменить сетевую базу локальной копией?"
-            ):
+            elif choice_dialog.choice == "replace":
                 force_status, force_message = db_sync.force_push_local_to_network()
                 if force_status == 'pushed':
                     self.left_panel.set_pull_glow(False)
                     GlowMessageDialog.show_success(self, "Полная замена сетевой базы", force_message)
                 else:
                     GlowMessageDialog.show_error(self, "Полная замена сетевой базы", force_message)
-            else:
-                GlowMessageDialog.show_error(self, "Выгрузка в сеть", message)
         else:
             # 'network_unreachable' / 'locked' / 'error'
             GlowMessageDialog.show_error(self, "Выгрузка в сеть", message)

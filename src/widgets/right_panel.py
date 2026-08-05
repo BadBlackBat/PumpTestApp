@@ -669,7 +669,7 @@ class RightPanel(QWidget):
             
         order_num = data.get('order_number', '—')
         if order_num != '—' and order_num is not None:
-            order_num = str(order_num).replace('.0', '')
+            order_num = format_order_number(order_num)
 
         changed_fields = data.get('changed_fields') or []
         ORANGE = "#B35C00"  # тёмно-оранжевый - для отметки изменённых при редактировании значений
@@ -716,7 +716,6 @@ class RightPanel(QWidget):
         self.header_label.setText(header_html)
 
         # Динамическое содержимое
-        changed_fields = data.get('changed_fields') or []
         t1_title, t1_table = self.create_test_table("Тест 1: Зависимость расхода от оборотов (ECO выкл.)",
                                list(range(5, 13)), data['results_json'], data.get('mod_name'), changed_fields)
         t2_title, t2_table = self.create_test_table("Тест 2: Зависимость расхода от оборотов (ECO вкл.)",
@@ -1181,8 +1180,9 @@ class RightPanel(QWidget):
         Figure - figsize влияет только на исходное соотношение сторон при
         отрисовке, но не заставляет виджет физически стать шире, если
         панель уже. Если панель окажется у́же min_width - появится
-        горизонтальная прокрутка (уже включена и стилизована, см.
-        styles.get_horizontal_scrollbar_style)."""
+        горизонтальная прокрутка (уже включена и стилизована - через
+        такой же оверлей-виджет _GlowScrollBar, что и у вертикальной
+        полосы, см. _OverlayScrollArea)."""
         canvas = FigureCanvas(fig)
         canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         toolbar = _FixedAspectToolbar(canvas, self)
@@ -1241,7 +1241,7 @@ class RightPanel(QWidget):
             ax1.plot(x_vals_plot, max2, ':', color='tab:red', alpha=0.5)
         ax1.set_xlabel('Обороты, об/мин')
         ax1.set_ylabel('Расход, л/мин')
-        ax1.tick_params(axis='both', labelsize=7)
+        ax1.tick_params(axis='both', labelsize=_GRAPH_LEGEND_FONT_SIZE)
         ax1.yaxis.set_major_locator(MultipleLocator(2))
         ax1.grid(True, alpha=0.3)
         # Легенда в 2 строки: сверху - мин./макс. требования, снизу -
@@ -1252,8 +1252,8 @@ class RightPanel(QWidget):
         order1 = [2, 0, 3, 1]
         ax1.legend([handles1[i] for i in order1], [labels1[i] for i in order1],
                   loc='upper center', bbox_to_anchor=(0.5, -0.16), ncol=2,
-                  fontsize=7, frameon=False, handlelength=1.4, columnspacing=1.2)
-        ax1.set_title('Зависимость расхода от оборотов', fontsize=10)
+                  fontsize=_GRAPH_LEGEND_FONT_SIZE, frameon=False, handlelength=1.4, columnspacing=1.2)
+        ax1.set_title('Зависимость расхода от оборотов', fontsize=_GRAPH_LEGEND_FONT_SIZE + 2)
         ax1.format_coord = lambda x, y: f"RPM={x:.1f}   Q={y:.2f}"
         # rect резервирует место под легенду СНИЗУ за один проход, не
         # трогая остальные поля отдельным subplots_adjust() - именно он
@@ -1288,11 +1288,11 @@ class RightPanel(QWidget):
             ax2.plot(x_tok_plot, max3, '--', color='tab:green', alpha=0.5)
         ax2.set_xlabel('Сила тока, А')
         ax2.set_ylabel('Расход, л/мин')
-        ax2.tick_params(axis='both', labelsize=7)
+        ax2.tick_params(axis='both', labelsize=_GRAPH_LEGEND_FONT_SIZE)
         ax2.grid(True, alpha=0.3)
         ax2.legend(loc='upper center', bbox_to_anchor=(0.5, -0.16), ncol=2,
-                  fontsize=8, frameon=False, handlelength=1.4, columnspacing=1.2)
-        ax2.set_title('Зависимость расхода от силы тока ECO', fontsize=10)
+                  fontsize=_GRAPH_LEGEND_FONT_SIZE, frameon=False, handlelength=1.4, columnspacing=1.2)
+        ax2.set_title('Зависимость расхода от силы тока ECO', fontsize=_GRAPH_LEGEND_FONT_SIZE + 2)
         ax2.format_coord = lambda x, y: f"I={x:.2f}   Q={y:.2f}"
         # Оси по умолчанию (масштаб по-прежнему можно менять зумом тулбара)
         ax2.set_xlim(0, 1)

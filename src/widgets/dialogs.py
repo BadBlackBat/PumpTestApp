@@ -610,6 +610,82 @@ class PrintChoiceDialog(_GlowDialog):
             self.accept()
 
 
+class NetworkAheadChoiceDialog(_GlowDialog):
+    """Диалог выбора действия при обнаружении "сеть ушла вперёд" - три
+    варианта сразу в одном окне (умное слияние / полная замена сети /
+    отмена), а не цепочка из нескольких последовательных диалогов - на
+    практике было легко перепутать, какой именно вариант выбираешь при
+    отказе от предыдущего в такой цепочке."""
+    def __init__(self, parent=None):
+        super().__init__(parent, title="Сеть ушла вперёд")
+        self.choice = None
+        text_color = styles.get_dialog_text_color()
+
+        top_row = QHBoxLayout()
+        top_row.setSpacing(10)
+        icon_label = QLabel()
+        icon_path = os.path.join(ICONS_DIR, 'warning.svg')
+        if os.path.exists(icon_path):
+            icon_label.setPixmap(icon_utils.plain_pixmap(icon_path, 40))
+        icon_label.setStyleSheet("background: transparent;")
+        top_row.addWidget(icon_label)
+        msg_label = QLabel(
+            "Пока вы работали, сеть уже изменилась - либо кто-то другой "
+            "успел выгрузить свои правки, либо ваша локальная копия сейчас "
+            "старше сетевой (например, после восстановления из резервной "
+            "копии). Выберите, как поступить:"
+        )
+        msg_label.setWordWrap(True)
+        msg_label.setStyleSheet(f"color: {text_color}; background: transparent;")
+        msg_label.setFixedWidth(360)
+        top_row.addWidget(msg_label, 1)
+        self.body_layout.addLayout(top_row)
+
+        def make_btn(text, value):
+            btn = QPushButton(text)
+            btn.setObjectName("chromeButton")
+            btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+            btn.clicked.connect(lambda: self._choose(value))
+            return btn
+
+        def make_hint(text):
+            hint = QLabel(text)
+            hint.setWordWrap(True)
+            hint.setFixedWidth(360)
+            hint.setStyleSheet(f"color: {text_color}; background: transparent; font-size: 9pt;")
+            return hint
+
+        self.body_layout.addSpacing(6)
+        self.body_layout.addWidget(make_hint(
+            "Умное слияние - подтянет сетевую версию и добавит в неё ваши "
+            "локальные добавления (только добавленные записи - не правки "
+            "уже существующих; о них будет сообщено отдельно)."
+        ))
+        self.body_layout.addWidget(make_btn("Умное слияние", "merge"))
+
+        self.body_layout.addSpacing(10)
+        self.body_layout.addWidget(make_hint(
+            "Полная замена сети - сеть станет точно такой же, как ваша "
+            "текущая локальная копия. ВНИМАНИЕ: записи, которых нет в "
+            "локальной копии, будут удалены из сети безвозвратно "
+            "(резервная копия сетевой версии сохранится автоматически)."
+        ))
+        self.body_layout.addWidget(make_btn("Полная замена сети", "replace"))
+
+        self.body_layout.addSpacing(14)
+        self.body_layout.addWidget(make_btn("Отмена", "cancel"))
+
+        self.setMinimumWidth(400)
+        self._lock_size(clamp_to_screen=True)
+
+    def _choose(self, value):
+        self.choice = value
+        if value == "cancel":
+            self.reject()
+        else:
+            self.accept()
+
+
 class ExportProgressDialog(_GlowDialog):
     """Диалог с индикатором прогресса на время экспорта в PDF - блокирует
     основную программу (модально), показывает процент выполнения.
@@ -1902,9 +1978,9 @@ class ViewModificationsDialog(_GlowDialog):
 
 class RestoreBackupDialog(_GlowDialog):
     """Восстановление локальной базы данных из резервной копии - список
-    доступных копий (см. db_sync.list_backups) с датой/временем и
-    ревизией, если она известна (новые копии её всегда содержат в
-    имени файла - см. db_sync._backup_local_copy)."""
+    доступных копий (см. db_sync.list_backups) с датой/временем,
+    ревизией (если известна) и количеством насосов в каждой копии - для
+    более уверенного выбора нужной, а не только по дате/ревизии."""
     def __init__(self, parent=None):
         super().__init__(parent, title="Восстановить из резервной копии")
         text_color = styles.get_dialog_text_color()
@@ -1923,21 +1999,9 @@ class RestoreBackupDialog(_GlowDialog):
             }
             QListWidget::item { padding: 4px 6px; }
         """)
-        self.list_widget.setMinimumSize(480, 280)
+        self.list_widget.setMinimumSize(520, 300)
 
-        self._backups = db_sync.list_backups()
-        if not self._backups:
-            self.list_widget.addItem(QListWidgetItem("Резервных копий пока нет."))
-        else:
-            for full_path, created_at, revision_display, source in self._backups:
-                when = created_at.strftime('%d.%m.%Y %H:%M')
-                rev_text = f"ревизия {revision_display}" if revision_display else "ревизия неизвестна (старый формат)"
-                # Сетевые копии (см. db_sync._backup_network_copy - создаются
-                # перед принудительной полной заменой сети локальной копией)
-                # помечаем отдельно, чтобы не перепутать с обычными
-                # автоматическими копиями локальной базы
-                source_label = " · сетевая копия" if source == 'network' else ""
-                self.list_widget.addItem(QListWidgetItem(f"{when} - {rev_text}{source_label}"))
+        self._reload_list()
         self.body_layout.addWidget(self.list_widget)
 
         btn_row = QHBoxLayout()
@@ -1945,16 +2009,46 @@ class RestoreBackupDialog(_GlowDialog):
         restore_btn.setObjectName("chromeButton")
         restore_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
         restore_btn.clicked.connect(self._on_restore_clicked)
+        delete_btn = QPushButton("Удалить выбранную")
+        delete_btn.setObjectName("chromeButton")
+        delete_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+        delete_btn.clicked.connect(self._on_delete_clicked)
         close_btn = QPushButton("Закрыть")
         close_btn.setObjectName("chromeButton")
         close_btn.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
         close_btn.clicked.connect(self.reject)
         btn_row.addWidget(restore_btn)
+        btn_row.addWidget(delete_btn)
         btn_row.addWidget(close_btn)
         self.body_layout.addLayout(btn_row)
 
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(560)
         self._lock_size(clamp_to_screen=True)
+
+    def _reload_list(self):
+        """Перечитывает список резервных копий с диска и заново
+        заполняет виджет - используется и при первом открытии, и после
+        удаления одной из копий (чтобы список сразу отразил изменение,
+        без необходимости закрывать и открывать диалог заново)."""
+        self.list_widget.clear()
+        self._backups = db_sync.list_backups()
+        if not self._backups:
+            self.list_widget.addItem(QListWidgetItem("Резервных копий пока нет."))
+            return
+        for full_path, created_at, revision_display, source, is_manual, pump_count in self._backups:
+            when = created_at.strftime('%d.%m.%Y %H:%M')
+            rev_text = f"ревизия {revision_display}" if revision_display else "ревизия неизвестна (старый формат)"
+            count_text = f", насосов: {pump_count}" if pump_count is not None else ""
+            # Сетевые копии (см. db_sync._backup_network_copy - создаются
+            # перед принудительной полной заменой сети локальной копией)
+            # и копии, созданные вручную (см. db_sync.create_manual_backup) -
+            # помечаем отдельно, чтобы не перепутать с обычными
+            # автоматическими копиями локальной базы
+            source_label = " · сетевая копия" if source == 'network' else ""
+            manual_label = " · создано вручную" if is_manual else ""
+            self.list_widget.addItem(
+                QListWidgetItem(f"{when} - {rev_text}{count_text}{source_label}{manual_label}")
+            )
 
     def _on_restore_clicked(self):
         row = self.list_widget.currentRow()
@@ -1962,13 +2056,14 @@ class RestoreBackupDialog(_GlowDialog):
             GlowMessageDialog.show_error(self, "Восстановление", "Сначала выберите резервную копию из списка.")
             return
 
-        full_path, created_at, revision_display, source = self._backups[row]
+        full_path, created_at, revision_display, source, is_manual, pump_count = self._backups[row]
         when = created_at.strftime('%d.%m.%Y %H:%M')
         rev_text = f"ревизия {revision_display}" if revision_display else "ревизия неизвестна"
         source_text = " (сетевая копия)" if source == 'network' else ""
+        count_text = f", насосов в копии: {pump_count}" if pump_count is not None else ""
         if not GlowMessageDialog.confirm(
             self, "Подтверждение восстановления",
-            f"Восстановить локальную базу данных из копии {when} ({rev_text}){source_text}?\n\n"
+            f"Восстановить локальную базу данных из копии {when} ({rev_text}{count_text}){source_text}?\n\n"
             "Текущее состояние локальной базы будет заменено - все "
             "изменения, сделанные после этой копии, будут потеряны, если "
             "они не выгружены в сеть."
@@ -1981,6 +2076,27 @@ class RestoreBackupDialog(_GlowDialog):
             self.accept()
         else:
             GlowMessageDialog.show_error(self, "Восстановление", message)
+
+    def _on_delete_clicked(self):
+        row = self.list_widget.currentRow()
+        if row < 0 or not self._backups:
+            GlowMessageDialog.show_error(self, "Удаление копии", "Сначала выберите резервную копию из списка.")
+            return
+
+        full_path, created_at, revision_display, source, is_manual, pump_count = self._backups[row]
+        when = created_at.strftime('%d.%m.%Y %H:%M')
+        if not GlowMessageDialog.confirm(
+            self, "Подтверждение удаления",
+            f"Удалить резервную копию от {when} безвозвратно?\n\n"
+            "Это действие нельзя отменить - сам файл резервной копии "
+            "будет удалён с диска."
+        ):
+            return
+
+        if db_sync.delete_backup(full_path):
+            self._reload_list()
+        else:
+            GlowMessageDialog.show_error(self, "Удаление копии", "Не удалось удалить файл резервной копии.")
 
 class KnownUsersDialog(_GlowDialog):
     """Список всех пользователей, когда-либо подключавшихся к сетевой
@@ -3121,7 +3237,7 @@ class EditPumpDialog(_GlowDialog):
         self.order_input = QLineEdit()
         order_num = pump_data.get('order_number')
         if order_num:
-            self.order_input.setText(str(order_num).replace('.0', ''))
+            self.order_input.setText(utils.format_order_number(order_num))
 
         self.date_input = QDateEdit()
         self.date_input.setCalendarPopup(True)
@@ -3622,56 +3738,6 @@ class EditPumpDialog(_GlowDialog):
             'note': self.note_input.text().strip(),
         }
 
-
-class EditProtocolDialog(QDialog):
-    def __init__(self, pump_data, parent=None):
-        super().__init__(parent)
-        self.pump_data = pump_data
-        self.setWindowTitle("Редактирование примечания")
-        self.setModal(True)
-        self.resize(500, 300)
-
-        layout = QVBoxLayout(self)
-
-        # Информация о насосе
-        info = QLabel(
-            f"Насос: {pump_data.get('pump_number')}\n"
-            f"Дата: {utils.format_date_display(pump_data.get('test_date'))}\n"
-            f"Вердикт: {pump_data.get('verdict')}"
-        )
-        layout.addWidget(info)
-
-        # Поле для примечания
-        layout.addWidget(QLabel("Примечание:"))
-        self.note_edit = QTextEdit()
-        self.note_edit.setPlainText(pump_data.get('note', ''))
-        layout.addWidget(self.note_edit)
-
-        # Пароль
-        layout.addWidget(QLabel("Введите пароль для подтверждения:"))
-        self.password_input = QLineEdit()
-        self.password_input.setEchoMode(QLineEdit.Password)
-        setup_password_field(self.password_input, icon_color="#1c1e21")
-        layout.addWidget(self.password_input)
-
-        # Кнопки
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.button(QDialogButtonBox.Cancel).setText("Отмена")
-        button_box.accepted.connect(self.try_accept)
-        button_box.rejected.connect(self.reject)
-        layout.addWidget(button_box)
-
-    def try_accept(self):
-        if not auth.check_password(self.password_input.text()):
-            QMessageBox.warning(self, "Ошибка", "Неверный пароль.")
-            return
-        self.accept()
-
-    def get_data(self):
-        return {
-            'note': self.note_edit.toPlainText(),
-            'password': self.password_input.text()
-        }
 
 class EditHistoryDialog(_GlowDialog):
     """Диалог управления историей редактирования протокола - фирменный стиль."""

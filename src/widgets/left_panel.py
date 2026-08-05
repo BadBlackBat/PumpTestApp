@@ -987,6 +987,7 @@ class LeftPanel(QWidget):
     group_selected = pyqtSignal(list)
     request_import = pyqtSignal()
     request_upload = pyqtSignal()
+    request_manual_backup = pyqtSignal()
     request_force_pull = pyqtSignal()
     request_add = pyqtSignal()
     request_delete = pyqtSignal(int)
@@ -1422,6 +1423,22 @@ class LeftPanel(QWidget):
       self._upload_glow = _ButtonGlowBlinker(
           self.btn_upload, (46, 204, 113), self.btn_upload.styleSheet()
       )
+      # Принудительное резервное копирование - по явному нажатию,
+      # независимо от того, есть ли уже автоматическая копия с текущей
+      # ревизией (см. db_sync.create_manual_backup) - чтобы пользователь
+      # точно знал, что копия сохранена именно сейчас, а не гадал
+      self.btn_manual_backup = QPushButton()
+      self.btn_manual_backup.setObjectName("chromeButton")
+      self.btn_manual_backup.setFixedHeight(26)
+      self.btn_manual_backup.setFixedWidth(40)
+      self.btn_manual_backup.setToolTip("Создать резервную копию локальной базы прямо сейчас")
+      self.btn_manual_backup.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE + """
+          QPushButton#chromeButton { padding: 2px 4px; }
+      """)
+      backup_icon_path = os.path.join(ICONS_DIR, 'save_backup.svg')
+      self.btn_manual_backup.setIcon(icon_utils.tinted_icon(backup_icon_path, "#2b2d31", 20))
+      self.btn_manual_backup.setIconSize(QSize(20, 20))
+      self.btn_manual_backup.clicked.connect(self.request_manual_backup.emit)
       self.btn_import = QPushButton("Импорт Excel")
       self.btn_import.setObjectName("chromeButton")
       self.btn_import.setFixedHeight(26)
@@ -1437,6 +1454,7 @@ class LeftPanel(QWidget):
       btn_layout.addWidget(self.btn_add)
       btn_layout.addWidget(self.btn_delete)
       btn_layout.addWidget(self.btn_upload)
+      btn_layout.addWidget(self.btn_manual_backup)
       btn_layout.addWidget(self.btn_import)
       btn_layout.addWidget(self.btn_view_toggle)
       bottom_layout.addLayout(btn_layout)
@@ -1480,9 +1498,16 @@ class LeftPanel(QWidget):
       self.duplicates_note_label = QLabel("")
       self.duplicates_note_label.setAlignment(Qt.AlignCenter)
       self.duplicates_note_label.setStyleSheet(styles.LEFT_PANEL_FILTER_LABEL_STYLE)
-      self.count_label = QLabel("Показано записей: 0")
+      self.count_label = QLabel("Показано записей:")
       self.count_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
       self.count_label.setStyleSheet(styles.LEFT_PANEL_FILTER_LABEL_STYLE)
+      # Число - отдельная метка с фиксированной шириной (хватает с запасом
+      # даже на 6 цифр), чтобы рост количества цифр (99 -> 100) сдвигал
+      # только само число, а не всю надпись целиком
+      self.count_number_label = QLabel("0")
+      self.count_number_label.setFixedWidth(50)
+      self.count_number_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+      self.count_number_label.setStyleSheet(styles.LEFT_PANEL_FILTER_LABEL_STYLE)
       pagination_layout.addWidget(self.btn_prev)
       pagination_layout.addWidget(self.page_label)
       pagination_layout.addWidget(self.btn_next)
@@ -1491,6 +1516,7 @@ class LeftPanel(QWidget):
       pagination_layout.addWidget(self.duplicates_note_label)
       pagination_layout.addStretch()
       pagination_layout.addWidget(self.count_label)
+      pagination_layout.addWidget(self.count_number_label)
       bottom_layout.addLayout(pagination_layout)
 
       layout.addWidget(bottom_panel)
@@ -1527,6 +1553,12 @@ class LeftPanel(QWidget):
             self.btn_upload.setText("Выгрузить")
             self.btn_upload.setFont(QFont("Segoe UI", 9))
             self.btn_upload.setFixedWidth(120)
+            self.btn_manual_backup.setText("Сохранить текущую копию БД")
+            self.btn_manual_backup.setFont(QFont("Segoe UI", 9))
+            self.btn_manual_backup.setFixedWidth(240)
+            self.btn_manual_backup.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE + """
+                QPushButton#chromeButton { padding: 2px 14px; }
+            """)
             self._reflow_filters(expanded=True)
             # Снимаем ограничение максимальной ширины (см. gui.py,
             # _apply_minimal_left_width) - иначе панель не может занять
@@ -1544,6 +1576,11 @@ class LeftPanel(QWidget):
             self.btn_view_toggle.setText("Расширенный вид")
             self.btn_upload.setText("")
             self.btn_upload.setFixedWidth(40)
+            self.btn_manual_backup.setText("")
+            self.btn_manual_backup.setFixedWidth(40)
+            self.btn_manual_backup.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE + """
+                QPushButton#chromeButton { padding: 2px 4px; }
+            """)
             self._reflow_filters(expanded=False)
             # Возвращаем ограничение по минимально нужной ширине - тем же
             # методом, что применяется при старте/разворачивании окна
@@ -1644,7 +1681,7 @@ class LeftPanel(QWidget):
 
             # ---- Заказ ----
             order_num = p.get('order_number', '—')
-            order_str = str(order_num).replace('.0', '') if order_num and order_num != '—' else '—'
+            order_str = utils.format_order_number(order_num) if order_num and order_num != '—' else '—'
             item_order = QTableWidgetItem(order_str)
             item_order.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(row, 5, item_order)
@@ -2086,10 +2123,7 @@ class LeftPanel(QWidget):
         self.filter_order.clear()
         self.filter_order.addItem("Все заказы")
         for oid, onum in orders:
-            # Форматируем номер
-            order_str = str(onum)
-            if '.' in order_str:
-                order_str = order_str.rstrip('0').rstrip('.')
+            order_str = utils.format_order_number(onum)
             self.order_map[oid] = order_str
             self.filter_order.addItem(order_str, oid)
         self.filter_order.blockSignals(False)
@@ -2358,7 +2392,7 @@ class LeftPanel(QWidget):
             self.btn_prev.setEnabled(self.current_page > 0)
             self.btn_next.setEnabled(self.current_page + 1 < self.total_group_pages)
             self.duplicates_note_label.setText("Группировка по дублям")
-            self.count_label.setText(f"Показано записей: {self.total_records}")
+            self.count_number_label.setText(str(self.total_records))
             return
 
         self.duplicates_note_label.setText("")
@@ -2366,4 +2400,4 @@ class LeftPanel(QWidget):
         self.page_label.setText(f"Страница {self.current_page + 1} из {total_pages}")
         self.btn_prev.setEnabled(self.current_page > 0)
         self.btn_next.setEnabled((self.current_page + 1) * self.page_size < self.total_records)
-        self.count_label.setText(f"Показано записей: {self.total_records}")
+        self.count_number_label.setText(str(self.total_records))
