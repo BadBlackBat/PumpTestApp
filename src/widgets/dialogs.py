@@ -9,8 +9,8 @@ from PyQt5.QtWidgets import (
     QGraphicsBlurEffect, QGraphicsColorizeEffect, QGraphicsScene, QGraphicsPixmapItem,
     QCheckBox, QProgressBar, QRadioButton, QButtonGroup, QFileDialog, QAction
 )
-from PyQt5.QtCore import Qt, QDate, QPoint, QSize, QPropertyAnimation, QEasingCurve, QTimer, QRectF, pyqtProperty, QSettings
-from PyQt5.QtGui import QFont, QColor, QFontMetrics, QPainter, QPixmap, QIcon, QPen
+from PyQt5.QtCore import Qt, QDate, QPoint, QSize, QPropertyAnimation, QEasingCurve, QTimer, QRectF, pyqtProperty, QSettings, QUrl, QUrlQuery
+from PyQt5.QtGui import QFont, QColor, QFontMetrics, QPainter, QPixmap, QIcon, QPen, QDesktopServices
 import json
 import os
 
@@ -2463,6 +2463,7 @@ class SettingsDialog(_GlowDialog):
 
         # Блок 4: служебные действия
         self.body_layout.addWidget(make_btn("Инструкция", self.open_instructions))
+        self.body_layout.addWidget(make_btn("Обратная связь", self.open_feedback_email))
         self.body_layout.addWidget(make_btn("Закрыть", self.accept))
 
         self.body_layout.addSpacing(14)
@@ -2503,6 +2504,47 @@ class SettingsDialog(_GlowDialog):
         dialog = InstructionsDialog(self.parent())
         dialog.exec_()
         self.show()
+
+    def open_feedback_email(self):
+        """Открывает почтовый клиент пользователя (через обычную ссылку
+        mailto:) с уже заполненной темой и телом письма - версия
+        программы, локальная ревизия базы и сетевая ревизия (если
+        сетевой режим активен и сеть сейчас доступна). Не отправляет
+        ничего само - просто открывает то приложение, которое у
+        пользователя на компьютере зарегистрировано как обработчик
+        mailto: (Outlook, стандартная почта Windows и т.п.), с уже
+        заполненными полями - без какой-либо серверной инфраструктуры
+        отправки писем."""
+        local_revision = db.get_current_revision()
+        local_revision_display = db.format_revision_display(local_revision)
+
+        network_revision_display = "сетевой режим не используется"
+        if db_settings.is_network_mode_active():
+            if db_sync.is_network_reachable():
+                network_revision = db_sync.get_network_revision_now()
+                network_revision_display = (
+                    db.format_revision_display(network_revision)
+                    if network_revision is not None else "не удалось прочитать"
+                )
+            else:
+                network_revision_display = "сеть сейчас недоступна"
+
+        subject = f"PumpTestApp - обратная связь (версия {version.VERSION})"
+        body = (
+            f"Версия программы: {version.VERSION}\n"
+            f"Локальная ревизия базы: {local_revision_display}\n"
+            f"Сетевая ревизия базы: {network_revision_display}\n"
+            "\n"
+            "Опишите, пожалуйста, вопрос или проблему ниже:\n\n"
+        )
+
+        url = QUrl("mailto:alexey.luschin@nami.ru")
+        query = QUrlQuery()
+        query.addQueryItem("subject", subject)
+        query.addQueryItem("body", body)
+        # query.addQueryItem("bcc", "lushin.alexey@live.com")
+        url.setQuery(query)
+        QDesktopServices.openUrl(url)
 
     def open_add_modification(self):
         self.hide()
