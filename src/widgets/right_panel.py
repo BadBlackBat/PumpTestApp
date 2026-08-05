@@ -81,10 +81,9 @@ from .dialogs import _clamp_to_screen, GlowMessageDialog, ExportProgressDialog
 from .left_panel import _GlowFrame, _CtrlWheelZoomWidget, _GlowScrollBar
 from .. import styles
 from .. import icon_utils
+from .. import app_paths
 
-ICONS_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'resources', 'icons'
-)
+ICONS_DIR = os.path.join(app_paths.get_resources_dir(), 'icons')
 from datetime import datetime
 
 

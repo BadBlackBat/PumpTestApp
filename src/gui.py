@@ -17,6 +17,7 @@ from .widgets.right_panel import RightPanel
 from .widgets.status_bar import StatusBar, _GlowLine
 from .widgets.dialogs import PasswordDialog, AddModificationDialog, AddOrderDialog, SettingsDialog, AddPumpDialog, _clamp_to_screen, GlowMessageDialog, PrintChoiceDialog, _DialogBackgroundManager, NetworkAheadChoiceDialog
 from . import database as db
+from . import app_paths
 from . import db_sync
 from . import db_settings
 from . import db_lock
@@ -29,9 +30,9 @@ from datetime import datetime
 from .widgets.dialogs import EditPumpDialog
 import json
 
-# Папка с изображениями (значок окна, логотип) - лежит рядом с исходниками,
-# в src/resources/
-RESOURCES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
+# Папка с изображениями (значок окна, логотип) - корректно определяется
+# и при запуске из исходников, и внутри собранной программы
+RESOURCES_DIR = app_paths.get_resources_dir()
 ICON_PATH = os.path.join(RESOURCES_DIR, 'icon.ico')
 ICONS_DIR = os.path.join(RESOURCES_DIR, 'icons')
 

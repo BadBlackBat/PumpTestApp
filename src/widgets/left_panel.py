@@ -16,12 +16,11 @@ from .. import database as db
 from .. import utils
 from .. import styles
 from .. import icon_utils
+from .. import app_paths
 import os
 import weakref
 
-RESOURCES_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'resources'
-)
+RESOURCES_DIR = app_paths.get_resources_dir()
 ICONS_DIR = os.path.join(RESOURCES_DIR, 'icons')
 
 

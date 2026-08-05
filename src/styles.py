@@ -578,7 +578,8 @@ def apply_calendar_style(calendar_widget):
     from PyQt5.QtWidgets import QToolButton
     from PyQt5.QtCore import QSize
     from . import icon_utils
-    icons_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources', 'icons')
+    from . import app_paths
+    icons_dir = os.path.join(app_paths.get_resources_dir(), 'icons')
     prev_btn = calendar_widget.findChild(QToolButton, "qt_calendar_prevmonth")
     next_btn = calendar_widget.findChild(QToolButton, "qt_calendar_nextmonth")
     prev_icon_path = os.path.join(icons_dir, 'calendar_prev.svg')

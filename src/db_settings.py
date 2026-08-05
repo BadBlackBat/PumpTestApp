@@ -13,13 +13,12 @@ db_settings.py - настройки расположения базы данны
 """
 import os
 from PyQt5.QtCore import QSettings
+from . import app_paths
 
-# Путь по умолчанию - ровно тот же, что был в database.py изначально,
-# до появления многопользовательской работы. Ничего не меняется для
-# тех, кто не открывал эти настройки ни разу.
-_DEFAULT_LOCAL_DB_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'pumps.db'
-)
+# Путь по умолчанию - data/pumps.db рядом с реальным расположением
+# программы (см. app_paths.get_app_root - корректно работает и при
+# запуске из исходников, и внутри собранной программы)
+_DEFAULT_LOCAL_DB_PATH = os.path.join(app_paths.get_app_root(), 'data', 'pumps.db')
 
 # Режимы работы с базой:
 #   'local'  - обычный локальный файл на этом ПК (умолчание, как и было)

@@ -15,6 +15,7 @@ import json
 import os
 
 from .. import database as db
+from .. import app_paths
 from .. import utils
 from .. import styles
 from .. import icon_utils
@@ -29,9 +30,7 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 from matplotlib.ticker import MultipleLocator
 
-ICONS_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'resources', 'icons'
-)
+ICONS_DIR = os.path.join(app_paths.get_resources_dir(), 'icons')
 
 def _clamp_to_screen(widget, width_fraction=0.95, height_fraction=0.92):
     """Если диалог после adjustSize() оказался больше доступной области
@@ -760,10 +759,7 @@ class InstructionsDialog(_GlowDialog):
     инструкции, достаточно отредактировать этот файл, без изменений в
     коде программы."""
     _YELLOW = (230, 200, 40)
-    INSTRUCTIONS_PATH = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        'resources', 'instructions.txt'
-    )
+    INSTRUCTIONS_PATH = os.path.join(app_paths.get_resources_dir(), 'instructions.txt')
 
     def __init__(self, parent=None):
         super().__init__(parent, title="Инструкция", glow_color=self._YELLOW)
@@ -2542,7 +2538,7 @@ class SettingsDialog(_GlowDialog):
         query = QUrlQuery()
         query.addQueryItem("subject", subject)
         query.addQueryItem("body", body)
-        # query.addQueryItem("bcc", "lushin.alexey@live.com")
+        query.addQueryItem("bcc", "lushin.alexey@live.com")
         url.setQuery(query)
         QDesktopServices.openUrl(url)
 

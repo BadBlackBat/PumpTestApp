@@ -8,9 +8,11 @@ from .gui import MainWindow
 from . import database as db
 from . import styles
 from . import db_sync
+from . import auth
 from .widgets.dialogs import _DialogBackgroundManager
+from . import app_paths
 
-RESOURCES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
+RESOURCES_DIR = app_paths.get_resources_dir()
 
 
 def _set_dwm_color_attribute(hwnd, attribute, rgb):
@@ -99,6 +101,13 @@ def set_app_user_model_id():
 
 
 def main():
+    # Если установщик оставил временный резервный пароль открытым
+    # текстом - хешируем его и сохраняем как обычный, удаляем временный
+    # файл. Безопасно вызывать при каждом запуске - если временного
+    # файла нет (обычная ситуация после первого запуска), ничего не
+    # происходит.
+    auth.process_pending_password()
+
     # Сверка с сетевой базой (если включён сетевой режим - иначе
     # ничего не делает и не влияет на локальный режим) - обязательно
     # ДО init_db(), чтобы миграция схемы применилась к финальной версии

@@ -28,9 +28,21 @@ auth.py - проверка пароля для действий, требующ�
    дополняет его) - это осознанный выбор: резервный пароль существует
    именно как аварийный вход на случай, если основной забыт/утерян, а
    не как замена его на конкретном компьютере.
+
+3. Резервный пароль можно задать ПРИ УСТАНОВКЕ программы (экран
+   установщика) - тот пишет введённый пароль ОТКРЫТЫМ ТЕКСТОМ во
+   временный файл-метку (pending_password.txt, рядом с sys.dat).
+   Хеширование пароля установщик не делает сам (в его скриптовом языке
+   нет надёжной, проверенной реализации SHA-256) - вместо этого при
+   первом же запуске программы после установки process_pending_password()
+   находит этот временный файл, хеширует пароль средствами Python
+   (той же самой функцией, что использует check_password для сравнения)
+   и записывает готовый хеш в sys.dat, а временный файл с открытым
+   текстом сразу удаляет.
 """
 import os
 import hashlib
+from . import app_paths
 
 # Основной пароль - меняется прямо здесь, одной строкой
 DEFAULT_PASSWORD = "admin"
@@ -39,13 +51,58 @@ DEFAULT_PASSWORD = "admin"
 # намеренно непримечательным названием
 _OVERRIDE_DIR_NAME = ".pumpapp_sys"
 _OVERRIDE_FILE_NAME = "sys.dat"
+_PENDING_PASSWORD_FILE_NAME = "pending_password.txt"
+
+
+def _override_dir():
+    """Папка резервного файла - рядом с реальным расположением
+    программы (см. app_paths.get_app_root), а не там, где PyInstaller
+    временно распаковал код при запуске собранной программы."""
+    return os.path.join(app_paths.get_app_root(), _OVERRIDE_DIR_NAME)
 
 
 def _override_path():
-    """Путь к резервному файлу - в папке на два уровня выше этого файла
-    (src/../ - то есть рядом с самой программой, не внутри src)."""
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(base_dir, _OVERRIDE_DIR_NAME, _OVERRIDE_FILE_NAME)
+    """Путь к резервному файлу с хешем пароля."""
+    return os.path.join(_override_dir(), _OVERRIDE_FILE_NAME)
+
+
+def _pending_password_path():
+    """Путь к временному файлу с паролем открытым текстом, оставленному
+    установщиком - существует только до первого запуска программы после
+    установки."""
+    return os.path.join(_override_dir(), _PENDING_PASSWORD_FILE_NAME)
+
+
+def process_pending_password():
+    """Обрабатывает временный пароль, оставленный установщиком (если
+    есть) - хеширует его и сохраняет как обычный резервный пароль,
+    удаляет временный файл с открытым текстом. Вызывается один раз при
+    старте программы (main.py), до создания главного окна - безопасно
+    вызывать и тогда, когда временного файла нет (штатная ситуация на
+    большинстве запусков - файл существует только сразу после
+    установки, и то только если пользователь при установке задал
+    резервный пароль)."""
+    pending_path = _pending_password_path()
+    if not os.path.exists(pending_path):
+        return
+    try:
+        with open(pending_path, 'r', encoding='utf-8') as f:
+            plain_password = f.read().strip()
+        if plain_password:
+            password_hash = hashlib.sha256(plain_password.encode('utf-8')).hexdigest()
+            os.makedirs(_override_dir(), exist_ok=True)
+            with open(_override_path(), 'w', encoding='utf-8') as f:
+                f.write(password_hash)
+    except OSError:
+        # Не удалось прочитать/записать - не критично, резервный пароль
+        # просто не будет настроен, программа продолжит работать с
+        # основным паролем
+        pass
+    finally:
+        try:
+            os.remove(pending_path)
+        except OSError:
+            pass
 
 
 def _read_override_hash():
