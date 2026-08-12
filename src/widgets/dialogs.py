@@ -2538,7 +2538,7 @@ class SettingsDialog(_GlowDialog):
         query = QUrlQuery()
         query.addQueryItem("subject", subject)
         query.addQueryItem("body", body)
-        query.addQueryItem("bcc", "lushin.alexey@live.com")
+        # query.addQueryItem("bcc", "lushin.alexey@live.com")
         url.setQuery(query)
         QDesktopServices.openUrl(url)
 

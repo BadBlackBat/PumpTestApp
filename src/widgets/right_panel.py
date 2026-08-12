@@ -234,6 +234,13 @@ class RightPanel(QWidget):
         styles.retheme_widget_tree(self)
         self.logo_label.setStyleSheet(styles.get_right_panel_logo_style())
         self.logo_label.set_watermark_color(styles.get_watermark_color())
+        title_font_family = getattr(styles, 'TERMINATOR_FONT_FAMILY', None) or "Segoe UI"
+        self.title_label.setStyleSheet(
+            styles.get_right_panel_title_style()
+            + f'font-family: "{title_font_family}", "Segoe UI", Arial, sans-serif;'
+        )
+        glow_r, glow_g, glow_b = styles.get_right_panel_title_glow_color()
+        self.title_label.graphicsEffect().setColor(QColor(glow_r, glow_g, glow_b, 190))
         self.logo_text_label.setStyleSheet(styles.get_right_panel_logo_text_style())
         self.stats_widget.setStyleSheet(styles.get_right_panel_stats_bg_style())
         self.overview_bg.setStyleSheet(styles.get_right_panel_stats_bg_style())
@@ -343,20 +350,54 @@ class RightPanel(QWidget):
         header_row.addWidget(self.test_conditions_box)
         self.content_layout.addLayout(header_row)
 
-
-        # Логотип: картинка + текст-подсказка под ней. self.logo_label -
-        # контейнер (не сам QLabel с картинкой), чтобы весь остальной код
-        # (show()/hide() в разных местах файла) не пришлось переписывать
+        # Логотип: картинка-водяной знак (рисуется в paintEvent самого
+        # _LogoContainer, не как дочерний виджет) + заголовок сверху +
+        # текст-подсказка по центру оставшегося пространства. Всё внутри
+        # ОДНОГО общего блока (self.logo_label) - единый фон с водяным
+        # знаком на оба текста сразу, а не два визуально разных блока.
         self.logo_label = _LogoContainer()
         self.logo_label.setObjectName("logoContainer")
         self.logo_label.setAttribute(Qt.WA_StyledBackground, True)
         logo_layout = QVBoxLayout(self.logo_label)
-        logo_layout.setAlignment(Qt.AlignCenter)
+        # Общее выравнивание по центру НЕ задаём (в отличие от прежней
+        # версии) - вместо этого расставляем растяжки вручную, чтобы
+        # заголовок остался у верхнего края, а не тоже утягивался в
+        # общий центр вместе с текстом-подсказкой
+        logo_layout.setContentsMargins(0, 24, 0, 0)
 
-        self.logo_text_label = QLabel("Выберите насос для просмотра протокола")
+        # Заголовок "База данных насосов ГУР" - в 2 строки, шрифтом
+        # Terminator (то же имя, что уже используется для заголовка
+        # верхней панели - см. gui.py: self.logo_label), с тенью и
+        # небольшим свечением. Если кастомный шрифт не загрузился -
+        # тихо остаёмся на Segoe UI (см. main.py: load_custom_fonts)
+        self.title_label = QLabel("\nБаза данных\nнасосов ГУР")
+        self.title_label.setAlignment(Qt.AlignCenter)
+        title_font_family = getattr(styles, 'TERMINATOR_FONT_FAMILY', None) or "Segoe UI"
+        self.title_label.setFont(QFont(title_font_family, 24, QFont.Bold))
+        self.title_label.setStyleSheet(
+            styles.get_right_panel_title_style()
+            + f'font-family: "{title_font_family}", "Segoe UI", Arial, sans-serif;'
+        )
+        title_glow = QGraphicsDropShadowEffect(self.title_label)
+        title_glow.setBlurRadius(16)
+        glow_r, glow_g, glow_b = styles.get_right_panel_title_glow_color()
+        title_glow.setColor(QColor(glow_r, glow_g, glow_b, 190))
+        title_glow.setOffset(0, 2)
+        self.title_label.setGraphicsEffect(title_glow)
+        logo_layout.addWidget(self.title_label, 0, Qt.AlignHCenter | Qt.AlignTop)
+
+        # Растяжка до текста-подсказки и после него - "Выберите насос"
+        # центрируется именно в ОСТАВШЕМСЯ пространстве под заголовком,
+        # а не по центру всего блока целиком (иначе заголовок наверху
+        # сдвинул бы визуальный центр текста ниже настоящей середины)
+        logo_layout.addStretch(1)
+
+        self.logo_text_label = QLabel("Выберите насос в списке слева\nдля просмотра протокола...")
         self.logo_text_label.setAlignment(Qt.AlignCenter)
         self.logo_text_label.setStyleSheet(styles.get_right_panel_logo_text_style())
-        logo_layout.addWidget(self.logo_text_label)
+        logo_layout.addWidget(self.logo_text_label, 0, Qt.AlignCenter)
+
+        logo_layout.addStretch(1)
 
         self.logo_label.setStyleSheet(styles.get_right_panel_logo_style())
         self.logo_label.set_watermark_color(styles.get_watermark_color())
@@ -2140,6 +2181,11 @@ class RightPanel(QWidget):
         # только на разовое обновление при переключении темы - защита от
         # возможной рассинхронизации между темой и уже показанным виджетом
         self.logo_label.setStyleSheet(styles.get_right_panel_logo_style())
+        title_font_family = getattr(styles, 'TERMINATOR_FONT_FAMILY', None) or "Segoe UI"
+        self.title_label.setStyleSheet(
+            styles.get_right_panel_title_style()
+            + f'font-family: "{title_font_family}", "Segoe UI", Arial, sans-serif;'
+        )
         self.logo_text_label.setStyleSheet(styles.get_right_panel_logo_text_style())
         self.logo_label.show()
 

@@ -1027,20 +1027,51 @@ RIGHT_PANEL_LOGO_STYLE_LIGHT = """
 def get_right_panel_logo_style():
     return RIGHT_PANEL_LOGO_STYLE_LIGHT if is_light_theme() else RIGHT_PANEL_LOGO_STYLE
 
+# Заголовок "База данных насосов ГУР" - крупный, шрифт Terminator
+# (задаётся программно в right_panel.py, см. TERMINATOR_FONT_FAMILY),
+# здесь только цвет и размер. Свечение и тень применяются отдельно,
+# через QGraphicsDropShadowEffect - QSS не умеет настоящий blur.
+RIGHT_PANEL_TITLE_STYLE = """
+    color: #7de8ff;
+    font-size: 20pt;
+    letter-spacing: 1px;
+"""
+
+RIGHT_PANEL_TITLE_STYLE_LIGHT = """
+    color: #2b2d31;
+    font-size: 20pt;
+    letter-spacing: 1px;
+"""
+
+
+def get_right_panel_title_style():
+    return RIGHT_PANEL_TITLE_STYLE_LIGHT if is_light_theme() else RIGHT_PANEL_TITLE_STYLE
+
+
+def get_right_panel_title_glow_color():
+    """Цвет свечения заголовка - тот же акцентный оттенок, что и у
+    остальной подсветки интерфейса (статус-бар, верхняя панель),
+    подстраивается под тему."""
+    return get_accent_color_rgb()
+
+
 # Текст-подсказка ("Выберите насос для просмотра протокола") поверх
-# киберпанк-градиента выше - светящийся голубой неон, тот же оттенок,
-# что и акцентная подсветка статус-бара/верхней панели (единая палитра)
+# киберпанк-градиента выше - тот же моноширинный HUD-шрифт, что и в
+# статус-баре (Consolas), но жирным начертанием - для чуть большей
+# заметности на фоне логотипа
 RIGHT_PANEL_LOGO_TEXT_STYLE = """
     color: #7de8ff;
-    font-family: "Segoe UI", Arial, sans-serif;
-    font-size: 16pt;
+    font-family: "Consolas", "Courier New", monospace;
+    font-weight: bold;
+    font-size: 14pt;
     letter-spacing: 1px;
 """
 
 RIGHT_PANEL_LOGO_TEXT_STYLE_LIGHT = """
     color: #2b2d31;
-    font-family: "Segoe UI", Arial, sans-serif;
-    font-size: 16pt;
+    font-family: "Consolas", "Courier New", monospace;
+    font-weight: bold;
+    font-size: 14pt;
     letter-spacing: 1px;
 """
 
