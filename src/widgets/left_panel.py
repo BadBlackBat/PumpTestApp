@@ -1552,9 +1552,10 @@ class LeftPanel(QWidget):
             self.btn_upload.setText("Выгрузить")
             self.btn_upload.setFont(QFont("Segoe UI", 9))
             self.btn_upload.setFixedWidth(120)
-            self.btn_manual_backup.setText("Сохранить текущую копию БД")
+            self.btn_manual_backup.setText("Копия БД")
             self.btn_manual_backup.setFont(QFont("Segoe UI", 9))
-            self.btn_manual_backup.setFixedWidth(240)
+            self.btn_manual_backup.setFixedWidth(110)
+            self.btn_manual_backup.setToolTip("Создать резервную копию локальной базы прямо сейчас")
             self.btn_manual_backup.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE + """
                 QPushButton#chromeButton { padding: 2px 14px; }
             """)

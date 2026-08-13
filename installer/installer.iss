@@ -17,12 +17,6 @@
 #define MyAppExeName "PumpTestApp.exe"
 #define MyAppIcon "..\gur_pump_icon.ico"
 
-; Путь к сетевой базе, показываемый в поле установщика ПОДСКАЗКОЙ
-; (серым текстом-placeholder, а не готовым предзаполненным значением) -
-; поменять на актуальный перед сборкой конкретного релиза, если он
-; известен заранее. Пустая строка - поле будет без подсказки вообще.
-#define DefaultNetworkPath ""
-
 [Setup]
 AppId={{96933B00-DE55-45A9-B91B-A80A158AF384}
 AppName={#MyAppName}
@@ -87,6 +81,22 @@ var
   MainPasswordPage: TInputQueryWizardPage;
   PasswordPage: TInputQueryWizardPage;
   NetworkPage: TInputQueryWizardPage;
+  NetworkBrowseButton: TNewButton;
+
+procedure BrowseForNetworkPath(Sender: TObject);
+var
+  FileName: String;
+begin
+  FileName := NetworkPage.Values[0];
+  if GetOpenFileName(
+    'Выберите файл сетевой базы данных',
+    FileName,
+    '',
+    'Файл базы данных (*.db)|*.db|Все файлы (*.*)|*.*',
+    'db'
+  ) then
+    NetworkPage.Values[0] := FileName;
+end;
 
 procedure InitializeWizard;
 begin
@@ -114,9 +124,10 @@ begin
   PasswordPage.Add('Резервный пароль (необязательно):', True);
 
   { Путь к сетевой базе - предзаполнен значением по умолчанию, заданным
-    при сборке установщика (DefaultNetworkPath выше). Если оставить
-    поле пустым - сетевой режим просто не будет включён, программа
-    будет работать с локальной базой (это можно будет включить позже
+    при сборке (DefaultNetworkPath - см. build_config.iss, спрашивается
+    интерактивно в build_installer.py). Если оставить поле пустым -
+    сетевой режим просто не будет включён, программа будет работать с
+    локальной базой (это можно будет включить позже
     через настройки самой программы) }
   NetworkPage := CreateInputQueryPage(PasswordPage.ID,
     'Общая сетевая база данных', 'Расположение общего файла базы (если используется)',
@@ -125,6 +136,19 @@ begin
     'использоваться только на этом компьютере - сотрите значение поля.');
   NetworkPage.Add('Путь к сетевой базе (необязательно):', False);
   NetworkPage.Values[0] := '{#DefaultNetworkPath}';
+
+  { Кнопка "Обзор" рядом с полем - открывает стандартный диалог выбора
+    файла. Сужаем само поле ввода, чтобы кнопка поместилась в ту же
+    строку, не вылезая за пределы страницы. }
+  NetworkBrowseButton := TNewButton.Create(WizardForm);
+  NetworkBrowseButton.Parent := NetworkPage.Surface;
+  NetworkBrowseButton.Caption := 'Обзор...';
+  NetworkBrowseButton.OnClick := @BrowseForNetworkPath;
+  NetworkBrowseButton.Height := NetworkPage.Edits[0].Height;
+  NetworkBrowseButton.Width := 80;
+  NetworkBrowseButton.Top := NetworkPage.Edits[0].Top;
+  NetworkBrowseButton.Left := NetworkPage.Edits[0].Left + NetworkPage.Edits[0].Width - NetworkBrowseButton.Width;
+  NetworkPage.Edits[0].Width := NetworkPage.Edits[0].Width - NetworkBrowseButton.Width - 8;
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;

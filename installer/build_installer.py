@@ -84,10 +84,25 @@ def apply_main_password(main_password):
         f.write(new_content)
 
 
+def get_current_network_path():
+    """Читает сетевой путь из уже существующего build_config.iss (если
+    он остался с прошлой сборки) - чтобы не вводить его заново каждый
+    раз, если он не менялся."""
+    build_config_path = os.path.join(INSTALLER_DIR, 'build_config.iss')
+    if not os.path.exists(build_config_path):
+        return ''
+    with open(build_config_path, encoding='utf-8') as f:
+        content = f.read()
+    match = re.search(r'#define DefaultNetworkPath "(.*)"', content)
+    return match.group(1) if match else ''
+
+
 def prompt_build_config():
     """Запрашивает параметры конкретной сборки - основной пароль
-    (одинаковый на всех копиях этого релиза) и название организации
-    (показывается пользователю на экране установки)."""
+    (одинаковый на всех копиях этого релиза), название организации и
+    путь к сетевой базе по умолчанию (оба показываются пользователю на
+    экране установки - организация как есть, сетевой путь как
+    предзаполненное значение поля, которое можно поменять или стереть)."""
     print("=== Параметры сборки ===")
 
     current_password = get_current_main_password()
@@ -101,24 +116,40 @@ def prompt_build_config():
         print("Основной пароль не может быть пустым.")
         sys.exit(1)
 
-    publisher = input("Название организации (показывается при установке) [NAMI]: ").strip() or "NAMI"
+    publisher = input("Название организации (показывается при установке) [Steering Laboratory]: ").strip() or "Steering Laboratory"
+
+    current_network_path = get_current_network_path()
+    if current_network_path:
+        net_prompt = (
+            f"Путь к сетевой базе по умолчанию [сейчас: {current_network_path}, "
+            f"Enter - оставить как есть]: "
+        )
+    else:
+        net_prompt = (
+            "Путь к сетевой базе по умолчанию (необязательно, можно оставить "
+            "пустым - тогда поле при установке будет просто пустым): "
+        )
+    net_entered = input(net_prompt).strip()
+    network_path = net_entered if net_entered else current_network_path
 
     print()
-    return main_password, publisher
+    return main_password, publisher, network_path
 
 
-def generate_build_config_iss(app_version, publisher, main_password):
+def generate_build_config_iss(app_version, publisher, main_password, network_path):
     """Пишет installer/build_config.iss, который подключается в
     installer.iss через #include - одно место правды для версии,
-    названия организации и основного пароля (нужен установщику для
-    проверки на экране резервного пароля - см. installer.iss), без
-    ручного дублирования между кодом программы и установщиком."""
+    названия организации, основного пароля (нужен установщику для
+    проверки на экране резервного пароля - см. installer.iss) и пути к
+    сетевой базе по умолчанию, без ручного дублирования между кодом
+    программы и установщиком."""
     build_config_path = os.path.join(INSTALLER_DIR, 'build_config.iss')
     with open(build_config_path, 'w', encoding='utf-8') as f:
         f.write(f'#define MyAppVersion "{app_version}"\n')
         f.write(f'#define MyAppPublisher "{publisher}"\n')
         f.write(f'#define MainPasswordPlain "{main_password}"\n')
-    print(f"[1/3] Версия: {app_version} | Организация: {publisher}")
+        f.write(f'#define DefaultNetworkPath "{network_path}"\n')
+    print(f"[1/3] Версия: {app_version} | Организация: {publisher} | Сетевой путь: {network_path or '(пусто)'}")
 
 
 def get_app_version():
@@ -172,10 +203,10 @@ def run_inno_setup():
 
 
 if __name__ == "__main__":
-    main_password, publisher = prompt_build_config()
+    main_password, publisher, network_path = prompt_build_config()
     apply_main_password(main_password)
     app_version = get_app_version()
-    generate_build_config_iss(app_version, publisher, main_password)
+    generate_build_config_iss(app_version, publisher, main_password, network_path)
     check_prefilled_database()
     run_pyinstaller()
     run_inno_setup()
