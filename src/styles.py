@@ -29,6 +29,49 @@ def is_light_theme():
     return CURRENT_THEME == 'light'
 
 
+# ============================================================
+# МАСШТАБИРОВАНИЕ ИНТЕРФЕЙСА ПОД РАЗРЕШЕНИЕ ЭКРАНА
+# ============================================================
+# UI_SCALE - коэффициент масштабирования всего интерфейса (шрифты,
+# отступы, некоторые фиксированные размеры виджетов), устанавливается
+# ОДИН РАЗ при старте программы (main.py: set_ui_scale, до создания
+# любых виджетов) по реальному разрешению экрана. 1.0 - эталонный
+# масштаб (экран, под который спроектирован интерфейс), меньше - более
+# компактное отображение на небольших экранах.
+#
+# ВАЖНО: это НЕ то же самое, что переменная окружения QT_SCALE_FACTOR
+# или атрибут Qt.AA_EnableHighDpiScaling - те управляют DPI-механизмом
+# самого Qt на системном уровне и на практике непредсказуемо
+# взаимодействуют с реальными DPI-настройками конкретного компьютера
+# (было опробовано и отброшено - ломало интерфейс на некоторых
+# машинах). UI_SCALE - простое умножение конкретных значений (шрифт,
+# отступ, ширина) внутри самого приложения, полностью в наших руках и
+# никак не связано с системным DPI.
+UI_SCALE = 1.0
+
+
+def set_ui_scale(factor):
+    """Устанавливает коэффициент масштабирования - вызывается один раз
+    при старте (main.py), ДО создания любых виджетов."""
+    global UI_SCALE
+    UI_SCALE = factor
+
+
+def scaled(pixels):
+    """Масштабирует значение в пикселях под текущий UI_SCALE - для
+    использования везде, где задаётся фиксированный размер виджета
+    (setFixedWidth/Height, setMinimumWidth и т.п.). Всегда возвращает
+    целое число (Qt не принимает дробные пиксели) и не меньше 1."""
+    return max(1, round(pixels * UI_SCALE))
+
+
+def scaled_pt(points):
+    """То же самое, что scaled(), но для размеров шрифта в pt (внутри
+    QSS-строк вида f'font-size: {scaled_pt(11)}pt;') - отдельная
+    функция просто для ясности кода в месте вызова, логика та же."""
+    return max(1, round(points * UI_SCALE))
+
+
 def load_theme_setting():
     """Загружает сохранённую тему - вызывать один раз при запуске
     программы, до создания главного окна (см. main.py)."""
@@ -56,7 +99,7 @@ def get_top_bar_logo_style():
 
 
 def get_status_bar_style():
-    return STATUS_BAR_STYLE_LIGHT if is_light_theme() else STATUS_BAR_STYLE
+    return _status_bar_style_light() if is_light_theme() else _status_bar_style()
 
 
 def get_glow_shadow_params():
@@ -261,24 +304,25 @@ TOP_BAR_LOGO_STYLE_BASE_LIGHT = """
     letter-spacing: 1.5px;
 """
 
-STATUS_BAR_STYLE_LIGHT = """
-    QStatusBar {
+def _status_bar_style_light():
+    return f"""
+    QStatusBar {{
         background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
             stop:0 #d2d6db, stop:0.45 #e9ebee, stop:1 #fcfdfe);
         border-top-left-radius: 10px;
         border-top-right-radius: 10px;
         border-top: 1px solid #b7bcc2;
-    }
-    QStatusBar QLabel {
+    }}
+    QStatusBar QLabel {{
         color: #2b2d31;
         font-family: "Consolas", "Courier New", monospace;
-        font-size: 9pt;
+        font-size: {scaled_pt(9)}pt;
         letter-spacing: 1px;
         background: transparent;
-    }
-    QStatusBar::item {
+    }}
+    QStatusBar::item {{
         border: none;
-    }
+    }}
 """
 
 TITLE_BAR_COLOR_RGB_LIGHT = (0xe9, 0xeb, 0xee)
@@ -311,14 +355,15 @@ TOP_BAR_ICON_COLOR_HOVER_LIGHT = "#0d7a99"
 # таблицей списка, когда в фильтре выбран конкретный заказ) - теперь в
 # общей графитовой палитре с бирюзовой окантовкой, вместо прежней
 # светло-голубой (не сочеталась с остальным тёмным оформлением)
-LEFT_PANEL_STATS_LABEL_STYLE = """
+def _left_panel_stats_label_style():
+    return f"""
     background-color: #2b2d31;
     border: 1px solid #4fd1ff;
     border-radius: 6px;
-    padding: 6px;
-    margin: 5px 0px;
+    padding: {scaled(6)}px;
+    margin: {scaled(5)}px 0px;
     color: #ffffff;
-    font-size: 10pt;
+    font-size: {scaled_pt(10)}pt;
 """
 
 # --- Панель фильтров целиком (см. класс _GlowFrame в left_panel.py) ---
@@ -357,106 +402,108 @@ LEFT_PANEL_CHIP_STYLE = """
 # Выпадающие списки фильтров и поля дат - вместо стандартной синей
 # подсветки Qt при наведении/раскрытии используем фирменный бирюзовый
 # (и в самом поле, и в его выпадающем списке - see selection-background)
-LEFT_PANEL_COMBO_STYLE = """
-    QComboBox, QDateEdit {
+def _left_panel_combo_style():
+    return f"""
+    QComboBox, QDateEdit {{
         background-color: rgba(255, 255, 255, 15);
         border: 1px solid #7a7f87;
         border-radius: 4px;
         color: #ffffff;
-        padding: 1px 6px;
-    }
-    QComboBox:hover, QDateEdit:hover {
+        padding: {scaled(1)}px {scaled(6)}px;
+    }}
+    QComboBox:hover, QDateEdit:hover {{
         border: 1px solid #4fd1ff;
         background-color: rgba(79, 209, 255, 30);
-    }
-    QComboBox::drop-down, QDateEdit::drop-down {
+    }}
+    QComboBox::drop-down, QDateEdit::drop-down {{
         border: none;
-    }
-    QComboBox QAbstractItemView {
+    }}
+    QComboBox QAbstractItemView {{
         background-color: #2b2d31;
         color: #ffffff;
         selection-background-color: #4fd1ff;
         selection-color: #1c1e21;
         outline: none;
-    }
-    QComboBox QAbstractItemView QScrollBar:vertical {
+    }}
+    QComboBox QAbstractItemView QScrollBar:vertical {{
         background: #2b2d31;
         width: 10px;
         margin: 2px;
         border-radius: 5px;
-    }
-    QComboBox QAbstractItemView QScrollBar::handle:vertical {
+    }}
+    QComboBox QAbstractItemView QScrollBar::handle:vertical {{
         background: #4fd1ff;
         min-height: 24px;
         border-radius: 5px;
-    }
-    QComboBox QAbstractItemView QScrollBar::handle:vertical:hover {
+    }}
+    QComboBox QAbstractItemView QScrollBar::handle:vertical:hover {{
         background: #7de0ff;
-    }
+    }}
     QComboBox QAbstractItemView QScrollBar::add-line:vertical,
-    QComboBox QAbstractItemView QScrollBar::sub-line:vertical {
+    QComboBox QAbstractItemView QScrollBar::sub-line:vertical {{
         height: 0px;
         border: none;
         background: none;
-    }
+    }}
     QComboBox QAbstractItemView QScrollBar::add-page:vertical,
-    QComboBox QAbstractItemView QScrollBar::sub-page:vertical {
+    QComboBox QAbstractItemView QScrollBar::sub-page:vertical {{
         background: transparent;
-    }
+    }}
 """
 
 # Всплывающий календарь QDateEdit - по умолчанию у него получался чёрный
 # фон, на котором не видно чисел (наследовал что-то из общей тёмной темы,
 # но не полностью). Явно красим сам календарь в графит/хром с читаемым
 # светлым текстом и бирюзовым выделением текущего/выбранного дня.
-LEFT_PANEL_CALENDAR_STYLE = """
-    QCalendarWidget QWidget {
+def _left_panel_calendar_style():
+    return f"""
+    QCalendarWidget QWidget {{
         background-color: #3a3d42;
         color: #ffffff;
-    }
-    QCalendarWidget QToolButton {
+    }}
+    QCalendarWidget QToolButton {{
         background-color: #3a3d42;
         color: #ffffff;
         border: none;
         border-radius: 4px;
-        padding: 4px;
-    }
-    QCalendarWidget QToolButton:hover {
+        padding: {scaled(4)}px;
+    }}
+    QCalendarWidget QToolButton:hover {{
         background-color: rgba(79, 209, 255, 60);
-    }
-    QCalendarWidget QMenu {
+    }}
+    QCalendarWidget QMenu {{
         background-color: #2b2d31;
         color: #ffffff;
-    }
-    QCalendarWidget QSpinBox {
+    }}
+    QCalendarWidget QSpinBox {{
         background-color: #2b2d31;
         color: #ffffff;
         selection-background-color: #4fd1ff;
-    }
-    QCalendarWidget QAbstractItemView:enabled {
+    }}
+    QCalendarWidget QAbstractItemView:enabled {{
         background-color: #2b2d31;
         color: #ffffff;
         selection-background-color: #4fd1ff;
         selection-color: #1c1e21;
-    }
-    QCalendarWidget QAbstractItemView:disabled {
+    }}
+    QCalendarWidget QAbstractItemView:disabled {{
         color: #6b6f75;
-    }
-    QCalendarWidget QAbstractItemView::item:hover {
+    }}
+    QCalendarWidget QAbstractItemView::item:hover {{
         background-color: rgba(79, 209, 255, 60);
-    }
-    QCalendarWidget QHeaderView {
+    }}
+    QCalendarWidget QHeaderView {{
         background-color: #2b2d31;
-    }
-    QCalendarWidget QHeaderView::section {
+    }}
+    QCalendarWidget QHeaderView::section {{
         background-color: #2b2d31;
         color: #e8eaed;
         border: none;
-        padding: 4px;
-    }
-    QCalendarWidget QToolButton#qt_calendar_monthbutton {
-        padding-right: 16px;
-    }
+        padding: {scaled(4)}px;
+    }}
+    QCalendarWidget QToolButton#qt_calendar_monthbutton {{
+        padding-right: {scaled(16)}px;
+    }}
 """
 
 
@@ -550,7 +597,7 @@ def apply_calendar_style(calendar_widget):
             calendar_widget.setWeekdayTextFormat(day, weekend_format)
         nav_icon_color = "#2b2d31"
     else:
-        calendar_widget.setStyleSheet(LEFT_PANEL_CALENDAR_STYLE)
+        calendar_widget.setStyleSheet(_left_panel_calendar_style())
         palette = calendar_widget.palette()
         palette.setColor(QPalette.WindowText, QColor("#e8eaed"))
         palette.setColor(QPalette.Window, QColor("#2b2d31"))
@@ -608,45 +655,47 @@ def apply_calendar_style(calendar_widget):
 # --- Поле ввода пароля - почти прозрачное (чуть отличается от фона
 # диалога), с тем же принципом наведения/фокуса, что и у строки поиска
 # насоса: лёгкая подсветка при наведении, более явная - в фокусе ---
-PASSWORD_INPUT_STYLE = """
-    QLineEdit {
+def _password_input_style():
+    return f"""
+    QLineEdit {{
         background-color: rgba(255, 255, 255, 12);
         border: 1px solid #6b6f75;
         border-radius: 4px;
         color: #e8eaed;
-        padding: 4px 8px;
-    }
-    QLineEdit:hover {
+        padding: {scaled(4)}px {scaled(8)}px;
+    }}
+    QLineEdit:hover {{
         border: 1px solid #8fe3ff;
         background-color: rgba(79, 209, 255, 25);
-    }
-    QLineEdit:focus {
+    }}
+    QLineEdit:focus {{
         border: 2px solid #4fd1ff;
         background-color: rgba(79, 209, 255, 40);
-    }
+    }}
 """
 
-PASSWORD_INPUT_STYLE_LIGHT = """
-    QLineEdit {
+def _password_input_style_light():
+    return f"""
+    QLineEdit {{
         background-color: rgba(43, 45, 49, 10);
         border: 1px solid #b7bcc2;
         border-radius: 4px;
         color: #2b2d31;
-        padding: 4px 8px;
-    }
-    QLineEdit:hover {
+        padding: {scaled(4)}px {scaled(8)}px;
+    }}
+    QLineEdit:hover {{
         border: 1px solid #0d7a99;
         background-color: rgba(13, 122, 153, 25);
-    }
-    QLineEdit:focus {
+    }}
+    QLineEdit:focus {{
         border: 2px solid #0d7a99;
         background-color: rgba(13, 122, 153, 40);
-    }
+    }}
 """
 
 
 def get_password_input_style():
-    return PASSWORD_INPUT_STYLE_LIGHT if is_light_theme() else PASSWORD_INPUT_STYLE
+    return _password_input_style_light() if is_light_theme() else _password_input_style()
 
 
 # --- Строка поиска: не как обычное поле ввода, а просто нижнее
@@ -655,25 +704,26 @@ def get_password_input_style():
 # (Consolas - тот же "терминаторский" стиль, что и в статус-баре):
 # номера насосов только латиница+цифры, моноширинный шрифт для них
 # отлично подходит ---
-LEFT_PANEL_SEARCH_INPUT_STYLE = """
-    QLineEdit#searchInput {
+def _left_panel_search_input_style():
+    return f"""
+    QLineEdit#searchInput {{
         background: transparent;
         border: none;
         border-bottom: 2px solid #7a7f87;
         color: #ffffff;
         font-family: "Consolas", monospace;
         font-weight: bold;
-        font-size: 11pt;
-        padding: 4px 2px;
-    }
-    QLineEdit#searchInput:hover {
+        font-size: {scaled_pt(11)}pt;
+        padding: {scaled(4)}px {scaled(2)}px;
+    }}
+    QLineEdit#searchInput:hover {{
         border-bottom: 2px solid #8fe3ff;
         background-color: rgba(79, 209, 255, 25);
-    }
-    QLineEdit#searchInput:focus {
+    }}
+    QLineEdit#searchInput:focus {{
         border-bottom: 3px solid #4fd1ff;
         background-color: rgba(79, 209, 255, 40);
-    }
+    }}
 """
 
 # --- Кнопка "Сбросить фильтры": не должна выглядеть как обычная кнопка -
@@ -797,14 +847,15 @@ def get_page_jump_input_style():
         }}
     """
 
-LEFT_PANEL_RESET_BTN_STYLE = f"""
+def _left_panel_reset_btn_style():
+    return f"""
     QPushButton#chromeButton {{
         background: {_ALUMINUM_NORMAL};
         border: 1px solid #6b6f75;
         border-radius: 4px;
         color: #2b2d31;
         font-weight: bold;
-        padding: 2px 16px;
+        padding: {scaled(2)}px {scaled(16)}px;
     }}
     QPushButton#chromeButton:hover {{
         background: {_ALUMINUM_HOVER};
@@ -814,14 +865,15 @@ LEFT_PANEL_RESET_BTN_STYLE = f"""
 
 # Кнопки пагинации (◀ ▶) - тот же алюминиевый стиль, но сама кнопка
 # компактнее, а стрелка внутри - крупнее, для лучшей читаемости
-LEFT_PANEL_PAGINATION_BTN_STYLE = f"""
+def _left_panel_pagination_btn_style():
+    return f"""
     QPushButton#chromeButton {{
         background: {_ALUMINUM_NORMAL};
         border: 1px solid #6b6f75;
         border-radius: 4px;
         color: #2b2d31;
         font-weight: bold;
-        font-size: 13pt;
+        font-size: {scaled_pt(13)}pt;
         padding: 0px;
     }}
     QPushButton#chromeButton:hover {{
@@ -834,26 +886,27 @@ LEFT_PANEL_PAGINATION_BTN_STYLE = f"""
 # бирюзовым при отметке (упрощённая замена "кастомной галочки" - без
 # готовой картинки с глифом самой галочки закрашенный квадрат читается
 # как чек-индикатор так же ясно, но надёжнее рисуется в любой теме)
-LEFT_PANEL_CHECKBOX_STYLE = """
-    QCheckBox {
+def _left_panel_checkbox_style():
+    return f"""
+    QCheckBox {{
         color: #ffffff;
-        font-size: 10.5pt;
-        spacing: 8px;
-    }
-    QCheckBox::indicator {
-        width: 15px;
-        height: 15px;
+        font-size: {scaled_pt(10.5)}pt;
+        spacing: {scaled(8)}px;
+    }}
+    QCheckBox::indicator {{
+        width: {scaled(15)}px;
+        height: {scaled(15)}px;
         border: 2px solid #7a7f87;
         border-radius: 4px;
         background: transparent;
-    }
-    QCheckBox::indicator:hover {
+    }}
+    QCheckBox::indicator:hover {{
         border: 2px solid #8fe3ff;
-    }
-    QCheckBox::indicator:checked {
+    }}
+    QCheckBox::indicator:checked {{
         background-color: #4fd1ff;
         border: 2px solid #4fd1ff;
-    }
+    }}
 """
 
 # Основная таблица списка насосов: центрирование текста в ячейках,
@@ -899,16 +952,17 @@ def build_left_panel_table_style(arrow_down_path=None, arrow_up_path=None, heade
     перебивает шрифт секции заголовка при повторной перерисовке."""
     arrow_rules = ""
     if arrow_down_path and arrow_up_path:
+        arrow_size = scaled(12)
         arrow_rules = f"""
     QHeaderView::down-arrow {{
         image: url({arrow_down_path});
-        width: 12px;
-        height: 12px;
+        width: {arrow_size}px;
+        height: {arrow_size}px;
     }}
     QHeaderView::up-arrow {{
         image: url({arrow_up_path});
-        width: 12px;
-        height: 12px;
+        width: {arrow_size}px;
+        height: {arrow_size}px;
     }}
 """
     font_rule = ""
@@ -931,7 +985,7 @@ def build_left_panel_table_style(arrow_down_path=None, arrow_up_path=None, heade
         font-weight: bold;
         {font_rule}
         border: 1px solid #6b6f75;
-        padding: 2px 4px;
+        padding: {scaled(2)}px {scaled(4)}px;
     }}
     QHeaderView::section:first {{
         border-top-left-radius: 8px;
@@ -997,55 +1051,59 @@ def get_right_panel_scroll_style():
 # ("logoContainer" - см. right_panel.py), чтобы стиль применялся только
 # к самому контейнеру, а не "протекал" на дочерние QLabel внутри него
 # (иначе, например, у картинки и у текста появлялись бы свои рамки).
-RIGHT_PANEL_LOGO_STYLE = """
-    QWidget#logoContainer {
+def _right_panel_logo_style():
+    return f"""
+    QWidget#logoContainer {{
         background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
             stop:0 #05050d,
             stop:0.5 #0d1b3e,
             stop:1 #1b0f3e);
         border: 1px solid #4fd1ff;
         border-radius: 12px;
-        padding: 40px;
-    }
+        padding: {scaled(40)}px;
+    }}
 """
 
 # Светлая тема - нарядный светлый градиент вместо "киберпанк" тёмного,
 # графитовый текст вместо неонового
-RIGHT_PANEL_LOGO_STYLE_LIGHT = """
-    QWidget#logoContainer {
+def _right_panel_logo_style_light():
+    return f"""
+    QWidget#logoContainer {{
         background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
             stop:0 #fdfefe,
             stop:0.45 #eef1f5,
             stop:1 #dbe1e8);
         border: 1px solid #b7bcc2;
         border-radius: 12px;
-        padding: 40px;
-    }
+        padding: {scaled(40)}px;
+    }}
 """
 
 
 def get_right_panel_logo_style():
-    return RIGHT_PANEL_LOGO_STYLE_LIGHT if is_light_theme() else RIGHT_PANEL_LOGO_STYLE
+    return _right_panel_logo_style_light() if is_light_theme() else _right_panel_logo_style()
 
 # Заголовок "База данных насосов ГУР" - крупный, шрифт Terminator
 # (задаётся программно в right_panel.py, см. TERMINATOR_FONT_FAMILY),
 # здесь только цвет и размер. Свечение и тень применяются отдельно,
 # через QGraphicsDropShadowEffect - QSS не умеет настоящий blur.
-RIGHT_PANEL_TITLE_STYLE = """
+def _right_panel_title_style():
+    return f"""
     color: #7de8ff;
-    font-size: 20pt;
+    font-size: {scaled_pt(20)}pt;
     letter-spacing: 1px;
 """
 
-RIGHT_PANEL_TITLE_STYLE_LIGHT = """
+def _right_panel_title_style_light():
+    return f"""
     color: #2b2d31;
-    font-size: 20pt;
+    font-size: {scaled_pt(20)}pt;
     letter-spacing: 1px;
 """
 
 
 def get_right_panel_title_style():
-    return RIGHT_PANEL_TITLE_STYLE_LIGHT if is_light_theme() else RIGHT_PANEL_TITLE_STYLE
+    return _right_panel_title_style_light() if is_light_theme() else _right_panel_title_style()
 
 
 def get_right_panel_title_glow_color():
@@ -1059,25 +1117,27 @@ def get_right_panel_title_glow_color():
 # киберпанк-градиента выше - тот же моноширинный HUD-шрифт, что и в
 # статус-баре (Consolas), но жирным начертанием - для чуть большей
 # заметности на фоне логотипа
-RIGHT_PANEL_LOGO_TEXT_STYLE = """
+def _right_panel_logo_text_style():
+    return f"""
     color: #7de8ff;
     font-family: "Consolas", "Courier New", monospace;
     font-weight: bold;
-    font-size: 14pt;
+    font-size: {scaled_pt(14)}pt;
     letter-spacing: 1px;
 """
 
-RIGHT_PANEL_LOGO_TEXT_STYLE_LIGHT = """
+def _right_panel_logo_text_style_light():
+    return f"""
     color: #2b2d31;
     font-family: "Consolas", "Courier New", monospace;
     font-weight: bold;
-    font-size: 14pt;
+    font-size: {scaled_pt(14)}pt;
     letter-spacing: 1px;
 """
 
 
 def get_right_panel_logo_text_style():
-    return RIGHT_PANEL_LOGO_TEXT_STYLE_LIGHT if is_light_theme() else RIGHT_PANEL_LOGO_TEXT_STYLE
+    return _right_panel_logo_text_style_light() if is_light_theme() else _right_panel_logo_text_style()
 
 
 def get_watermark_color():
@@ -1095,10 +1155,11 @@ def get_watermark_color():
 # текста. Привязан к objectName ("loadingContainer" - см. right_panel.py),
 # чтобы стиль не "протекал" на дочерние иконку и текст по отдельности
 # (та же история, что раньше была с логотипом-заглушкой).
-RIGHT_PANEL_LOADING_STYLE = """
-    QWidget#loadingContainer {
-        padding: 20px;
-    }
+def _right_panel_loading_style():
+    return f"""
+    QWidget#loadingContainer {{
+        padding: {scaled(20)}px;
+    }}
 """
 RIGHT_PANEL_LOADING_TEXT_STYLE = "color: #555;"
 
@@ -1250,7 +1311,8 @@ WINDOW_BORDER_COLOR_RGB = (0x4a, 0x4d, 0x52)
 
 # Отступ слева у надписи "Выбран образец: ..." - чтобы текст не был
 # приклеен вплотную к левому краю окна
-STATUS_BAR_SELECTED_LABEL_STYLE = "padding-left: 10px; font-size: 11pt;"
+def _status_bar_selected_label_style():
+    return f"padding-left: {scaled(10)}px; font-size: {scaled_pt(11)}pt;"
 
 # Отступ справа у правого блока (счётчик + дата обновления) - в px,
 # задаётся через contentsMargins самого layout-контейнера (см.
@@ -1278,8 +1340,9 @@ STATUS_BAR_HEIGHT = 44
 
 # Основной QSS статус-бара: градиент графит/тёмный хром сверху вниз,
 # скруглённые верхние углы, светлый моноширинный текст
-STATUS_BAR_STYLE = """
-    QStatusBar {
+def _status_bar_style():
+    return f"""
+    QStatusBar {{
         background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
             stop:0 #55585e,
             stop:0.45 #303236,
@@ -1287,17 +1350,17 @@ STATUS_BAR_STYLE = """
         border-top-left-radius: 10px;
         border-top-right-radius: 10px;
         border-top: 1px solid #6a6d73;
-    }
-    QStatusBar QLabel {
+    }}
+    QStatusBar QLabel {{
         color: #e8eaed;
         font-family: "Consolas", "Courier New", monospace;
-        font-size: 9pt;
+        font-size: {scaled_pt(9)}pt;
         letter-spacing: 1px;
         background: transparent;
-    }
-    QStatusBar::item {
+    }}
+    QStatusBar::item {{
         border: none;
-    }
+    }}
 """
 
 # Цвет светящейся полосы-акцента по центру статус-бара (см. класс
@@ -1335,3 +1398,51 @@ THEME_ICON_INACTIVE_HOVER_COLOR = "#8a8e94"
 # Иконка загрузки протокола (песочные часы) - чёрная, без перекраски,
 # как на исходной картинке
 LOADING_ICON_COLOR = "#1c1e21"
+
+# ============================================================
+# ДИНАМИЧЕСКИЕ КОНСТАНТЫ СТИЛЕЙ (масштабирование под UI_SCALE)
+# ============================================================
+# Часть строковых констант стилей выше на самом деле вычисляется через
+# функции (см. _left_panel_reset_btn_style и подобные) - но используется
+# по всему проекту КАК ОБЫЧНАЯ ПЕРЕМЕННАЯ (styles.LEFT_PANEL_RESET_BTN_STYLE,
+# без скобок вызова). Чтобы не переписывать десятки мест использования
+# по всему проекту, здесь используется модульный __getattr__ (PEP 562,
+# Python 3.7+) - при обращении styles.ИМЯ, если ИМЯ отсутствует как
+# обычный атрибут модуля, Python вызывает эту функцию, которая находит
+# и вызывает соответствующую функцию-заготовку.
+#
+# ВАЖНО при добавлении новой масштабируемой константы:
+# 1. Переименовать константу в функцию с префиксом _ (например,
+#    LEFT_PANEL_X_STYLE -> def _left_panel_x_style(): return f"""...""")
+# 2. Внутри неё обернуть нужные числа в scaled()/scaled_pt()
+# 3. Зарегистрировать пару "ИМЯ": функция в словаре _DYNAMIC_STYLE_ATTRS
+#    ниже - имя строкой должно точно совпадать с тем, как константа
+#    называлась раньше (именно под этим именем её ищут все места
+#    использования по проекту)
+_DYNAMIC_STYLE_ATTRS = {
+    'LEFT_PANEL_RESET_BTN_STYLE': _left_panel_reset_btn_style,
+    'LEFT_PANEL_PAGINATION_BTN_STYLE': _left_panel_pagination_btn_style,
+    'STATUS_BAR_SELECTED_LABEL_STYLE': _status_bar_selected_label_style,
+    'STATUS_BAR_STYLE_LIGHT': _status_bar_style_light,
+    'STATUS_BAR_STYLE': _status_bar_style,
+    'LEFT_PANEL_STATS_LABEL_STYLE': _left_panel_stats_label_style,
+    'LEFT_PANEL_COMBO_STYLE': _left_panel_combo_style,
+    'LEFT_PANEL_CALENDAR_STYLE': _left_panel_calendar_style,
+    'PASSWORD_INPUT_STYLE': _password_input_style,
+    'PASSWORD_INPUT_STYLE_LIGHT': _password_input_style_light,
+    'LEFT_PANEL_SEARCH_INPUT_STYLE': _left_panel_search_input_style,
+    'LEFT_PANEL_CHECKBOX_STYLE': _left_panel_checkbox_style,
+    'RIGHT_PANEL_LOGO_STYLE': _right_panel_logo_style,
+    'RIGHT_PANEL_LOGO_STYLE_LIGHT': _right_panel_logo_style_light,
+    'RIGHT_PANEL_TITLE_STYLE': _right_panel_title_style,
+    'RIGHT_PANEL_TITLE_STYLE_LIGHT': _right_panel_title_style_light,
+    'RIGHT_PANEL_LOGO_TEXT_STYLE': _right_panel_logo_text_style,
+    'RIGHT_PANEL_LOGO_TEXT_STYLE_LIGHT': _right_panel_logo_text_style_light,
+    'RIGHT_PANEL_LOADING_STYLE': _right_panel_loading_style,
+}
+
+
+def __getattr__(name):
+    if name in _DYNAMIC_STYLE_ATTRS:
+        return _DYNAMIC_STYLE_ATTRS[name]()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

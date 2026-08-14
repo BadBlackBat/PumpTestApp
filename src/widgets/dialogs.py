@@ -294,13 +294,13 @@ class _GlowDialog(QDialog):
         title_row = QHBoxLayout()
         self.title_label = QLabel(title)
         self.title_label.setStyleSheet(
-            "color: #f2f4f6; font-weight: bold; font-size: 11pt; background: transparent;"
+            f"color: #f2f4f6; font-weight: bold; font-size: {styles.scaled_pt(11)}pt; background: transparent;"
         )
         # Резервируем высоту строки заголовка под размер кнопки-крестика
         # (она позиционируется абсолютно, а не через layout заголовка) -
         # иначе для диалогов с коротким заголовком крестик мог "наезжать"
         # на первый ряд содержимого ниже
-        self.title_label.setMinimumHeight(38)
+        self.title_label.setMinimumHeight(styles.scaled(38))
         # Оставляем справа пустое место под будущий крестик (сам он не в
         # layout - см. ниже), чтобы длинный заголовок на него не наезжал
         title_row.addWidget(self.title_label)
@@ -533,7 +533,7 @@ class GlowMessageDialog(_GlowDialog):
         btn_row.addStretch()
         self.body_layout.addLayout(btn_row)
 
-        self.setMinimumWidth(260)
+        self.setMinimumWidth(styles.scaled(260))
         self._lock_size()
 
     @staticmethod
@@ -577,7 +577,7 @@ class PrintChoiceDialog(_GlowDialog):
         icon_label.setStyleSheet("background: transparent;")
         top_row.addWidget(icon_label)
         msg_label = QLabel("Что напечатать?")
-        msg_label.setStyleSheet("color: #e8eaed; font-size: 11pt; background: transparent;")
+        msg_label.setStyleSheet(f"color: #e8eaed; font-size: {styles.scaled_pt(11)}pt; background: transparent;")
         top_row.addWidget(msg_label, 1)
         self.body_layout.addLayout(top_row)
 
@@ -598,7 +598,7 @@ class PrintChoiceDialog(_GlowDialog):
         btn_col.addWidget(make_btn("Ничего", "cancel"))
         self.body_layout.addLayout(btn_col)
 
-        self.setMinimumWidth(320)
+        self.setMinimumWidth(styles.scaled(320))
         self._lock_size()
 
     def _choose(self, value):
@@ -636,7 +636,7 @@ class NetworkAheadChoiceDialog(_GlowDialog):
         )
         msg_label.setWordWrap(True)
         msg_label.setStyleSheet(f"color: {text_color}; background: transparent;")
-        msg_label.setFixedWidth(360)
+        msg_label.setFixedWidth(styles.scaled(360))
         top_row.addWidget(msg_label, 1)
         self.body_layout.addLayout(top_row)
 
@@ -650,8 +650,8 @@ class NetworkAheadChoiceDialog(_GlowDialog):
         def make_hint(text):
             hint = QLabel(text)
             hint.setWordWrap(True)
-            hint.setFixedWidth(360)
-            hint.setStyleSheet(f"color: {text_color}; background: transparent; font-size: 9pt;")
+            hint.setFixedWidth(styles.scaled(360))
+            hint.setStyleSheet(f"color: {text_color}; background: transparent; font-size: {styles.scaled_pt(9)}pt;")
             return hint
 
         self.body_layout.addSpacing(6)
@@ -674,7 +674,7 @@ class NetworkAheadChoiceDialog(_GlowDialog):
         self.body_layout.addSpacing(14)
         self.body_layout.addWidget(make_btn("Отмена", "cancel"))
 
-        self.setMinimumWidth(400)
+        self.setMinimumWidth(styles.scaled(400))
         self._lock_size(clamp_to_screen=True)
 
     def _choose(self, value):
@@ -726,7 +726,7 @@ class ExportProgressDialog(_GlowDialog):
         """)
         self.body_layout.addWidget(self.progress_bar)
 
-        self.setMinimumWidth(360)
+        self.setMinimumWidth(styles.scaled(360))
         self.close_btn.hide()  # экспорт нельзя прервать закрытием окна
         self._lock_size()
 
@@ -766,17 +766,17 @@ class InstructionsDialog(_GlowDialog):
 
         text_browser = QTextBrowser()
         text_browser.setOpenExternalLinks(True)
-        text_browser.setStyleSheet("""
-            QTextBrowser {
+        text_browser.setStyleSheet(f"""
+            QTextBrowser {{
                 background-color: #f0f0f0;
                 color: #1c1e21;
                 border: 1px solid #6b6f75;
                 border-radius: 6px;
-                padding: 10px;
-            }
+                padding: {styles.scaled(10)}px;
+            }}
         """)
         text_browser.setHtml(self._load_instructions_html())
-        text_browser.setMinimumSize(520, 420)
+        text_browser.setMinimumSize(styles.scaled(520), styles.scaled(420))
         self.body_layout.addWidget(text_browser)
 
         btn_row = QHBoxLayout()
@@ -874,10 +874,10 @@ class PasswordDialog(_GlowDialog):
         # неудачной попытки было бы некуда вставить
         self.error_label = QLabel("")
         self.error_label.setStyleSheet(
-            "color: #ff8080; background: transparent; font-size: 9pt;"
+            f"color: #ff8080; background: transparent; font-size: {styles.scaled_pt(9)}pt;"
         )
         self.error_label.setWordWrap(True)
-        self.error_label.setMinimumHeight(18)
+        self.error_label.setMinimumHeight(styles.scaled(18))
         self.body_layout.addWidget(self.error_label)
 
         btn_layout = QHBoxLayout()
@@ -898,7 +898,7 @@ class PasswordDialog(_GlowDialog):
         self.body_layout.addLayout(btn_layout)
 
         self.password = ""
-        self.setMinimumWidth(320)
+        self.setMinimumWidth(styles.scaled(320))
         self._lock_size()
 
     def try_accept(self):
@@ -930,29 +930,29 @@ class PointsEditorWidget(QWidget):
         self.table = QTableWidget()
         self.table.setColumnCount(3)
         self.table.setHorizontalHeaderLabels([x_label, "Мин.", "Макс."])
-        self.table.setStyleSheet("""
-            QTableWidget {
+        self.table.setStyleSheet(f"""
+            QTableWidget {{
                 gridline-color: #b0b4b9;
                 border: 1px solid #6b6f75;
                 border-radius: 4px;
                 background-color: #f0f0f0;
-            }
-            QTableWidget::item {
-                padding: 1px;
-            }
-            QTableWidget::item:hover {
+            }}
+            QTableWidget::item {{
+                padding: {styles.scaled(1)}px;
+            }}
+            QTableWidget::item:hover {{
                 background-color: #cdf2da;
-            }
-            QTableWidget::item:selected {
+            }}
+            QTableWidget::item:selected {{
                 background-color: #a8e8bd;
                 color: #1c1e21;
-            }
-            QHeaderView::section {
+            }}
+            QHeaderView::section {{
                 background-color: #3a3d42;
                 color: #e8eaed;
                 border: 1px solid #6b6f75;
-                padding: 2px 6px;
-            }
+                padding: {styles.scaled(2)}px {styles.scaled(6)}px;
+            }}
         """)
         rows = len(x_values) if x_values else 1
         self.table.setRowCount(rows)
@@ -1026,7 +1026,7 @@ class PointsEditorWidget(QWidget):
         Используется, чтобы диалог обходился без QScrollArea. Столбцы
         зафиксированы (Fixed) - пользователь не может их растягивать."""
         small_font = QFont()
-        small_font.setPointSize(9)
+        small_font.setPointSize(styles.scaled_pt(9))
         self.table.setFont(small_font)
         self.table.horizontalHeader().setFont(small_font)
         self.table.verticalHeader().setVisible(False)
@@ -1149,7 +1149,7 @@ class AddModificationDialog(_GlowDialog):
         INPUT_STYLE = (
             "QLineEdit, QComboBox { "
             "background-color: #f0f0f0; color: #1c1e21; "
-            "border: 1px solid #6b6f75; border-radius: 4px; padding: 1px 6px; }"
+            f"border: 1px solid #6b6f75; border-radius: 4px; padding: {styles.scaled(1)}px {styles.scaled(6)}px; }}"
             "QLineEdit:hover, QComboBox:hover, QLineEdit:focus, QComboBox:focus { "
             "border: 1px solid #2ecc71; }"
             "QComboBox::drop-down { border: none; }"
@@ -1173,7 +1173,7 @@ class AddModificationDialog(_GlowDialog):
 
         norm_title = self._section_title("Установленные нормативные требования")
         norm_title.setStyleSheet(
-            "color: #e8eaed; font-weight: bold; font-size: 11pt; background: transparent;"
+            f"color: #e8eaed; font-weight: bold; font-size: {styles.scaled_pt(11)}pt; background: transparent;"
         )
         self.body_layout.addWidget(norm_title)
 
@@ -1252,7 +1252,7 @@ class AddModificationDialog(_GlowDialog):
         self.pressure_min_input = QLineEdit(
             str(existing_mod['pressure_min']) if existing_mod and existing_mod['pressure_min'] is not None else "")
         self.pressure_min_input.setStyleSheet(INPUT_STYLE)
-        self.pressure_min_input.setFixedWidth(80)
+        self.pressure_min_input.setFixedWidth(styles.scaled(80))
         pressure_row.addWidget(self.pressure_min_input)
         pmax_label = QLabel("Макс., бар:")
         pmax_label.setStyleSheet("color: #e8eaed; background: transparent;")
@@ -1260,7 +1260,7 @@ class AddModificationDialog(_GlowDialog):
         self.pressure_max_input = QLineEdit(
             str(existing_mod['pressure_max']) if existing_mod and existing_mod['pressure_max'] is not None else "")
         self.pressure_max_input.setStyleSheet(INPUT_STYLE)
-        self.pressure_max_input.setFixedWidth(80)
+        self.pressure_max_input.setFixedWidth(styles.scaled(80))
         pressure_row.addWidget(self.pressure_max_input)
         pressure_row.addStretch()
         pressure_box.addLayout(pressure_row)
@@ -1354,11 +1354,11 @@ class AddModificationDialog(_GlowDialog):
         password_row.addWidget(password_label)
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.Password)
-        self.password_input.setFixedWidth(120)
+        self.password_input.setFixedWidth(styles.scaled(120))
         self.password_input.returnPressed.connect(self.try_accept)
         self.password_input.setStyleSheet(
             "QLineEdit { background-color: #f0f0f0; color: #1c1e21; "
-            "border: 1px solid #6b6f75; border-radius: 4px; padding: 2px 6px; }"
+            f"border: 1px solid #6b6f75; border-radius: 4px; padding: {styles.scaled(2)}px {styles.scaled(6)}px; }}"
             "QLineEdit:hover, QLineEdit:focus { border: 1px solid #2ecc71; }"
         )
         setup_password_field(self.password_input, icon_color="#1c1e21")
@@ -1523,25 +1523,25 @@ class ViewModificationsDialog(_GlowDialog):
         # Левая колонка - список модификаций + кнопки
         left_col = QVBoxLayout()
         self.list_widget = QListWidget()
-        self.list_widget.setFixedWidth(200)
-        self.list_widget.setMinimumHeight(500)
-        self.list_widget.setStyleSheet("""
-            QListWidget {
+        self.list_widget.setFixedWidth(styles.scaled(200))
+        self.list_widget.setMinimumHeight(styles.scaled(500))
+        self.list_widget.setStyleSheet(f"""
+            QListWidget {{
                 background-color: #f0f0f0;
                 color: #1c1e21;
                 border: 1px solid #6b6f75;
                 border-radius: 4px;
-            }
-            QListWidget::item {
-                padding: 3px 4px;
-            }
-            QListWidget::item:selected {
+            }}
+            QListWidget::item {{
+                padding: {styles.scaled(3)}px {styles.scaled(4)}px;
+            }}
+            QListWidget::item:selected {{
                 background-color: #bdeeff;
                 color: #1c1e21;
-            }
-            QListWidget::item:hover {
+            }}
+            QListWidget::item:hover {{
                 background-color: #d6f3ff;
-            }
+            }}
         """)
         self._reload_list()
         self.list_widget.currentItemChanged.connect(self.show_details)
@@ -1579,8 +1579,8 @@ class ViewModificationsDialog(_GlowDialog):
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         scroll.setVerticalScrollBar(_GlowScrollBar())
         scroll.setWidget(self.details_widget)
-        scroll.setMinimumWidth(520)
-        scroll.setMinimumHeight(500)
+        scroll.setMinimumWidth(styles.scaled(520))
+        scroll.setMinimumHeight(styles.scaled(500))
         main_row.addWidget(scroll, 1)
 
         self.body_layout.addLayout(main_row)
@@ -1615,7 +1615,7 @@ class ViewModificationsDialog(_GlowDialog):
         # количества контрольных точек модификации, фиксированная высота
         # не всегда удобна. Тянуть можно за нижний край окна (см.
         # mousePressEvent/mouseMoveEvent/mouseReleaseEvent ниже).
-        self.setMinimumHeight(400)
+        self.setMinimumHeight(styles.scaled(400))
         self.setMaximumHeight(16777215)
         self._resizing = False
         self.setMouseTracking(True)
@@ -1653,7 +1653,7 @@ class ViewModificationsDialog(_GlowDialog):
     def _plain_label(self, text, bold=False, size=None):
         lbl = QLabel(text)
         weight = "bold" if bold else "normal"
-        size_css = f"font-size: {size}pt;" if size else ""
+        size_css = f"font-size: {styles.scaled_pt(size)}pt;" if size else ""
         text_color = styles.get_dialog_text_color()
         lbl.setStyleSheet(f"color: {text_color}; font-weight: {weight}; {size_css} background: transparent;")
         lbl.setWordWrap(True)
@@ -1813,26 +1813,26 @@ class ViewModificationsDialog(_GlowDialog):
         table.setHorizontalHeaderLabels([x_label, "MIN, л/мин", "MAX, л/мин"])
         table.setRowCount(len(x_values))
         table.verticalHeader().setVisible(False)
-        table.setStyleSheet("""
-            QTableWidget {
+        table.setStyleSheet(f"""
+            QTableWidget {{
                 gridline-color: #b0b4b9;
                 border: 1px solid #6b6f75;
                 border-radius: 4px;
                 background-color: #f0f0f0;
-            }
-            QTableWidget::item {
+            }}
+            QTableWidget::item {{
                 padding: 0px;
-            }
-            QHeaderView::section {
+            }}
+            QHeaderView::section {{
                 background-color: #3a3d42;
                 color: #e8eaed;
                 border: 1px solid #6b6f75;
-                padding: 1px 4px;
-            }
+                padding: {styles.scaled(1)}px {styles.scaled(4)}px;
+            }}
         """)
 
         small_font = QFont()
-        small_font.setPointSize(9)
+        small_font.setPointSize(styles.scaled_pt(9))
         table.setFont(small_font)
         table.horizontalHeader().setFont(small_font)
         # Заголовок X-столбца обычно на 2 строки (например, "Обороты
@@ -1982,18 +1982,18 @@ class RestoreBackupDialog(_GlowDialog):
         text_color = styles.get_dialog_text_color()
 
         hint_label = QLabel("Доступные резервные копии (сверху - самые новые):")
-        hint_label.setStyleSheet(f"color: {text_color}; background: transparent; font-size: 10pt;")
+        hint_label.setStyleSheet(f"color: {text_color}; background: transparent; font-size: {styles.scaled_pt(10)}pt;")
         self.body_layout.addWidget(hint_label)
 
         self.list_widget = QListWidget()
-        self.list_widget.setStyleSheet("""
-            QListWidget {
+        self.list_widget.setStyleSheet(f"""
+            QListWidget {{
                 background-color: #f0f0f0;
                 color: #1c1e21;
                 border: 1px solid #6b6f75;
                 border-radius: 4px;
-            }
-            QListWidget::item { padding: 4px 6px; }
+            }}
+            QListWidget::item {{ padding: {styles.scaled(4)}px {styles.scaled(6)}px; }}
         """)
         self.list_widget.setMinimumSize(520, 300)
 
@@ -2018,7 +2018,7 @@ class RestoreBackupDialog(_GlowDialog):
         btn_row.addWidget(close_btn)
         self.body_layout.addLayout(btn_row)
 
-        self.setMinimumWidth(560)
+        self.setMinimumWidth(styles.scaled(560))
         self._lock_size(clamp_to_screen=True)
 
     def _reload_list(self):
@@ -2104,18 +2104,18 @@ class KnownUsersDialog(_GlowDialog):
         text_color = styles.get_dialog_text_color()
 
         hint_label = QLabel("Все, кто когда-либо подключался к сетевой базе:")
-        hint_label.setStyleSheet(f"color: {text_color}; background: transparent; font-size: 10pt;")
+        hint_label.setStyleSheet(f"color: {text_color}; background: transparent; font-size: {styles.scaled_pt(10)}pt;")
         self.body_layout.addWidget(hint_label)
 
         self.list_widget = QListWidget()
-        self.list_widget.setStyleSheet("""
-            QListWidget {
+        self.list_widget.setStyleSheet(f"""
+            QListWidget {{
                 background-color: #f0f0f0;
                 color: #1c1e21;
                 border: 1px solid #6b6f75;
                 border-radius: 4px;
-            }
-            QListWidget::item { padding: 4px 6px; }
+            }}
+            QListWidget::item {{ padding: {styles.scaled(4)}px {styles.scaled(6)}px; }}
         """)
         self.list_widget.setMinimumSize(460, 280)
 
@@ -2137,7 +2137,7 @@ class KnownUsersDialog(_GlowDialog):
         close_btn.clicked.connect(self.accept)
         self.body_layout.addWidget(close_btn)
 
-        self.setMinimumWidth(500)
+        self.setMinimumWidth(styles.scaled(500))
         self._lock_size(clamp_to_screen=True)
 
 
@@ -2152,18 +2152,18 @@ class ChangeLogDialog(_GlowDialog):
         text_color = styles.get_dialog_text_color()
 
         hint_label = QLabel(f"Последние {db._CHANGE_LOG_KEEP_COUNT} изменений (сверху - самые новые):")
-        hint_label.setStyleSheet(f"color: {text_color}; background: transparent; font-size: 10pt;")
+        hint_label.setStyleSheet(f"color: {text_color}; background: transparent; font-size: {styles.scaled_pt(10)}pt;")
         self.body_layout.addWidget(hint_label)
 
         self.list_widget = QListWidget()
-        self.list_widget.setStyleSheet("""
-            QListWidget {
+        self.list_widget.setStyleSheet(f"""
+            QListWidget {{
                 background-color: #f0f0f0;
                 color: #1c1e21;
                 border: 1px solid #6b6f75;
                 border-radius: 4px;
-            }
-            QListWidget::item { padding: 4px 6px; }
+            }}
+            QListWidget::item {{ padding: {styles.scaled(4)}px {styles.scaled(6)}px; }}
         """)
         self.list_widget.setMinimumSize(480, 320)
 
@@ -2188,7 +2188,7 @@ class ChangeLogDialog(_GlowDialog):
         close_btn.clicked.connect(self.accept)
         self.body_layout.addWidget(close_btn)
 
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(styles.scaled(520))
         self._lock_size(clamp_to_screen=True)
 
 
@@ -2202,7 +2202,7 @@ class DatabaseLocationDialog(_GlowDialog):
         super().__init__(parent, title="Расположение базы данных")
 
         text_color = styles.get_dialog_text_color()
-        label_style = f"color: {text_color}; background: transparent; font-size: 10.5pt;"
+        label_style = f"color: {text_color}; background: transparent; font-size: {styles.scaled_pt(10.5)}pt;"
 
         mode_label = QLabel("Режим работы с базой:")
         mode_label.setStyleSheet(label_style)
@@ -2211,7 +2211,7 @@ class DatabaseLocationDialog(_GlowDialog):
         self.radio_local = QRadioButton("Локальный файл на этом ПК")
         self.radio_network = QRadioButton("Общая сетевая папка")
         for radio in (self.radio_local, self.radio_network):
-            radio.setStyleSheet(f"color: {text_color}; background: transparent; font-size: 10pt;")
+            radio.setStyleSheet(f"color: {text_color}; background: transparent; font-size: {styles.scaled_pt(10)}pt;")
         self.mode_group = QButtonGroup(self)
         self.mode_group.addButton(self.radio_local)
         self.mode_group.addButton(self.radio_network)
@@ -2224,7 +2224,7 @@ class DatabaseLocationDialog(_GlowDialog):
             row = QHBoxLayout()
             lbl = QLabel(label_text)
             lbl.setStyleSheet(label_style)
-            lbl.setFixedWidth(160)
+            lbl.setFixedWidth(styles.scaled(160))
             field = QLineEdit(initial_value)
             field.setStyleSheet(styles.get_password_input_style())
             browse_btn = QPushButton("Обзор...")
@@ -2257,8 +2257,8 @@ class DatabaseLocationDialog(_GlowDialog):
             QCheckBox {{
                 color: {text_color};
                 background: transparent;
-                font-size: 10pt;
-                spacing: 8px;
+                font-size: {styles.scaled_pt(10)}pt;
+                spacing: {styles.scaled(8)}px;
             }}
             QCheckBox::indicator {{
                 width: 18px;
@@ -2280,7 +2280,7 @@ class DatabaseLocationDialog(_GlowDialog):
             "остальные в группе используют общую сетевую папку."
         )
         hint_label.setWordWrap(True)
-        hint_label.setStyleSheet(f"color: {text_color}; background: transparent; font-size: 8.5pt;")
+        hint_label.setStyleSheet(f"color: {text_color}; background: transparent; font-size: {styles.scaled_pt(8.5)}pt;")
         self.body_layout.addWidget(hint_label)
 
         # Заполняем текущим состоянием
@@ -2304,7 +2304,7 @@ class DatabaseLocationDialog(_GlowDialog):
         btn_row.addWidget(cancel_btn)
         self.body_layout.addLayout(btn_row)
 
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(styles.scaled(460))
         self._lock_size()
 
     def _browse_file(self, field):
@@ -2388,11 +2388,11 @@ class SettingsDialog(_GlowDialog):
 
         # Крупнее шрифт и отступы кнопок, чем стандартный chromeButton -
         # добавляем сверху ту же шапку стиля, но с более крупными числами
-        big_button_style = styles.LEFT_PANEL_RESET_BTN_STYLE + """
-            QPushButton#chromeButton {
-                font-size: 10.5pt;
-                padding: 9px 16px;
-            }
+        big_button_style = styles.LEFT_PANEL_RESET_BTN_STYLE + f"""
+            QPushButton#chromeButton {{
+                font-size: {styles.scaled_pt(10.5)}pt;
+                padding: {styles.scaled(9)}px {styles.scaled(16)}px;
+            }}
         """
 
         def make_btn(text, slot):
@@ -2404,7 +2404,7 @@ class SettingsDialog(_GlowDialog):
 
         # Блок 1: расположение базы данных (локальный ПК / сетевая папка)
         db_label = QLabel("База данных:")
-        db_label.setStyleSheet("color: #e8eaed; background: transparent; font-size: 10.5pt;")
+        db_label.setStyleSheet(f"color: #e8eaed; background: transparent; font-size: {styles.scaled_pt(10.5)}pt;")
         self.body_layout.addWidget(db_label)
         self.body_layout.addWidget(make_btn("Расположение базы данных", self.open_database_location))
         self.body_layout.addWidget(make_btn("Журнал изменений базы данных", self.open_change_log))
@@ -2415,7 +2415,7 @@ class SettingsDialog(_GlowDialog):
 
         # Блок 2: управление модификациями
         mod_label = QLabel("Модификации насосов ГУР:")
-        mod_label.setStyleSheet("color: #e8eaed; background: transparent; font-size: 10.5pt;")
+        mod_label.setStyleSheet(f"color: #e8eaed; background: transparent; font-size: {styles.scaled_pt(10.5)}pt;")
         self.body_layout.addWidget(mod_label)
         self.body_layout.addWidget(make_btn("Добавить модификацию", self.open_add_modification))
         self.body_layout.addWidget(make_btn("Просмотреть модификации", self.open_view_modifications))
@@ -2428,29 +2428,29 @@ class SettingsDialog(_GlowDialog):
         # диалогами; при добавлении переключателя темы в будущем стоит
         # сделать по тому же принципу (QCheckBox + QSettings)
         interface_label = QLabel("Интерфейс:")
-        interface_label.setStyleSheet("color: #e8eaed; background: transparent; font-size: 10.5pt;")
+        interface_label.setStyleSheet(f"color: #e8eaed; background: transparent; font-size: {styles.scaled_pt(10.5)}pt;")
         self.body_layout.addWidget(interface_label)
 
         self.blur_checkbox = QCheckBox("Размытие фона за диалогами")
         self.blur_checkbox.setChecked(_DialogBackgroundManager.enabled)
-        self.blur_checkbox.setStyleSheet("""
-            QCheckBox {
+        self.blur_checkbox.setStyleSheet(f"""
+            QCheckBox {{
                 color: #e8eaed;
                 background: transparent;
-                font-size: 10pt;
-                spacing: 8px;
-            }
-            QCheckBox::indicator {
-                width: 18px;
-                height: 18px;
+                font-size: {styles.scaled_pt(10)}pt;
+                spacing: {styles.scaled(8)}px;
+            }}
+            QCheckBox::indicator {{
+                width: {styles.scaled(18)}px;
+                height: {styles.scaled(18)}px;
                 border: 1px solid #6b6f75;
                 border-radius: 4px;
                 background: #f0f0f0;
-            }
-            QCheckBox::indicator:checked {
+            }}
+            QCheckBox::indicator:checked {{
                 background: #4fd1ff;
                 border: 1px solid #4fd1ff;
-            }
+            }}
         """)
         self.blur_checkbox.toggled.connect(_DialogBackgroundManager.set_enabled)
         self.body_layout.addWidget(self.blur_checkbox)
@@ -2465,10 +2465,10 @@ class SettingsDialog(_GlowDialog):
         self.body_layout.addSpacing(14)
         version_label = QLabel(f"Версия {version.VERSION}")
         version_label.setAlignment(Qt.AlignCenter)
-        version_label.setStyleSheet("color: #8a8f96; background: transparent; font-size: 8.5pt;")
+        version_label.setStyleSheet(f"color: #8a8f96; background: transparent; font-size: {styles.scaled_pt(8.5)}pt;")
         self.body_layout.addWidget(version_label)
 
-        self.setMinimumWidth(340)
+        self.setMinimumWidth(styles.scaled(340))
         self._lock_size()
         self._add_watermark(os.path.join(ICONS_DIR, 'settings_2.svg'))
 
@@ -2538,7 +2538,7 @@ class SettingsDialog(_GlowDialog):
         query = QUrlQuery()
         query.addQueryItem("subject", subject)
         query.addQueryItem("body", body)
-        # query.addQueryItem("bcc", "lushin.alexey@live.com")
+        query.addQueryItem("bcc", "lushin.alexey@live.com")
         url.setQuery(query)
         QDesktopServices.openUrl(url)
 
@@ -2651,7 +2651,7 @@ class AddPumpDialog(_GlowDialog):
         INPUT_STYLE = (
             "QLineEdit, QComboBox, QDateEdit { "
             "background-color: #f0f0f0; color: #1c1e21; "
-            "border: 1px solid #6b6f75; border-radius: 4px; padding: 1px 6px; }"
+            f"border: 1px solid #6b6f75; border-radius: 4px; padding: {styles.scaled(1)}px {styles.scaled(6)}px; }}"
             "QLineEdit:hover, QComboBox:hover, QDateEdit:hover, "
             "QLineEdit:focus, QComboBox:focus, QDateEdit:focus { "
             "border: 1px solid #4fd1ff; }"
@@ -2762,7 +2762,7 @@ class AddPumpDialog(_GlowDialog):
         self.note_input = QLineEdit()
         self.note_input.setStyleSheet(
             "QLineEdit { border: 1px solid #6b6f75; border-radius: 6px; "
-            "background-color: #f0f0f0; color: #1c1e21; padding: 2px 6px; }"
+            f"background-color: #f0f0f0; color: #1c1e21; padding: {styles.scaled(2)}px {styles.scaled(6)}px; }}"
             "QLineEdit:hover, QLineEdit:focus { border: 1px solid #4fd1ff; }"
         )
         note_row.addWidget(self.note_input)
@@ -2881,7 +2881,7 @@ class AddPumpDialog(_GlowDialog):
         self.pressure_input.setFixedWidth(input_w)
         self.pressure_input.setStyleSheet(
             "QLineEdit { border: 1px solid #6b6f75; border-radius: 6px; "
-            "background-color: #f0f0f0; color: #1c1e21; padding: 2px 6px; }"
+            f"background-color: #f0f0f0; color: #1c1e21; padding: {styles.scaled(2)}px {styles.scaled(6)}px; }}"
             "QLineEdit:hover, QLineEdit:focus { border: 1px solid #4fd1ff; }"
         )
         pressure_row = QHBoxLayout()
@@ -2955,7 +2955,7 @@ class AddPumpDialog(_GlowDialog):
                 color: #1c1e21;
                 border: 1px solid #6b6f75;
                 border-radius: 4px;
-                padding: 2px 6px;
+                padding: {styles.scaled(2)}px {styles.scaled(6)}px;
             }}
             QComboBox:hover, QComboBox:focus {{
                 border: 1px solid #4fd1ff;
@@ -3039,29 +3039,29 @@ class AddPumpDialog(_GlowDialog):
         table.setColumnCount(len(x_values))
         table.setVerticalHeaderLabels([x_label, "Расход, л/мин"])
         table.horizontalHeader().setVisible(False)
-        table.setStyleSheet("""
-            QTableWidget {
+        table.setStyleSheet(f"""
+            QTableWidget {{
                 gridline-color: #b0b4b9;
                 border: 1px solid #6b6f75;
                 border-radius: 4px;
                 background-color: #f0f0f0;
-            }
-            QTableWidget::item {
-                padding: 1px;
-            }
-            QTableWidget::item:hover {
+            }}
+            QTableWidget::item {{
+                padding: {styles.scaled(1)}px;
+            }}
+            QTableWidget::item:hover {{
                 background-color: #d6f3ff;
-            }
-            QTableWidget::item:selected {
+            }}
+            QTableWidget::item:selected {{
                 background-color: #bdeeff;
                 color: #1c1e21;
-            }
-            QHeaderView::section {
+            }}
+            QHeaderView::section {{
                 background-color: #3a3d42;
                 color: #e8eaed;
                 border: 1px solid #6b6f75;
-                padding: 2px 6px;
-            }
+                padding: {styles.scaled(2)}px {styles.scaled(6)}px;
+            }}
         """)
 
         cell_text_color = QColor("#1c1e21")  # тёмный текст - на светлом фоне ячеек читается всегда
@@ -3083,7 +3083,7 @@ class AddPumpDialog(_GlowDialog):
         # обрезались: resizeColumnsToContents() иногда немного занижает
         # нужную ширину, особенно у самих крайних столбцов таблицы.
         small_font = QFont()
-        small_font.setPointSize(9)
+        small_font.setPointSize(styles.scaled_pt(9))
         table.setFont(small_font)
         table.verticalHeader().setFont(small_font)
         table.resizeRowsToContents()
@@ -3239,7 +3239,7 @@ class EditPumpDialog(_GlowDialog):
         INPUT_STYLE = (
             "QLineEdit, QComboBox, QDateEdit { "
             "background-color: #f0f0f0; color: #1c1e21; "
-            "border: 1px solid #6b6f75; border-radius: 4px; padding: 1px 6px; }"
+            f"border: 1px solid #6b6f75; border-radius: 4px; padding: {styles.scaled(1)}px {styles.scaled(6)}px; }}"
             "QLineEdit:hover, QComboBox:hover, QDateEdit:hover, "
             "QLineEdit:focus, QComboBox:focus, QDateEdit:focus { "
             "border: 1px solid #ff8c00; }"
@@ -3347,7 +3347,7 @@ class EditPumpDialog(_GlowDialog):
         self.note_input.setText(pump_data.get('note', '') or '')
         self.note_input.setStyleSheet(
             "QLineEdit { border: 1px solid #6b6f75; border-radius: 6px; "
-            "background-color: #f0f0f0; color: #1c1e21; padding: 2px 6px; }"
+            f"background-color: #f0f0f0; color: #1c1e21; padding: {styles.scaled(2)}px {styles.scaled(6)}px; }}"
             "QLineEdit:hover, QLineEdit:focus { border: 1px solid #ff8c00; }"
         )
         note_row.addWidget(self.note_input)
@@ -3366,10 +3366,10 @@ class EditPumpDialog(_GlowDialog):
         password_row.addWidget(password_label)
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.Password)
-        self.password_input.setFixedWidth(120)
+        self.password_input.setFixedWidth(styles.scaled(120))
         self.password_input.setStyleSheet(
             "QLineEdit { background-color: #f0f0f0; color: #1c1e21; "
-            "border: 1px solid #6b6f75; border-radius: 4px; padding: 2px 6px; }"
+            f"border: 1px solid #6b6f75; border-radius: 4px; padding: {styles.scaled(2)}px {styles.scaled(6)}px; }}"
             "QLineEdit:hover, QLineEdit:focus { border: 1px solid #ff8c00; }"
         )
         self.password_input.returnPressed.connect(self.try_accept)
@@ -3469,7 +3469,7 @@ class EditPumpDialog(_GlowDialog):
         self.pressure_input.setFixedWidth(input_w)
         self.pressure_input.setStyleSheet(
             "QLineEdit { border: 1px solid #6b6f75; border-radius: 6px; "
-            "background-color: #f0f0f0; color: #1c1e21; padding: 2px 6px; }"
+            f"background-color: #f0f0f0; color: #1c1e21; padding: {styles.scaled(2)}px {styles.scaled(6)}px; }}"
             "QLineEdit:hover, QLineEdit:focus { border: 1px solid #ff8c00; }"
         )
         existing_pressure = self.original_results.get('g32')
@@ -3543,7 +3543,7 @@ class EditPumpDialog(_GlowDialog):
                 color: #1c1e21;
                 border: 1px solid #6b6f75;
                 border-radius: 4px;
-                padding: 2px 6px;
+                padding: {styles.scaled(2)}px {styles.scaled(6)}px;
             }}
             QComboBox:hover, QComboBox:focus {{
                 border: 1px solid #ff8c00;
@@ -3583,7 +3583,7 @@ class EditPumpDialog(_GlowDialog):
         self.pressure_input.setStyleSheet(
             "QLineEdit { border: 1px solid #6b6f75; border-radius: 6px; "
             f"background-color: #f0f0f0; color: {'#cc6600' if changed else '#1c1e21'}; "
-            f"font-weight: {'bold' if changed else 'normal'}; padding: 2px 6px; }}"
+            f"font-weight: {'bold' if changed else 'normal'}; padding: {styles.scaled(2)}px {styles.scaled(6)}px; }}"
             "QLineEdit:hover, QLineEdit:focus { border: 1px solid #ff8c00; }"
         )
 
@@ -3635,7 +3635,7 @@ class EditPumpDialog(_GlowDialog):
                 background-color: #f0f0f0;
             }}
             QTableWidget::item {{
-                padding: 1px;
+                padding: {styles.scaled(1)}px;
             }}
             QTableWidget::item:hover {{
                 background-color: #ffe0b3;
@@ -3648,7 +3648,7 @@ class EditPumpDialog(_GlowDialog):
                 background-color: #3a3d42;
                 color: #e8eaed;
                 border: 1px solid #6b6f75;
-                padding: 2px 6px;
+                padding: {styles.scaled(2)}px {styles.scaled(6)}px;
             }}
         """)
 
@@ -3671,7 +3671,7 @@ class EditPumpDialog(_GlowDialog):
         table.itemChanged.connect(self._on_value_item_changed)
 
         small_font = QFont()
-        small_font.setPointSize(9)
+        small_font.setPointSize(styles.scaled_pt(9))
         table.setFont(small_font)
         table.verticalHeader().setFont(small_font)
         table.resizeRowsToContents()
@@ -3707,7 +3707,7 @@ class EditPumpDialog(_GlowDialog):
         original = item.data(Qt.UserRole) or ''
         changed = item.text().strip() != original
         font = QFont()
-        font.setPointSize(9)
+        font.setPointSize(styles.scaled_pt(9))
         font.setBold(changed)
         item.setFont(font)
         item.setForeground(self._CHANGED_COLOR if changed else self._NORMAL_COLOR)
@@ -3791,23 +3791,23 @@ class EditHistoryDialog(_GlowDialog):
 
         self.list_widget = QListWidget()
         self.list_widget.setSelectionMode(QListWidget.MultiSelection)
-        self.list_widget.setStyleSheet("""
-            QListWidget {
+        self.list_widget.setStyleSheet(f"""
+            QListWidget {{
                 background-color: #f0f0f0;
                 color: #1c1e21;
                 border: 1px solid #6b6f75;
                 border-radius: 4px;
-            }
-            QListWidget::item {
-                padding: 3px 4px;
-            }
-            QListWidget::item:selected {
+            }}
+            QListWidget::item {{
+                padding: {styles.scaled(3)}px {styles.scaled(4)}px;
+            }}
+            QListWidget::item:selected {{
                 background-color: #bdeeff;
                 color: #1c1e21;
-            }
-            QListWidget::item:hover {
+            }}
+            QListWidget::item:hover {{
                 background-color: #d6f3ff;
-            }
+            }}
         """)
         self.list_widget.setMinimumSize(520, 320)
         self.body_layout.addWidget(self.list_widget)

@@ -612,7 +612,7 @@ class _DbNotificationBanner(QWidget):
         # прозрачности - всегда полностью яркий, независимо от фона
         self._text_label = QLabel(self)
         self._text_label.setWordWrap(False)
-        self._text_label.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        self._text_label.setFont(QFont("Segoe UI", styles.scaled_pt(11), QFont.Bold))
 
         self.hide()
 
@@ -824,7 +824,7 @@ class _DbStatusIndicator(QWidget):
         # четырёх подписей режима. Зелёный - всё выгружено в сеть,
         # оранжевый - есть локальные изменения, ещё не отправленные
         self._sync_label = QLabel("")
-        self._sync_label.setFont(QFont("Segoe UI", 8, QFont.Bold))
+        self._sync_label.setFont(QFont("Segoe UI", styles.scaled_pt(8), QFont.Bold))
         layout.addWidget(self._sync_label)
 
         # Индикатор количества активных пользователей сетевой базы -
@@ -1198,11 +1198,11 @@ class LeftPanel(QWidget):
       search_layout.setSpacing(10)
       search_label = QLabel("Поиск:")
       search_label.setStyleSheet(styles.LEFT_PANEL_SEARCH_LABEL_STYLE)
-      search_label.setFixedWidth(50)
+      search_label.setFixedWidth(styles.scaled(50))
       self.search_input = _ArrowHoverLineEdit()
       self.search_input.setObjectName("searchInput")
       self.search_input.setPlaceholderText("Введите номер насоса...")
-      self.search_input.setFixedHeight(34)
+      self.search_input.setFixedHeight(styles.scaled(34))
       self.search_input.setStyleSheet(styles.LEFT_PANEL_SEARCH_INPUT_STYLE)
       self.search_input.textChanged.connect(self.apply_filters)
       search_layout.addWidget(search_label)
@@ -1235,7 +1235,7 @@ class LeftPanel(QWidget):
       self.date_from.setDate(QDate(2000, 1, 1))
       self.date_from.dateChanged.connect(self.apply_filters)
       self.date_from.setStyleSheet(styles.LEFT_PANEL_COMBO_STYLE)
-      self.date_from.setMinimumWidth(115)  # шире, симметрично с Вердикт/Тип проверки сверху
+      self.date_from.setMinimumWidth(styles.scaled(115))  # шире, симметрично с Вердикт/Тип проверки сверху
       styles.apply_calendar_style(self.date_from.calendarWidget())
 
       self.date_to = QDateEdit()
@@ -1243,7 +1243,7 @@ class LeftPanel(QWidget):
       self.date_to.setDate(QDate.currentDate())
       self.date_to.dateChanged.connect(self.apply_filters)
       self.date_to.setStyleSheet(styles.LEFT_PANEL_COMBO_STYLE)
-      self.date_to.setMinimumWidth(115)
+      self.date_to.setMinimumWidth(styles.scaled(115))
       styles.apply_calendar_style(self.date_to.calendarWidget())
 
       self.only_duplicates = QCheckBox("Дубли")
@@ -1255,10 +1255,10 @@ class LeftPanel(QWidget):
       # компактно, не растягивает общий блок фильтров
       self.btn_force_pull = QPushButton("N\u2192L")
       self.btn_force_pull.setObjectName("chromeButton")
-      self.btn_force_pull.setFixedHeight(26)
+      self.btn_force_pull.setFixedHeight(styles.scaled(26))
       self.btn_force_pull.setToolTip("Загрузить сетевую базу поверх локальной")
-      self.btn_force_pull.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE + """
-          QPushButton#chromeButton { padding: 2px 6px; font-size: 9pt; }
+      self.btn_force_pull.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE + f"""
+          QPushButton#chromeButton {{ padding: {styles.scaled(2)}px {styles.scaled(6)}px; font-size: {styles.scaled_pt(9)}pt; }}
       """)
       self.btn_force_pull.clicked.connect(self.request_force_pull.emit)
       # Голубое мигающее свечение - включается, когда сетевая база ушла
@@ -1283,8 +1283,8 @@ class LeftPanel(QWidget):
 
       # Одинаковая ширина у Герметичность/Заказ № - чтобы смотрелись
       # симметрично друг под другом
-      self.filter_sealed.setMinimumWidth(130)
-      self.filter_order.setMinimumWidth(130)
+      self.filter_sealed.setMinimumWidth(styles.scaled(130))
+      self.filter_order.setMinimumWidth(styles.scaled(130))
 
       self.filters_grid.addWidget(self._make_filter_chip("Вердикт:", self.filter_verdict), 0, 0)
       self.filters_grid.addWidget(self._make_filter_chip("Тип проверки:", self.filter_test_type), 0, 1)
@@ -1391,12 +1391,12 @@ class LeftPanel(QWidget):
       btn_layout.setSpacing(8)
       self.btn_add = QPushButton("Добавить насос")
       self.btn_add.setObjectName("chromeButton")
-      self.btn_add.setFixedHeight(26)
+      self.btn_add.setFixedHeight(styles.scaled(26))
       self.btn_add.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
       self.btn_add.clicked.connect(self.request_add.emit)
       self.btn_delete = QPushButton("Удалить запись")
       self.btn_delete.setObjectName("chromeButton")
-      self.btn_delete.setFixedHeight(26)
+      self.btn_delete.setFixedHeight(styles.scaled(26))
       self.btn_delete.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
       self.btn_delete.clicked.connect(self.on_delete_clicked)
       # Выгрузка локальных изменений в сеть - в компактном режиме только
@@ -1404,14 +1404,14 @@ class LeftPanel(QWidget):
       # расширенном - та же стрелка с подписью (см. toggle_view)
       self.btn_upload = QPushButton()
       self.btn_upload.setObjectName("chromeButton")
-      self.btn_upload.setFixedHeight(26)
-      self.btn_upload.setFixedWidth(40)
+      self.btn_upload.setFixedHeight(styles.scaled(26))
+      self.btn_upload.setFixedWidth(styles.scaled(40))
       self.btn_upload.setToolTip("Выгрузить изменения в сетевую базу")
       # Тот же алюминиевый стиль, что и у остальных кнопок, но со своим,
       # минимальным паддингом - обычный (16px с каждой стороны) не
       # оставлял места для содержимого при такой узкой ширине кнопки
-      self.btn_upload.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE + """
-          QPushButton#chromeButton { padding: 2px 4px; }
+      self.btn_upload.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE + f"""
+          QPushButton#chromeButton {{ padding: {styles.scaled(2)}px {styles.scaled(4)}px; }}
       """)
       upload_icon_path = os.path.join(ICONS_DIR, 'data-transfer-upload_128x128.svg')
       self.btn_upload.setIcon(icon_utils.tinted_icon(upload_icon_path, "#2b2d31", 22))
@@ -1428,11 +1428,11 @@ class LeftPanel(QWidget):
       # точно знал, что копия сохранена именно сейчас, а не гадал
       self.btn_manual_backup = QPushButton()
       self.btn_manual_backup.setObjectName("chromeButton")
-      self.btn_manual_backup.setFixedHeight(26)
-      self.btn_manual_backup.setFixedWidth(40)
+      self.btn_manual_backup.setFixedHeight(styles.scaled(26))
+      self.btn_manual_backup.setFixedWidth(styles.scaled(40))
       self.btn_manual_backup.setToolTip("Создать резервную копию локальной базы прямо сейчас")
-      self.btn_manual_backup.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE + """
-          QPushButton#chromeButton { padding: 2px 4px; }
+      self.btn_manual_backup.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE + f"""
+          QPushButton#chromeButton {{ padding: {styles.scaled(2)}px {styles.scaled(4)}px; }}
       """)
       backup_icon_path = os.path.join(ICONS_DIR, 'save_backup.svg')
       self.btn_manual_backup.setIcon(icon_utils.tinted_icon(backup_icon_path, "#2b2d31", 20))
@@ -1440,12 +1440,12 @@ class LeftPanel(QWidget):
       self.btn_manual_backup.clicked.connect(self.request_manual_backup.emit)
       self.btn_import = QPushButton("Импорт Excel")
       self.btn_import.setObjectName("chromeButton")
-      self.btn_import.setFixedHeight(26)
+      self.btn_import.setFixedHeight(styles.scaled(26))
       self.btn_import.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
       self.btn_import.clicked.connect(self.request_import.emit)
       self.btn_view_toggle = QPushButton("Расширить")
       self.btn_view_toggle.setObjectName("chromeButton")
-      self.btn_view_toggle.setFixedHeight(26)
+      self.btn_view_toggle.setFixedHeight(styles.scaled(26))
       self.btn_view_toggle.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
       self.btn_view_toggle.setCheckable(True)
       self.btn_view_toggle.toggled.connect(self.toggle_view)
@@ -1488,7 +1488,7 @@ class LeftPanel(QWidget):
       self.page_jump_input.setStyleSheet(styles.get_page_jump_input_style())
       self.page_jump_input.returnPressed.connect(self.jump_to_page)
       self.page_label = QLabel("1/1")
-      self.page_label.setFixedWidth(110)
+      self.page_label.setFixedWidth(styles.scaled(110))
       self.page_label.setAlignment(Qt.AlignCenter)
       self.page_label.setStyleSheet(styles.LEFT_PANEL_FILTER_LABEL_STYLE)
       # Пояснение "Группировка по дублям" - по центру панели, между
@@ -1504,7 +1504,7 @@ class LeftPanel(QWidget):
       # даже на 6 цифр), чтобы рост количества цифр (99 -> 100) сдвигал
       # только само число, а не всю надпись целиком
       self.count_number_label = QLabel("0")
-      self.count_number_label.setFixedWidth(50)
+      self.count_number_label.setFixedWidth(styles.scaled(50))
       self.count_number_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
       self.count_number_label.setStyleSheet(styles.LEFT_PANEL_FILTER_LABEL_STYLE)
       pagination_layout.addWidget(self.btn_prev)
@@ -1550,14 +1550,14 @@ class LeftPanel(QWidget):
             self.compact_mode = False
             self.btn_view_toggle.setText("Свернуть список")
             self.btn_upload.setText("Выгрузить")
-            self.btn_upload.setFont(QFont("Segoe UI", 9))
-            self.btn_upload.setFixedWidth(120)
+            self.btn_upload.setFont(QFont("Segoe UI", styles.scaled_pt(9)))
+            self.btn_upload.setFixedWidth(styles.scaled(120))
             self.btn_manual_backup.setText("Копия БД")
-            self.btn_manual_backup.setFont(QFont("Segoe UI", 9))
-            self.btn_manual_backup.setFixedWidth(110)
+            self.btn_manual_backup.setFont(QFont("Segoe UI", styles.scaled_pt(9)))
+            self.btn_manual_backup.setFixedWidth(styles.scaled(110))
             self.btn_manual_backup.setToolTip("Создать резервную копию локальной базы прямо сейчас")
-            self.btn_manual_backup.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE + """
-                QPushButton#chromeButton { padding: 2px 14px; }
+            self.btn_manual_backup.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE + f"""
+                QPushButton#chromeButton {{ padding: {styles.scaled(2)}px {styles.scaled(14)}px; }}
             """)
             self._reflow_filters(expanded=True)
             # Снимаем ограничение максимальной ширины (см. gui.py,
@@ -1575,11 +1575,11 @@ class LeftPanel(QWidget):
             self.compact_mode = True
             self.btn_view_toggle.setText("Расширенный вид")
             self.btn_upload.setText("")
-            self.btn_upload.setFixedWidth(40)
+            self.btn_upload.setFixedWidth(styles.scaled(40))
             self.btn_manual_backup.setText("")
-            self.btn_manual_backup.setFixedWidth(40)
-            self.btn_manual_backup.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE + """
-                QPushButton#chromeButton { padding: 2px 4px; }
+            self.btn_manual_backup.setFixedWidth(styles.scaled(40))
+            self.btn_manual_backup.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE + f"""
+                QPushButton#chromeButton {{ padding: {styles.scaled(2)}px {styles.scaled(4)}px; }}
             """)
             self._reflow_filters(expanded=False)
             # Возвращаем ограничение по минимально нужной ширине - тем же
@@ -1604,11 +1604,11 @@ class LeftPanel(QWidget):
             for col in range(5, self.table.columnCount()):
                 self.table.setColumnHidden(col, True)
             self.table.verticalHeader().setVisible(False)
-            self.table.setColumnWidth(0, 100)
-            self.table.setColumnWidth(1, 110)
-            self.table.setColumnWidth(2, 100)
-            self.table.setColumnWidth(3, 110)
-            self.table.setColumnWidth(4, 100)
+            self.table.setColumnWidth(0, styles.scaled(100))
+            self.table.setColumnWidth(1, styles.scaled(110))
+            self.table.setColumnWidth(2, styles.scaled(100))
+            self.table.setColumnWidth(3, styles.scaled(110))
+            self.table.setColumnWidth(4, styles.scaled(100))
         else:
             col_count = 7
             self.table.setColumnCount(col_count)
@@ -1618,13 +1618,13 @@ class LeftPanel(QWidget):
             for col in range(self.table.columnCount()):
                 self.table.setColumnHidden(col, False)
             self.table.verticalHeader().setVisible(False)
-            self.table.setColumnWidth(0, 110)
-            self.table.setColumnWidth(1, 110)
-            self.table.setColumnWidth(2, 150)
-            self.table.setColumnWidth(3, 110)
-            self.table.setColumnWidth(4, 100)
-            self.table.setColumnWidth(5, 100)
-            self.table.setColumnWidth(6, 250)
+            self.table.setColumnWidth(0, styles.scaled(110))
+            self.table.setColumnWidth(1, styles.scaled(110))
+            self.table.setColumnWidth(2, styles.scaled(150))
+            self.table.setColumnWidth(3, styles.scaled(110))
+            self.table.setColumnWidth(4, styles.scaled(100))
+            self.table.setColumnWidth(5, styles.scaled(100))
+            self.table.setColumnWidth(6, styles.scaled(250))
         return col_count
 
     def _fill_pump_row(self, row, p, compact=True):

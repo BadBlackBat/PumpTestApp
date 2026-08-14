@@ -55,7 +55,7 @@ class _IconButton(QPushButton):
         self.setIconSize(QSize(size, size))
         self.setFlat(True)
         self.setStyleSheet(
-            "QPushButton { border: none; background: transparent; padding: 4px; }"
+            f"QPushButton {{ border: none; background: transparent; padding: {styles.scaled(4)}px; }}"
         )
         self.setCursor(Qt.PointingHandCursor)
         if tooltip:
@@ -298,7 +298,7 @@ class MainWindow(QMainWindow):
         self.logo_label = QLabel("Лаборатория Рулевого Управления")
         self.logo_label.setAlignment(Qt.AlignCenter)
         font_family = getattr(styles, 'TERMINATOR_FONT_FAMILY', None) or "Segoe UI"
-        self.logo_label.setFont(QFont(font_family, 16, QFont.Bold))
+        self.logo_label.setFont(QFont(font_family, styles.scaled_pt(16), QFont.Bold))
         self.logo_label.setStyleSheet(
             styles.get_top_bar_logo_style()
             + f'font-family: "{font_family}", "Segoe UI", Arial, sans-serif;'
@@ -578,9 +578,9 @@ class MainWindow(QMainWindow):
         # без этого запаса окно оказывалось слишком близко к границе
         # экрана и норовило вылезти за неё при малейшем пересчёте
         # раскладки.
-        MIN_WIDTH, MIN_HEIGHT = 1024, 650
+        MIN_WIDTH, MIN_HEIGHT = styles.scaled(1024), styles.scaled(650)
         MAX_WIDTH, MAX_HEIGHT = 1900, 1200
-        FALLBACK_WIDTH, FALLBACK_HEIGHT = 1400, 900
+        FALLBACK_WIDTH, FALLBACK_HEIGHT = styles.scaled(1400), styles.scaled(900)
 
         # Явно фиксируем как НАСТОЯЩИЙ минимальный размер самого окна
         # (а не только начальную геометрию при запуске, как ниже) -

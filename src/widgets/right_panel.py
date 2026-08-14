@@ -319,13 +319,13 @@ class RightPanel(QWidget):
         # ширину, отдельно от остальных деталей протокола
         self.header_title_label = QLabel("")
         self.header_title_label.setAlignment(Qt.AlignCenter)
-        self.header_title_label.setFont(QFont("Arial", 12, QFont.Bold))
+        self.header_title_label.setFont(QFont("Arial", styles.scaled_pt(12), QFont.Bold))
         self.content_layout.addWidget(self.header_title_label)
 
         self.header_label = QLabel("Выберите насос для просмотра протокола")
         self.header_label.setAlignment(Qt.AlignLeft)
         self.header_label.setWordWrap(True)
-        self.header_label.setFont(QFont("Arial", 12))
+        self.header_label.setFont(QFont("Arial", styles.scaled_pt(12)))
 
         # Поле условий испытаний - под заголовком "Характеристики...",
         # занимает правую часть. Без рамки, фон в тон остальным таблицам
@@ -336,8 +336,8 @@ class RightPanel(QWidget):
         self.test_conditions_box.setStyleSheet(
             "QFrame { background-color: transparent; border: none; border-radius: 4px; }"
         )
-        self.test_conditions_box.setMinimumWidth(300)
-        self.test_conditions_box.setMaximumWidth(460)
+        self.test_conditions_box.setMinimumWidth(styles.scaled(300))
+        self.test_conditions_box.setMaximumWidth(styles.scaled(460))
         conditions_layout = QVBoxLayout(self.test_conditions_box)
         conditions_layout.setContentsMargins(8, 6, 8, 2)
         self.test_conditions_label = QLabel("Условия проведения испытаний...")
@@ -370,10 +370,10 @@ class RightPanel(QWidget):
         # верхней панели - см. gui.py: self.logo_label), с тенью и
         # небольшим свечением. Если кастомный шрифт не загрузился -
         # тихо остаёмся на Segoe UI (см. main.py: load_custom_fonts)
-        self.title_label = QLabel("\nБаза данных\nнасосов ГУР")
+        self.title_label = QLabel("База данных\nнасосов ГУР")
         self.title_label.setAlignment(Qt.AlignCenter)
         title_font_family = getattr(styles, 'TERMINATOR_FONT_FAMILY', None) or "Segoe UI"
-        self.title_label.setFont(QFont(title_font_family, 24, QFont.Bold))
+        self.title_label.setFont(QFont(title_font_family, styles.scaled_pt(20), QFont.Bold))
         self.title_label.setStyleSheet(
             styles.get_right_panel_title_style()
             + f'font-family: "{title_font_family}", "Segoe UI", Arial, sans-serif;'
@@ -392,7 +392,7 @@ class RightPanel(QWidget):
         # сдвинул бы визуальный центр текста ниже настоящей середины)
         logo_layout.addStretch(1)
 
-        self.logo_text_label = QLabel("Выберите насос в списке слева\nдля просмотра протокола...")
+        self.logo_text_label = QLabel("Выберите насос для просмотра протокола")
         self.logo_text_label.setAlignment(Qt.AlignCenter)
         self.logo_text_label.setStyleSheet(styles.get_right_panel_logo_text_style())
         logo_layout.addWidget(self.logo_text_label, 0, Qt.AlignCenter)
@@ -432,7 +432,7 @@ class RightPanel(QWidget):
 
         self.loading_text_label = QLabel("")
         self.loading_text_label.setAlignment(Qt.AlignCenter)
-        self.loading_text_label.setFont(QFont("Arial", 14))
+        self.loading_text_label.setFont(QFont("Arial", styles.scaled_pt(14)))
         self.loading_text_label.setStyleSheet(styles.RIGHT_PANEL_LOADING_TEXT_STYLE)
         loading_layout.addWidget(self.loading_text_label, 0, Qt.AlignHCenter)
 
@@ -749,7 +749,7 @@ class RightPanel(QWidget):
         if edit_date:
             edit_date_display = utils.format_date_display(edit_date)
             header_html += (
-                f"<br><span style='font-size:8pt; color:{ORANGE};'>"
+                f"<br><span style='font-size:{styles.scaled_pt(8)}pt; color:{ORANGE};'>"
                 f"Редакция протокола от: {edit_date_display}</span>"
             )
         header_html += "</div>"
@@ -839,7 +839,7 @@ class RightPanel(QWidget):
         self.legend_label.setText(
             "<span style='background-color:#ffc8c8; border:1px solid #999;'>"
             "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>"
-            "&nbsp;&nbsp;<span style='font-style:italic; font-size:11pt;'>"
+            f"&nbsp;&nbsp;<span style='font-style:italic; font-size:{styles.scaled_pt(11)}pt;'>"
             "— значение не соответствует техническим требованиям.</span>"
         )
 
@@ -866,7 +866,7 @@ class RightPanel(QWidget):
         ширину) точно под содержимое, чтобы таблица показывалась полностью,
         без собственной прокрутки и без пустого пространства справа/снизу -
         прокручиваться может только вся правая панель целиком."""
-        small_font = QFont("Arial", 8)
+        small_font = QFont("Arial", styles.scaled_pt(8))
         table.setFont(small_font)
         table.horizontalHeader().setFont(small_font)
         table.verticalHeader().setDefaultSectionSize(18)
@@ -952,7 +952,7 @@ class RightPanel(QWidget):
         # тем же моноширинным шрифтом, что и цифры в статус-баре; столбец
         # Все ячейки - одним (стандартным) шрифтом; измеренное значение
         # расхода - жирным, чтобы выделялось на фоне нормативных требований
-        value_font = QFont("Arial", 8, QFont.Bold)
+        value_font = QFont("Arial", styles.scaled_pt(8), QFont.Bold)
 
         for i, idx in enumerate(indices):
             key = f'g{idx}'
@@ -1008,7 +1008,7 @@ class RightPanel(QWidget):
             title_html += "<br>" + condition_html
         combined_label = QLabel(title_html)
         combined_label.setWordWrap(True)
-        combined_label.setFont(QFont("Arial", 9))
+        combined_label.setFont(QFont("Arial", styles.scaled_pt(9)))
         # Ограничиваем ширину СРАЗУ, известной шириной уже построенной
         # таблицы (а не ждём отдельного прохода позже) - без этого метка
         # с длинным текстом условия на мгновение получала "естественную"
@@ -1036,7 +1036,7 @@ class RightPanel(QWidget):
         table.setItem(0, 0, param_item)
         val_item = QTableWidgetItem(str(pressure_val) if pressure_val is not None else '')
         val_item.setTextAlignment(Qt.AlignCenter)
-        val_item.setFont(QFont("Arial", 8, QFont.Bold))
+        val_item.setFont(QFont("Arial", styles.scaled_pt(8), QFont.Bold))
         if 'g32' in (data.get('changed_fields') or []):
             val_item.setForeground(QColor(179, 92, 0))  # тёмно-оранжевый - значение изменено при редактировании
         if pressure_val is not None and min_p is not None and max_p is not None:
@@ -1055,13 +1055,13 @@ class RightPanel(QWidget):
 
         title_html = (
             "<b>Тест 4: Давление настройки предохранительного клапана</b><br>"
-            "<i>Условие: Обороты привода насоса: 1000...1300 мин<sup>-1</sup><br>"
+            "<i>Условие: Обороты привода насоса: 1500 ±100 мин<sup>-1</sup><br>"
             "Клапан ЕСО открыт (I = 1 А)<br>"
             "Объемная подача (при срабатывании клапана) &lt; 0.1 л/мин</i>"
         )
         combined_label = QLabel(title_html)
         combined_label.setWordWrap(True)
-        combined_label.setFont(QFont("Arial", 9))
+        combined_label.setFont(QFont("Arial", styles.scaled_pt(9)))
         combined_label.setMaximumWidth(table.width())
         self.tables_column.addWidget(combined_label)
         self.tables_column.addWidget(table)
@@ -1120,7 +1120,7 @@ class RightPanel(QWidget):
             "его внешней поверхности в процессе функциональной проверки</b>"
         )
         title_label.setWordWrap(True)
-        title_label.setFont(QFont("Arial", 9))
+        title_label.setFont(QFont("Arial", styles.scaled_pt(9)))
         self.seal_layout.addWidget(title_label)
 
         self.seal_layout.addWidget(table)
@@ -1443,7 +1443,7 @@ class RightPanel(QWidget):
         self.legend_label.setText(
             "<span style='background-color:#ffc8c8; border:1px solid #999;'>"
             "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>"
-            "&nbsp;&nbsp;<span style='font-style:italic; font-size:11pt;'>"
+            f"&nbsp;&nbsp;<span style='font-style:italic; font-size:{styles.scaled_pt(11)}pt;'>"
             "— значение не соответствует техническим требованиям.</span>"
         )
 
@@ -1473,7 +1473,7 @@ class RightPanel(QWidget):
         table.setColumnCount(len(col_labels))
         table.setHorizontalHeaderLabels(col_labels)
         table.setRowCount(len(indices))
-        value_font = QFont("Arial", 8, QFont.Bold)
+        value_font = QFont("Arial", styles.scaled_pt(8), QFont.Bold)
 
         for row, idx in enumerate(indices):
             key = f'g{idx}'
@@ -1516,7 +1516,7 @@ class RightPanel(QWidget):
         )
 
         title_label = QLabel(title)
-        title_label.setFont(QFont("Arial", 9, QFont.Bold))
+        title_label.setFont(QFont("Arial", styles.scaled_pt(9), QFont.Bold))
         title_label.setWordWrap(True)
         self.tables_column.addWidget(title_label)
         self.tables_column.addWidget(table)
@@ -1538,7 +1538,7 @@ class RightPanel(QWidget):
             pressure_val = it['results_json'].get('g32')
             val_item = QTableWidgetItem(str(pressure_val) if pressure_val is not None else '')
             val_item.setTextAlignment(Qt.AlignCenter)
-            val_item.setFont(QFont("Arial", 8, QFont.Bold))
+            val_item.setFont(QFont("Arial", styles.scaled_pt(8), QFont.Bold))
             if pressure_val is not None and min_p is not None and max_p is not None:
                 if not is_value_in_range(pressure_val, min_p, max_p):
                     val_item.setBackground(QColor(255, 200, 200))
@@ -1556,7 +1556,7 @@ class RightPanel(QWidget):
         self._compact_table(table)
 
         title_label = QLabel("Тест 4: Давление настройки предохранительного клапана")
-        title_label.setFont(QFont("Arial", 9, QFont.Bold))
+        title_label.setFont(QFont("Arial", styles.scaled_pt(9), QFont.Bold))
         self.tables_column.addWidget(title_label)
         self.tables_column.addWidget(table)
         return title_label, table
@@ -1623,7 +1623,7 @@ class RightPanel(QWidget):
         self._compact_table(table, fix_width=False)
 
         title_label = QLabel("Герметичность")
-        title_label.setFont(QFont("Arial", 9, QFont.Bold))
+        title_label.setFont(QFont("Arial", styles.scaled_pt(9), QFont.Bold))
         self.seal_layout.addWidget(title_label)
         self.seal_layout.addWidget(table)
 
