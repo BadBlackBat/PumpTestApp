@@ -120,24 +120,43 @@ def compute_ui_scale():
     возвращает число - применяется вручную к шрифту приложения и
     конкретным размерам виджетов (см. styles.set_ui_scale/scaled).
 
-    Работает через прямой системный вызов Windows (GetSystemMetrics) -
-    экран узнаём до создания QApplication, тем же способом, что уже
+    ВАЖНО: используется GetDeviceCaps (DESKTOPHORZRES/DESKTOPVERTRES), а
+    НЕ GetSystemMetrics - тот возвращает уже виртуализированное DPI-
+    масштабированием Windows "логическое" разрешение, которое оказывается
+    заниженным на ЛЮБОМ мониторе с масштабированием выше 100% в настройках
+    Windows (а это сегодня норма практически везде, а не редкость) - из-за
+    этого коэффициент раньше некорректно занижался даже на эталонном
+    мониторе, для которого масштаб должен был оставаться ровно 1.0.
+    GetDeviceCaps с этими константами специально предназначен для
+    получения именно физического разрешения, в обход этой виртуализации.
+
+    Экран узнаём до создания QApplication, тем же способом, что уже
     используется в set_app_user_model_id(). На других ОС возвращает 1.0
     без изменений."""
     if sys.platform != "win32":
         return 1.0
     try:
-        SM_CXSCREEN, SM_CYSCREEN = 0, 1
-        width = ctypes.windll.user32.GetSystemMetrics(SM_CXSCREEN)
-        height = ctypes.windll.user32.GetSystemMetrics(SM_CYSCREEN)
+        DESKTOPHORZRES, DESKTOPVERTRES = 118, 117
+        user32 = ctypes.windll.user32
+        gdi32 = ctypes.windll.gdi32
+        hdc = user32.GetDC(0)
+        if not hdc:
+            return 1.0
+        try:
+            width = gdi32.GetDeviceCaps(hdc, DESKTOPHORZRES)
+            height = gdi32.GetDeviceCaps(hdc, DESKTOPVERTRES)
+        finally:
+            user32.ReleaseDC(0, hdc)
         if width <= 0 or height <= 0:
             return 1.0
     except Exception:
         return 1.0
 
-    BASELINE_WIDTH, BASELINE_HEIGHT = 1920, 1200
+    BASELINE_WIDTH, BASELINE_HEIGHT = 1920, 1080
     scale = min(width / BASELINE_WIDTH, height / BASELINE_HEIGHT, 1.0)
-    return max(0.85, scale)
+    scale = max(0.85, scale)
+    print(f"[масштаб интерфейса] физическое разрешение экрана: {width}x{height}, коэффициент: {scale:.3f}")
+    return scale
 
 
 def main():

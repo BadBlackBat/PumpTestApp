@@ -798,13 +798,13 @@ class _DbStatusIndicator(QWidget):
         self._blink_on = True
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(2, 0, 2, 0)
-        layout.setSpacing(14)
+        layout.setContentsMargins(styles.scaled(2), 0, styles.scaled(2), 0)
+        layout.setSpacing(styles.scaled(14))
 
         self._dot_labels = {}
         for key in ('network', 'local', 'offline', 'full_offline'):
             item_layout = QHBoxLayout()
-            item_layout.setSpacing(4)
+            item_layout.setSpacing(styles.scaled(4))
             dot = QLabel("●")
             text = QLabel(self._LABELS[key])
             # Текст ВСЕГДА жирный (и активный, и неактивный) - раньше
@@ -1082,7 +1082,7 @@ class LeftPanel(QWidget):
         cell = QWidget()
         cell_layout = QHBoxLayout(cell)
         cell_layout.setContentsMargins(0, 0, 0, 0)
-        cell_layout.setSpacing(6)
+        cell_layout.setSpacing(styles.scaled(6))
         cell_layout.addWidget(self.only_duplicates)
         cell_layout.addWidget(self.btn_force_pull)
         return cell
@@ -1094,8 +1094,8 @@ class LeftPanel(QWidget):
         chip = QFrame()
         chip.setStyleSheet(styles.LEFT_PANEL_CHIP_STYLE)
         chip_layout = QHBoxLayout(chip)
-        chip_layout.setContentsMargins(8, 0, 8, 0)
-        chip_layout.setSpacing(6)
+        chip_layout.setContentsMargins(styles.scaled(8), 0, styles.scaled(8), 0)
+        chip_layout.setSpacing(styles.scaled(6))
         label = QLabel(label_text)
         label.setStyleSheet(styles.LEFT_PANEL_FILTER_LABEL_STYLE)
         chip_layout.addWidget(label)
@@ -1110,7 +1110,7 @@ class LeftPanel(QWidget):
         новые чипы-обёртки."""
         if expanded:
             body = QHBoxLayout()
-            body.setSpacing(14)
+            body.setSpacing(styles.scaled(14))
             body.addWidget(self._make_filter_chip("Вердикт:", self.filter_verdict))
             body.addWidget(self._make_filter_chip("Тип проверки:", self.filter_test_type))
             body.addWidget(self._make_filter_chip("Герметичность:", self.filter_sealed))
@@ -1178,15 +1178,15 @@ class LeftPanel(QWidget):
 
     def setup_ui(self):
       layout = QVBoxLayout(self)
-      layout.setSpacing(6)
-      layout.setContentsMargins(4, 4, 4, 4)
+      layout.setSpacing(styles.scaled(6))
+      layout.setContentsMargins(styles.scaled(4), styles.scaled(4), styles.scaled(4), styles.scaled(4))
 
       # Вся панель фильтров - в одной графитовой "карточке" с бирюзовым
       # свечением по всем четырём сторонам (см. класс _GlowFrame)
       filters_panel = _GlowFrame()
       filters_layout = QVBoxLayout(filters_panel)
-      filters_layout.setContentsMargins(14, 6, 14, 12)
-      filters_layout.setSpacing(8)
+      filters_layout.setContentsMargins(styles.scaled(14), styles.scaled(6), styles.scaled(14), styles.scaled(12))
+      filters_layout.setSpacing(styles.scaled(8))
 
       # Индикатор режима работы с базой данных (Network/Local/Offline) -
       # прямо над строкой поиска, чтобы всегда быть на виду
@@ -1195,7 +1195,7 @@ class LeftPanel(QWidget):
 
       # Ряд 1: Поиск
       search_layout = QHBoxLayout()
-      search_layout.setSpacing(10)
+      search_layout.setSpacing(styles.scaled(10))
       search_label = QLabel("Поиск:")
       search_label.setStyleSheet(styles.LEFT_PANEL_SEARCH_LABEL_STYLE)
       search_label.setFixedWidth(styles.scaled(50))
@@ -1359,6 +1359,13 @@ class LeftPanel(QWidget):
       # не трогаются - оверлеи просто рисуются поверх.
       self._hovered_row = -1
       self._selected_row = -1
+      # Собственный, чуть более крупный базовый размер шрифта - таблица
+      # с данными нуждается в более разборчивом шрифте, чем унаследованный
+      # общий шрифт приложения (обычно 9pt). По-прежнему подчиняется
+      # общему масштабированию UI_SCALE - как и всё остальное.
+      _table_base_font = self.table.font()
+      _table_base_font.setPointSize(styles.scaled_pt(9))
+      self.table.setFont(_table_base_font)
       self._base_font_size = float(self.table.font().pointSize() or 9)
       self._hover_overlay = _RowHighlightOverlay(self.table.viewport())
       self._selection_overlay = _RowHighlightOverlay(self.table.viewport())
@@ -1372,7 +1379,7 @@ class LeftPanel(QWidget):
       # что и у фильтров/нижнего блока кнопок (см. класс _GlowFrame)
       table_panel = _GlowFrame()
       table_panel_layout = QVBoxLayout(table_panel)
-      table_panel_layout.setContentsMargins(8, 8, 8, 8)
+      table_panel_layout.setContentsMargins(styles.scaled(8), styles.scaled(8), styles.scaled(8), styles.scaled(8))
       table_panel_layout.addWidget(self.table)
       layout.addWidget(table_panel)
 
@@ -1383,12 +1390,12 @@ class LeftPanel(QWidget):
       # графитовой панели со свечением, как и фильтры сверху
       bottom_panel = _GlowFrame()
       bottom_layout = QVBoxLayout(bottom_panel)
-      bottom_layout.setContentsMargins(14, 10, 14, 10)
-      bottom_layout.setSpacing(8)
+      bottom_layout.setContentsMargins(styles.scaled(14), styles.scaled(10), styles.scaled(14), styles.scaled(10))
+      bottom_layout.setSpacing(styles.scaled(8))
 
       # Кнопки управления
       btn_layout = QHBoxLayout()
-      btn_layout.setSpacing(8)
+      btn_layout.setSpacing(styles.scaled(8))
       self.btn_add = QPushButton("Добавить насос")
       self.btn_add.setObjectName("chromeButton")
       self.btn_add.setFixedHeight(styles.scaled(26))
@@ -1467,7 +1474,7 @@ class LeftPanel(QWidget):
 
       # Пагинация
       pagination_layout = QHBoxLayout()
-      pagination_layout.setSpacing(6)
+      pagination_layout.setSpacing(styles.scaled(6))
       self.btn_prev = QPushButton("◀")
       self.btn_prev.setObjectName("chromeButton")
       self.btn_prev.setFixedSize(30, 22)
@@ -1488,7 +1495,7 @@ class LeftPanel(QWidget):
       self.page_jump_input.setStyleSheet(styles.get_page_jump_input_style())
       self.page_jump_input.returnPressed.connect(self.jump_to_page)
       self.page_label = QLabel("1/1")
-      self.page_label.setFixedWidth(styles.scaled(110))
+      self.page_label.setFixedWidth(styles.scaled(130))
       self.page_label.setAlignment(Qt.AlignCenter)
       self.page_label.setStyleSheet(styles.LEFT_PANEL_FILTER_LABEL_STYLE)
       # Пояснение "Группировка по дублям" - по центру панели, между
@@ -1778,6 +1785,7 @@ class LeftPanel(QWidget):
             header_item.setTextAlignment(Qt.AlignCenter)
             header_item.setFlags(Qt.ItemIsEnabled)  # не выделяется и не открывается как протокол
             header_font = QFont()
+            header_font.setPointSize(styles.scaled_pt(9))
             header_font.setBold(True)
             header_item.setFont(header_font)
             header_item.setBackground(QColor(210, 224, 240))

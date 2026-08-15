@@ -383,11 +383,13 @@ LEFT_PANEL_GLOW_SHADOW_BLUR = 22         # радиус размытия тен�
 
 # Подпись фильтра ("Вердикт:", "Тип:" и т.п.) внутри чипа - белый текст,
 # обычной (не жирной) насыщенности
-LEFT_PANEL_FILTER_LABEL_STYLE = "color: #ffffff; font-weight: normal; font-size: 9pt;"
+def _left_panel_filter_label_style():
+    return f"color: #ffffff; font-weight: normal; font-size: {scaled_pt(9)}pt;"
 
 # Подпись "Поиск:" - крупнее и жирнее обычных подписей фильтров (сам
 # поиск - главный, самый часто используемый фильтр в панели)
-LEFT_PANEL_SEARCH_LABEL_STYLE = "color: #ffffff; font-weight: bold; font-size: 11pt;"
+def _left_panel_search_label_style():
+    return f"color: #ffffff; font-weight: bold; font-size: {scaled_pt(11)}pt;"
 
 # "Чип" - лёгкая полупрозрачная подложка, объединяющая подпись фильтра с
 # её виджетом в одну визуальную группу (чтобы не выглядели разбросанными
@@ -983,6 +985,7 @@ def build_left_panel_table_style(arrow_down_path=None, arrow_up_path=None, heade
         background: {_TABLE_HEADER_ALUMINUM};
         color: #2b2d31;
         font-weight: bold;
+        font-size: {scaled_pt(10)}pt;
         {font_rule}
         border: 1px solid #6b6f75;
         padding: {scaled(2)}px {scaled(4)}px;
@@ -1165,7 +1168,8 @@ RIGHT_PANEL_LOADING_TEXT_STYLE = "color: #555;"
 
 # Легенда с пояснением цветовой подсветки несоответствий техническим
 # требованиям (текстовая строка под таблицами протокола)
-RIGHT_PANEL_LEGEND_STYLE = "background-color: transparent; padding: 5px;"
+def _right_panel_legend_style():
+    return f"background-color: transparent; padding: {scaled(5)}px;"
 
 # Общий фон-подложка для панели таблиц испытаний (tables_panel) И для
 # отдельной панели герметичности (seal_panel) - используется ОДНА И ТА
@@ -1178,7 +1182,8 @@ RIGHT_PANEL_CARD_STYLE = (
 
 # Подложка текстового блока сводной статистики по базе (кнопка "📊" в
 # верхней панели, метод display_statistics)
-RIGHT_PANEL_STATS_TEXT_STYLE = "background: transparent; color: #e8eaed; padding: 4px;"
+def _right_panel_stats_text_style():
+    return f"background: transparent; color: #e8eaed; padding: {scaled(4)}px;"
 
 # Тёмно-синий фон на весь блок статистики - тот же градиент, что и у
 # логотипа-заглушки при запуске программы (просто на большую область)
@@ -1439,6 +1444,10 @@ _DYNAMIC_STYLE_ATTRS = {
     'RIGHT_PANEL_LOGO_TEXT_STYLE': _right_panel_logo_text_style,
     'RIGHT_PANEL_LOGO_TEXT_STYLE_LIGHT': _right_panel_logo_text_style_light,
     'RIGHT_PANEL_LOADING_STYLE': _right_panel_loading_style,
+    'LEFT_PANEL_FILTER_LABEL_STYLE': _left_panel_filter_label_style,
+    'LEFT_PANEL_SEARCH_LABEL_STYLE': _left_panel_search_label_style,
+    'RIGHT_PANEL_LEGEND_STYLE': _right_panel_legend_style,
+    'RIGHT_PANEL_STATS_TEXT_STYLE': _right_panel_stats_text_style,
 }
 
 
