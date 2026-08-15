@@ -1611,11 +1611,11 @@ class LeftPanel(QWidget):
             for col in range(5, self.table.columnCount()):
                 self.table.setColumnHidden(col, True)
             self.table.verticalHeader().setVisible(False)
-            self.table.setColumnWidth(0, styles.scaled(100))
-            self.table.setColumnWidth(1, styles.scaled(110))
-            self.table.setColumnWidth(2, styles.scaled(100))
-            self.table.setColumnWidth(3, styles.scaled(110))
-            self.table.setColumnWidth(4, styles.scaled(100))
+            self.table.setColumnWidth(0, styles.scaled(85))
+            self.table.setColumnWidth(1, styles.scaled(95))
+            self.table.setColumnWidth(2, styles.scaled(80))
+            self.table.setColumnWidth(3, styles.scaled(95))
+            self.table.setColumnWidth(4, styles.scaled(85))
         else:
             col_count = 7
             self.table.setColumnCount(col_count)
@@ -1625,13 +1625,13 @@ class LeftPanel(QWidget):
             for col in range(self.table.columnCount()):
                 self.table.setColumnHidden(col, False)
             self.table.verticalHeader().setVisible(False)
-            self.table.setColumnWidth(0, styles.scaled(110))
-            self.table.setColumnWidth(1, styles.scaled(110))
-            self.table.setColumnWidth(2, styles.scaled(150))
-            self.table.setColumnWidth(3, styles.scaled(110))
-            self.table.setColumnWidth(4, styles.scaled(100))
-            self.table.setColumnWidth(5, styles.scaled(100))
-            self.table.setColumnWidth(6, styles.scaled(250))
+            self.table.setColumnWidth(0, styles.scaled(95))
+            self.table.setColumnWidth(1, styles.scaled(95))
+            self.table.setColumnWidth(2, styles.scaled(140))
+            self.table.setColumnWidth(3, styles.scaled(95))
+            self.table.setColumnWidth(4, styles.scaled(85))
+            self.table.setColumnWidth(5, styles.scaled(85))
+            self.table.setColumnWidth(6, styles.scaled(110))
         return col_count
 
     def _fill_pump_row(self, row, p, compact=True):

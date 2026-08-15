@@ -1055,7 +1055,7 @@ class RightPanel(QWidget):
 
         title_html = (
             "<b>Тест 4: Давление настройки предохранительного клапана</b><br>"
-            "<i>Условие: Обороты привода насоса: 1500 ±100 мин<sup>-1</sup><br>"
+            "<i>Условие: Обороты привода насоса: 1000...1300 мин<sup>-1</sup><br>"
             "Клапан ЕСО открыт (I = 1 А)<br>"
             "Объемная подача (при срабатывании клапана) &lt; 0.1 л/мин</i>"
         )
@@ -1254,7 +1254,7 @@ class RightPanel(QWidget):
         results = data['results_json']
 
         # График 1: расход от оборотов (ECO выкл. / ECO вкл.)
-        fig1 = Figure(figsize=(4, 3), dpi=_SCREEN_DPI)
+        fig1 = Figure(figsize=(5, 3), dpi=_SCREEN_DPI)  # 5:3
         ax1 = fig1.add_subplot(111)
         x_vals = mod.get('norm_graph1_x') or list(utils.DEFAULT_GRAPH1_X)
         y1 = [results.get(f'g{i}') for i in range(5, 13)]
@@ -1305,14 +1305,14 @@ class RightPanel(QWidget):
         # стабильный, предсказуемый результат.
         fig1.subplots_adjust(left=0.14, right=0.97, top=0.90, bottom=0.24)
 
-        graph1_widget, graph1_canvas = self._make_graph_widget(fig1, graph1_height)
+        graph1_widget, graph1_canvas = self._make_graph_widget(fig1, graph1_height, min_width=646)
         self.graphs_column.addWidget(graph1_widget)
         self._graph1_ax = ax1
         self._graph1_canvas = graph1_canvas
         self._graph1_marker = None
 
         # График 2: расход от силы тока ECO
-        fig2 = Figure(figsize=(4, 3), dpi=_SCREEN_DPI)
+        fig2 = Figure(figsize=(5, 3), dpi=_SCREEN_DPI)  # 5:3
         ax2 = fig2.add_subplot(111)
         x_tok = mod.get('norm_graph3_x') or list(utils.DEFAULT_GRAPH3_X)
         y3 = [results.get(f'g{i}') for i in range(21, 32)]
@@ -1341,7 +1341,7 @@ class RightPanel(QWidget):
         ax2.set_yticks(np.arange(4, 18, 1))
         fig2.subplots_adjust(left=0.14, right=0.97, top=0.90, bottom=0.20)
 
-        graph2_widget, graph2_canvas = self._make_graph_widget(fig2, graph2_height)
+        graph2_widget, graph2_canvas = self._make_graph_widget(fig2, graph2_height, min_width=646)
         self.graphs_column.addWidget(graph2_widget)
         self._graph2_ax = ax2
         self._graph2_canvas = graph2_canvas

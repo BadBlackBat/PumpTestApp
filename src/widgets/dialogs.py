@@ -281,20 +281,20 @@ class _GlowDialog(QDialog):
         # _GlowFrame) нужно место, куда "растекаться" за пределы самой
         # панели. Без этого запаса тень обрезается ровно по границе окна,
         # и этот обрезанный край выглядит как слабый квадратный контур.
-        outer_layout.setContentsMargins(18, 18, 18, 18)
+        outer_layout.setContentsMargins(styles.scaled(18), styles.scaled(18), styles.scaled(18), styles.scaled(18))
 
         self.glow_frame = _GlowFrame(glow_color=glow_color)
         outer_layout.addWidget(self.glow_frame)
 
         frame_layout = QVBoxLayout(self.glow_frame)
-        frame_layout.setContentsMargins(16, 5, 16, 16)
+        frame_layout.setContentsMargins(styles.scaled(16), styles.scaled(5), styles.scaled(16), styles.scaled(16))
         frame_layout.setSpacing(0)
         self.frame_layout = frame_layout
 
         title_row = QHBoxLayout()
         self.title_label = QLabel(title)
         self.title_label.setStyleSheet(
-            f"color: #f2f4f6; font-weight: bold; font-size: {styles.scaled_pt(11)}pt; background: transparent;"
+            f"color: #f2f4f6; font-weight: bold; font-size: {styles.scaled_pt(12)}pt; background: transparent;"
         )
         # Резервируем высоту строки заголовка под размер кнопки-крестика
         # (она позиционируется абсолютно, а не через layout заголовка) -
@@ -316,7 +316,7 @@ class _GlowDialog(QDialog):
         frame_layout.addSpacing(10)  # обычный зазор перед содержимым диалога
 
         self.body_layout = QVBoxLayout()
-        self.body_layout.setSpacing(10)
+        self.body_layout.setSpacing(styles.scaled(10))
         frame_layout.addLayout(self.body_layout)
 
         # Крестик закрытия - НЕ в layout, а поверх правого верхнего угла
@@ -477,7 +477,7 @@ class GlowMessageDialog(_GlowDialog):
         super().__init__(parent, title=title)
 
         content_row = QHBoxLayout()
-        content_row.setSpacing(12)
+        content_row.setSpacing(styles.scaled(12))
         icon_label = QLabel()
         icon_path = os.path.join(ICONS_DIR, icon_name)
         if os.path.exists(icon_path):
@@ -569,7 +569,7 @@ class PrintChoiceDialog(_GlowDialog):
         self.choice = None
 
         top_row = QHBoxLayout()
-        top_row.setSpacing(10)
+        top_row.setSpacing(styles.scaled(10))
         icon_label = QLabel()
         icon_path = os.path.join(ICONS_DIR, 'print.svg')
         if os.path.exists(icon_path):
@@ -577,7 +577,7 @@ class PrintChoiceDialog(_GlowDialog):
         icon_label.setStyleSheet("background: transparent;")
         top_row.addWidget(icon_label)
         msg_label = QLabel("Что напечатать?")
-        msg_label.setStyleSheet(f"color: #e8eaed; font-size: {styles.scaled_pt(11)}pt; background: transparent;")
+        msg_label.setStyleSheet(f"color: #e8eaed; font-size: {styles.scaled_pt(12)}pt; background: transparent;")
         top_row.addWidget(msg_label, 1)
         self.body_layout.addLayout(top_row)
 
@@ -589,7 +589,7 @@ class PrintChoiceDialog(_GlowDialog):
             return btn
 
         btn_col = QVBoxLayout()
-        btn_col.setSpacing(8)
+        btn_col.setSpacing(styles.scaled(8))
         btn_col.addWidget(make_btn("Текущий протокол", "protocol"))
         btn_col.addWidget(make_btn("Список насосов (сокращённый)", "list_compact"))
         btn_col.addWidget(make_btn("Список насосов (расширенный)", "list_expanded"))
@@ -621,7 +621,7 @@ class NetworkAheadChoiceDialog(_GlowDialog):
         text_color = styles.get_dialog_text_color()
 
         top_row = QHBoxLayout()
-        top_row.setSpacing(10)
+        top_row.setSpacing(styles.scaled(10))
         icon_label = QLabel()
         icon_path = os.path.join(ICONS_DIR, 'warning.svg')
         if os.path.exists(icon_path):
@@ -651,7 +651,7 @@ class NetworkAheadChoiceDialog(_GlowDialog):
             hint = QLabel(text)
             hint.setWordWrap(True)
             hint.setFixedWidth(styles.scaled(360))
-            hint.setStyleSheet(f"color: {text_color}; background: transparent; font-size: {styles.scaled_pt(9)}pt;")
+            hint.setStyleSheet(f"color: {text_color}; background: transparent; font-size: {styles.scaled_pt(10)}pt;")
             return hint
 
         self.body_layout.addSpacing(6)
@@ -874,7 +874,7 @@ class PasswordDialog(_GlowDialog):
         # неудачной попытки было бы некуда вставить
         self.error_label = QLabel("")
         self.error_label.setStyleSheet(
-            f"color: #ff8080; background: transparent; font-size: {styles.scaled_pt(9)}pt;"
+            f"color: #ff8080; background: transparent; font-size: {styles.scaled_pt(10)}pt;"
         )
         self.error_label.setWordWrap(True)
         self.error_label.setMinimumHeight(styles.scaled(18))
@@ -1026,16 +1026,16 @@ class PointsEditorWidget(QWidget):
         Используется, чтобы диалог обходился без QScrollArea. Столбцы
         зафиксированы (Fixed) - пользователь не может их растягивать."""
         small_font = QFont()
-        small_font.setPointSize(styles.scaled_pt(9))
+        small_font.setPointSize(styles.scaled_pt(10))
         self.table.setFont(small_font)
         self.table.horizontalHeader().setFont(small_font)
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(22)
+        self.table.verticalHeader().setDefaultSectionSize(styles.scaled(22))
         self.table.resizeRowsToContents()
         self.table.resizeColumnsToContents()
-        min_section = 40
+        min_section = styles.scaled(40)
         for col in range(self.table.columnCount()):
-            self.table.setColumnWidth(col, max(min_section, self.table.columnWidth(col) + 4))
+            self.table.setColumnWidth(col, max(min_section, self.table.columnWidth(col) + styles.scaled(4)))
         self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         total_height = self.table.horizontalHeader().height() + 2
@@ -1069,7 +1069,7 @@ class PointsEditorWidget(QWidget):
         available = max(30 * col_count, target_width - 2)
         scale = available / current_cols_width
         for c in range(col_count):
-            self.table.setColumnWidth(c, max(30, int(self.table.columnWidth(c) * scale)))
+            self.table.setColumnWidth(c, max(styles.scaled(30), int(self.table.columnWidth(c) * scale)))
         new_total = 2 + sum(self.table.columnWidth(c) for c in range(col_count))
         self.table.setFixedWidth(new_total)
         self.setFixedWidth(new_total)
@@ -1173,14 +1173,14 @@ class AddModificationDialog(_GlowDialog):
 
         norm_title = self._section_title("Установленные нормативные требования")
         norm_title.setStyleSheet(
-            f"color: #e8eaed; font-weight: bold; font-size: {styles.scaled_pt(11)}pt; background: transparent;"
+            f"color: #e8eaed; font-weight: bold; font-size: {styles.scaled_pt(12)}pt; background: transparent;"
         )
         self.body_layout.addWidget(norm_title)
 
         # Три испытания - в один горизонтальный ряд, чтобы диалог оставался
         # компактным по высоте и не требовал прокрутки
         tests_layout = QHBoxLayout()
-        tests_layout.setSpacing(20)
+        tests_layout.setSpacing(styles.scaled(20))
 
         test1_col = QVBoxLayout()
         test1_col.addWidget(self._section_title("Испытание 1:\nПодача от оборотов\nECO выкл."))
@@ -1281,7 +1281,7 @@ class AddModificationDialog(_GlowDialog):
         self._seal_last_key = utils.SEAL_KEYS[-1]
         self._seal_field_width = 260  # единая ширина ВСЕХ полей герметичности - и первого, и добавленных
         self._seal_extra_layout = QVBoxLayout()
-        self._seal_extra_layout.setSpacing(6)
+        self._seal_extra_layout.setSpacing(styles.scaled(6))
 
         def make_seal_edit(text):
             e = QLineEdit(text)
@@ -1291,7 +1291,7 @@ class AddModificationDialog(_GlowDialog):
 
         for key in utils.SEAL_KEYS:
             row_layout = QHBoxLayout()
-            row_layout.setSpacing(6)
+            row_layout.setSpacing(styles.scaled(6))
             lbl = QLabel(utils.SEAL_LABELS[key] + ":")
             lbl.setWordWrap(False)
             lbl.setFixedWidth(seal_label_w)
@@ -1408,7 +1408,7 @@ class AddModificationDialog(_GlowDialog):
         row_widget = QWidget()
         row = QHBoxLayout(row_widget)
         row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(6)
+        row.setSpacing(styles.scaled(6))
         spacer = QLabel("")
         spacer.setFixedWidth(self._seal_label_w)
         row.addWidget(spacer)
@@ -1518,7 +1518,7 @@ class ViewModificationsDialog(_GlowDialog):
         super().__init__(parent, title="Просмотр модификаций")
 
         main_row = QHBoxLayout()
-        main_row.setSpacing(14)
+        main_row.setSpacing(styles.scaled(14))
 
         # Левая колонка - список модификаций + кнопки
         left_col = QVBoxLayout()
@@ -1566,12 +1566,12 @@ class ViewModificationsDialog(_GlowDialog):
         self.details_widget = QWidget()
         self.details_widget.setStyleSheet("background: transparent;")
         self.details_layout = QVBoxLayout(self.details_widget)
-        self.details_layout.setSpacing(10)
+        self.details_layout.setSpacing(styles.scaled(10))
         # Правый отступ увеличен на ширину, которую резервирует под себя
         # наша полоса прокрутки (_GlowScrollBar.FULL_WIDTH + MARGIN_RIGHT =
         # 8+5=13px) - иначе визуально казалось бы, что отступ справа
         # меньше, чем слева
-        self.details_layout.setContentsMargins(8, 4, 21, 4)
+        self.details_layout.setContentsMargins(styles.scaled(8), styles.scaled(4), styles.scaled(21), styles.scaled(4))
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -1772,12 +1772,12 @@ class ViewModificationsDialog(_GlowDialog):
     def _build_test_section(self, test_num_label, description, x_values, min_values, max_values,
                              x_label, x_major_step=None):
         section = QVBoxLayout()
-        section.setSpacing(4)
+        section.setSpacing(styles.scaled(4))
         section.addWidget(self._plain_label(test_num_label, bold=True))
         section.addWidget(self._plain_label(description))
 
         row = QHBoxLayout()
-        row.setSpacing(14)
+        row.setSpacing(styles.scaled(14))
         table = self._build_vertical_table(x_label, x_values, min_values, max_values)
         row.addWidget(table)
         row.addWidget(self._build_mini_chart(x_values, min_values, max_values, x_label, x_major_step))
@@ -1798,7 +1798,7 @@ class ViewModificationsDialog(_GlowDialog):
         available = max(30 * col_count, target_width - 2)
         scale = available / current_cols_width
         for c in range(col_count):
-            table.setColumnWidth(c, max(30, int(table.columnWidth(c) * scale)))
+            table.setColumnWidth(c, max(styles.scaled(30), int(table.columnWidth(c) * scale)))
         new_total = 2 + sum(table.columnWidth(c) for c in range(col_count))
         table.setFixedWidth(new_total)
 
@@ -1832,7 +1832,7 @@ class ViewModificationsDialog(_GlowDialog):
         """)
 
         small_font = QFont()
-        small_font.setPointSize(styles.scaled_pt(9))
+        small_font.setPointSize(styles.scaled_pt(10))
         table.setFont(small_font)
         table.horizontalHeader().setFont(small_font)
         # Заголовок X-столбца обычно на 2 строки (например, "Обороты
@@ -1852,11 +1852,11 @@ class ViewModificationsDialog(_GlowDialog):
                 table.setItem(row, col, item)
 
         table.resizeColumnsToContents()
-        table.verticalHeader().setDefaultSectionSize(20)
+        table.verticalHeader().setDefaultSectionSize(styles.scaled(20))
         table.resizeRowsToContents()
-        min_col_width = 50
+        min_col_width = styles.scaled(50)
         for c in range(table.columnCount()):
-            table.setColumnWidth(c, max(min_col_width, table.columnWidth(c) + 2))
+            table.setColumnWidth(c, max(min_col_width, table.columnWidth(c) + styles.scaled(2)))
         table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
@@ -1982,7 +1982,7 @@ class RestoreBackupDialog(_GlowDialog):
         text_color = styles.get_dialog_text_color()
 
         hint_label = QLabel("Доступные резервные копии (сверху - самые новые):")
-        hint_label.setStyleSheet(f"color: {text_color}; background: transparent; font-size: {styles.scaled_pt(10)}pt;")
+        hint_label.setStyleSheet(f"color: {text_color}; background: transparent; font-size: {styles.scaled_pt(11)}pt;")
         self.body_layout.addWidget(hint_label)
 
         self.list_widget = QListWidget()
@@ -2104,7 +2104,7 @@ class KnownUsersDialog(_GlowDialog):
         text_color = styles.get_dialog_text_color()
 
         hint_label = QLabel("Все, кто когда-либо подключался к сетевой базе:")
-        hint_label.setStyleSheet(f"color: {text_color}; background: transparent; font-size: {styles.scaled_pt(10)}pt;")
+        hint_label.setStyleSheet(f"color: {text_color}; background: transparent; font-size: {styles.scaled_pt(11)}pt;")
         self.body_layout.addWidget(hint_label)
 
         self.list_widget = QListWidget()
@@ -2152,7 +2152,7 @@ class ChangeLogDialog(_GlowDialog):
         text_color = styles.get_dialog_text_color()
 
         hint_label = QLabel(f"Последние {db._CHANGE_LOG_KEEP_COUNT} изменений (сверху - самые новые):")
-        hint_label.setStyleSheet(f"color: {text_color}; background: transparent; font-size: {styles.scaled_pt(10)}pt;")
+        hint_label.setStyleSheet(f"color: {text_color}; background: transparent; font-size: {styles.scaled_pt(11)}pt;")
         self.body_layout.addWidget(hint_label)
 
         self.list_widget = QListWidget()
@@ -2202,7 +2202,7 @@ class DatabaseLocationDialog(_GlowDialog):
         super().__init__(parent, title="Расположение базы данных")
 
         text_color = styles.get_dialog_text_color()
-        label_style = f"color: {text_color}; background: transparent; font-size: {styles.scaled_pt(10.5)}pt;"
+        label_style = f"color: {text_color}; background: transparent; font-size: {styles.scaled_pt(11.5)}pt;"
 
         mode_label = QLabel("Режим работы с базой:")
         mode_label.setStyleSheet(label_style)
@@ -2211,7 +2211,7 @@ class DatabaseLocationDialog(_GlowDialog):
         self.radio_local = QRadioButton("Локальный файл на этом ПК")
         self.radio_network = QRadioButton("Общая сетевая папка")
         for radio in (self.radio_local, self.radio_network):
-            radio.setStyleSheet(f"color: {text_color}; background: transparent; font-size: {styles.scaled_pt(10)}pt;")
+            radio.setStyleSheet(f"color: {text_color}; background: transparent; font-size: {styles.scaled_pt(11)}pt;")
         self.mode_group = QButtonGroup(self)
         self.mode_group.addButton(self.radio_local)
         self.mode_group.addButton(self.radio_network)
@@ -2257,7 +2257,7 @@ class DatabaseLocationDialog(_GlowDialog):
             QCheckBox {{
                 color: {text_color};
                 background: transparent;
-                font-size: {styles.scaled_pt(10)}pt;
+                font-size: {styles.scaled_pt(11)}pt;
                 spacing: {styles.scaled(8)}px;
             }}
             QCheckBox::indicator {{
@@ -2280,7 +2280,7 @@ class DatabaseLocationDialog(_GlowDialog):
             "остальные в группе используют общую сетевую папку."
         )
         hint_label.setWordWrap(True)
-        hint_label.setStyleSheet(f"color: {text_color}; background: transparent; font-size: {styles.scaled_pt(8.5)}pt;")
+        hint_label.setStyleSheet(f"color: {text_color}; background: transparent; font-size: {styles.scaled_pt(9.5)}pt;")
         self.body_layout.addWidget(hint_label)
 
         # Заполняем текущим состоянием
@@ -2390,7 +2390,7 @@ class SettingsDialog(_GlowDialog):
         # добавляем сверху ту же шапку стиля, но с более крупными числами
         big_button_style = styles.LEFT_PANEL_RESET_BTN_STYLE + f"""
             QPushButton#chromeButton {{
-                font-size: {styles.scaled_pt(10.5)}pt;
+                font-size: {styles.scaled_pt(11.5)}pt;
                 padding: {styles.scaled(9)}px {styles.scaled(16)}px;
             }}
         """
@@ -2404,7 +2404,7 @@ class SettingsDialog(_GlowDialog):
 
         # Блок 1: расположение базы данных (локальный ПК / сетевая папка)
         db_label = QLabel("База данных:")
-        db_label.setStyleSheet(f"color: #e8eaed; background: transparent; font-size: {styles.scaled_pt(10.5)}pt;")
+        db_label.setStyleSheet(f"color: #e8eaed; background: transparent; font-size: {styles.scaled_pt(11.5)}pt;")
         self.body_layout.addWidget(db_label)
         self.body_layout.addWidget(make_btn("Расположение базы данных", self.open_database_location))
         self.body_layout.addWidget(make_btn("Журнал изменений базы данных", self.open_change_log))
@@ -2415,7 +2415,7 @@ class SettingsDialog(_GlowDialog):
 
         # Блок 2: управление модификациями
         mod_label = QLabel("Модификации насосов ГУР:")
-        mod_label.setStyleSheet(f"color: #e8eaed; background: transparent; font-size: {styles.scaled_pt(10.5)}pt;")
+        mod_label.setStyleSheet(f"color: #e8eaed; background: transparent; font-size: {styles.scaled_pt(11.5)}pt;")
         self.body_layout.addWidget(mod_label)
         self.body_layout.addWidget(make_btn("Добавить модификацию", self.open_add_modification))
         self.body_layout.addWidget(make_btn("Просмотреть модификации", self.open_view_modifications))
@@ -2428,7 +2428,7 @@ class SettingsDialog(_GlowDialog):
         # диалогами; при добавлении переключателя темы в будущем стоит
         # сделать по тому же принципу (QCheckBox + QSettings)
         interface_label = QLabel("Интерфейс:")
-        interface_label.setStyleSheet(f"color: #e8eaed; background: transparent; font-size: {styles.scaled_pt(10.5)}pt;")
+        interface_label.setStyleSheet(f"color: #e8eaed; background: transparent; font-size: {styles.scaled_pt(11.5)}pt;")
         self.body_layout.addWidget(interface_label)
 
         self.blur_checkbox = QCheckBox("Размытие фона за диалогами")
@@ -2437,7 +2437,7 @@ class SettingsDialog(_GlowDialog):
             QCheckBox {{
                 color: #e8eaed;
                 background: transparent;
-                font-size: {styles.scaled_pt(10)}pt;
+                font-size: {styles.scaled_pt(11)}pt;
                 spacing: {styles.scaled(8)}px;
             }}
             QCheckBox::indicator {{
@@ -2465,7 +2465,7 @@ class SettingsDialog(_GlowDialog):
         self.body_layout.addSpacing(14)
         version_label = QLabel(f"Версия {version.VERSION}")
         version_label.setAlignment(Qt.AlignCenter)
-        version_label.setStyleSheet(f"color: #8a8f96; background: transparent; font-size: {styles.scaled_pt(8.5)}pt;")
+        version_label.setStyleSheet(f"color: #8a8f96; background: transparent; font-size: {styles.scaled_pt(9.5)}pt;")
         self.body_layout.addWidget(version_label)
 
         self.setMinimumWidth(styles.scaled(340))
@@ -2664,8 +2664,8 @@ class AddPumpDialog(_GlowDialog):
             chip = QFrame()
             chip.setStyleSheet(styles.LEFT_PANEL_CHIP_STYLE)
             box = QHBoxLayout(chip)
-            box.setContentsMargins(8, 3, 8, 3)
-            box.setSpacing(3)
+            box.setContentsMargins(styles.scaled(8), styles.scaled(3), styles.scaled(8), styles.scaled(3))
+            box.setSpacing(styles.scaled(3))
             lbl = QLabel(label_text)
             lbl.setStyleSheet("color: #e8eaed; background: transparent;")
             widget.setFixedWidth(field_width)
@@ -2747,9 +2747,9 @@ class AddPumpDialog(_GlowDialog):
         self.values_main_layout = QVBoxLayout(self.values_widget)
         self.values_main_layout.setContentsMargins(0, 0, 0, 0)
         self.tests_column = QVBoxLayout()   # испытания 1, 2, 3, 4 - друг под другом
-        self.tests_column.setSpacing(22)
+        self.tests_column.setSpacing(styles.scaled(22))
         self.extra_column = QVBoxLayout()   # проверка на герметичность
-        self.extra_column.setSpacing(4)
+        self.extra_column.setSpacing(styles.scaled(4))
         self.values_main_layout.addLayout(self.tests_column)
         self.values_main_layout.addSpacing(18)
         self.values_main_layout.addLayout(self.extra_column)
@@ -2851,7 +2851,7 @@ class AddPumpDialog(_GlowDialog):
         table_width = self.value_tables['test1'].width()
 
         pressure_col = QVBoxLayout()
-        pressure_col.setSpacing(2)
+        pressure_col.setSpacing(styles.scaled(2))
         test4_prefix = QLabel("Испытание 4:")
         test4_prefix.setStyleSheet("color: #e8eaed; font-weight: bold; background: transparent;")
         pressure_col.addWidget(test4_prefix)
@@ -2913,7 +2913,7 @@ class AddPumpDialog(_GlowDialog):
 
         for key in utils.SEAL_KEYS:
             row = QHBoxLayout()
-            row.setSpacing(6)
+            row.setSpacing(styles.scaled(6))
             lbl = QLabel(utils.SEAL_LABELS[key] + ":")
             lbl.setWordWrap(False)
             lbl.setFixedWidth(seal_label_w)
@@ -3018,7 +3018,7 @@ class AddPumpDialog(_GlowDialog):
         available = max(30 * col_count, target_width - header_w - 2)
         scale = available / current_cols_width
         for c in range(col_count):
-            table.setColumnWidth(c, max(30, int(table.columnWidth(c) * scale)))
+            table.setColumnWidth(c, max(styles.scaled(30), int(table.columnWidth(c) * scale)))
         new_total = header_w + 2 + sum(table.columnWidth(c) for c in range(col_count))
         table.setFixedWidth(new_total)
 
@@ -3083,14 +3083,14 @@ class AddPumpDialog(_GlowDialog):
         # обрезались: resizeColumnsToContents() иногда немного занижает
         # нужную ширину, особенно у самих крайних столбцов таблицы.
         small_font = QFont()
-        small_font.setPointSize(styles.scaled_pt(9))
+        small_font.setPointSize(styles.scaled_pt(10))
         table.setFont(small_font)
         table.verticalHeader().setFont(small_font)
         table.resizeRowsToContents()
         table.resizeColumnsToContents()
-        min_section = 55
+        min_section = styles.scaled(55)
         for c in range(table.columnCount()):
-            table.setColumnWidth(c, max(min_section, table.columnWidth(c) + 4))
+            table.setColumnWidth(c, max(min_section, table.columnWidth(c) + styles.scaled(4)))
         table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         total_height = 2
@@ -3252,8 +3252,8 @@ class EditPumpDialog(_GlowDialog):
             chip = QFrame()
             chip.setStyleSheet(styles.LEFT_PANEL_CHIP_STYLE)
             box = QHBoxLayout(chip)
-            box.setContentsMargins(8, 3, 8, 3)
-            box.setSpacing(3)
+            box.setContentsMargins(styles.scaled(8), styles.scaled(3), styles.scaled(8), styles.scaled(3))
+            box.setSpacing(styles.scaled(3))
             lbl = QLabel(label_text)
             lbl.setStyleSheet("color: #e8eaed; background: transparent;")
             widget.setFixedWidth(field_width)
@@ -3331,9 +3331,9 @@ class EditPumpDialog(_GlowDialog):
         self.values_main_layout = QVBoxLayout(self.values_widget)
         self.values_main_layout.setContentsMargins(0, 0, 0, 0)
         self.tests_column = QVBoxLayout()
-        self.tests_column.setSpacing(22)
+        self.tests_column.setSpacing(styles.scaled(22))
         self.extra_column = QVBoxLayout()
-        self.extra_column.setSpacing(4)
+        self.extra_column.setSpacing(styles.scaled(4))
         self.values_main_layout.addLayout(self.tests_column)
         self.values_main_layout.addSpacing(18)
         self.values_main_layout.addLayout(self.extra_column)
@@ -3444,7 +3444,7 @@ class EditPumpDialog(_GlowDialog):
         table_width = self.value_tables['test1'].width()
 
         pressure_col = QVBoxLayout()
-        pressure_col.setSpacing(2)
+        pressure_col.setSpacing(styles.scaled(2))
         test4_prefix = QLabel("Испытание 4:")
         test4_prefix.setStyleSheet("color: #e8eaed; font-weight: bold; background: transparent;")
         pressure_col.addWidget(test4_prefix)
@@ -3505,7 +3505,7 @@ class EditPumpDialog(_GlowDialog):
 
         for key in utils.SEAL_KEYS:
             row = QHBoxLayout()
-            row.setSpacing(6)
+            row.setSpacing(styles.scaled(6))
             lbl = QLabel(utils.SEAL_LABELS[key] + ":")
             lbl.setWordWrap(False)
             lbl.setFixedWidth(seal_label_w)
@@ -3608,7 +3608,7 @@ class EditPumpDialog(_GlowDialog):
         available = max(30 * col_count, target_width - header_w - 2)
         scale = available / current_cols_width
         for c in range(col_count):
-            table.setColumnWidth(c, max(30, int(table.columnWidth(c) * scale)))
+            table.setColumnWidth(c, max(styles.scaled(30), int(table.columnWidth(c) * scale)))
         new_total = header_w + 2 + sum(table.columnWidth(c) for c in range(col_count))
         table.setFixedWidth(new_total)
 
@@ -3671,14 +3671,14 @@ class EditPumpDialog(_GlowDialog):
         table.itemChanged.connect(self._on_value_item_changed)
 
         small_font = QFont()
-        small_font.setPointSize(styles.scaled_pt(9))
+        small_font.setPointSize(styles.scaled_pt(10))
         table.setFont(small_font)
         table.verticalHeader().setFont(small_font)
         table.resizeRowsToContents()
         table.resizeColumnsToContents()
-        min_section = 55
+        min_section = styles.scaled(55)
         for c in range(table.columnCount()):
-            table.setColumnWidth(c, max(min_section, table.columnWidth(c) + 4))
+            table.setColumnWidth(c, max(min_section, table.columnWidth(c) + styles.scaled(4)))
         table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         total_height = 2
@@ -3707,7 +3707,7 @@ class EditPumpDialog(_GlowDialog):
         original = item.data(Qt.UserRole) or ''
         changed = item.text().strip() != original
         font = QFont()
-        font.setPointSize(styles.scaled_pt(9))
+        font.setPointSize(styles.scaled_pt(10))
         font.setBold(changed)
         item.setFont(font)
         item.setForeground(self._CHANGED_COLOR if changed else self._NORMAL_COLOR)
