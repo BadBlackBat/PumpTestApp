@@ -245,6 +245,14 @@ class RightPanel(QWidget):
         self.stats_widget.setStyleSheet(styles.get_right_panel_stats_bg_style())
         self.overview_bg.setStyleSheet(styles.get_right_panel_stats_bg_style())
         self.content_widget.setStyleSheet(styles.get_right_panel_stats_bg_style())
+        self.loading_text_label.setStyleSheet(styles.get_right_panel_loading_text_style())
+        if self._loading_icon_base is not None:
+            load_svg_path = os.path.join(ICONS_DIR, 'load.svg')
+            if os.path.exists(load_svg_path):
+                self._loading_icon_base = icon_utils.tinted_pixmap(
+                    load_svg_path, styles.get_loading_icon_color(), size=28
+                )
+                self.loading_icon_label.setPixmap(self._loading_icon_base)
         self.scroll_area.setStyleSheet(styles.get_right_panel_scroll_style())
         self._apply_scroll_area_shadow()
 
@@ -457,7 +465,7 @@ class RightPanel(QWidget):
         load_svg_path = os.path.join(ICONS_DIR, 'load.svg')
         if os.path.exists(load_svg_path):
             self._loading_icon_base = icon_utils.tinted_pixmap(
-                load_svg_path, styles.LOADING_ICON_COLOR, size=_LOADING_ICON_SIZE
+                load_svg_path, styles.get_loading_icon_color(), size=_LOADING_ICON_SIZE
             )
             self.loading_icon_label.setPixmap(self._loading_icon_base)
         loading_layout.addWidget(self.loading_icon_label, 0, Qt.AlignHCenter)
@@ -465,7 +473,7 @@ class RightPanel(QWidget):
         self.loading_text_label = QLabel("")
         self.loading_text_label.setAlignment(Qt.AlignCenter)
         self.loading_text_label.setFont(QFont("Arial", styles.scaled_pt(14)))
-        self.loading_text_label.setStyleSheet(styles.RIGHT_PANEL_LOADING_TEXT_STYLE)
+        self.loading_text_label.setStyleSheet(styles.get_right_panel_loading_text_style())
         loading_layout.addWidget(self.loading_text_label, 0, Qt.AlignHCenter)
 
         self.loading_label.setStyleSheet(styles.RIGHT_PANEL_LOADING_STYLE)

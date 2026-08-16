@@ -1164,7 +1164,8 @@ def _right_panel_loading_style():
         padding: {scaled(20)}px;
     }}
 """
-RIGHT_PANEL_LOADING_TEXT_STYLE = "color: #555;"
+def get_right_panel_loading_text_style():
+    return "color: #555;" if is_light_theme() else "color: #c8ccd2;"
 
 # Легенда с пояснением цветовой подсветки несоответствий техническим
 # требованиям (текстовая строка под таблицами протокола)
@@ -1418,9 +1419,11 @@ THEME_ICON_ACTIVE_COLOR = "#4fd1ff"
 THEME_ICON_INACTIVE_COLOR = "#5a5d63"
 THEME_ICON_INACTIVE_HOVER_COLOR = "#8a8e94"
 
-# Иконка загрузки протокола (песочные часы) - чёрная, без перекраски,
-# как на исходной картинке
-LOADING_ICON_COLOR = "#1c1e21"
+# Иконка загрузки протокола (песочные часы) - тёмная на светлой теме,
+# светлая на тёмной (фон под ней теперь тоже зависит от темы - см.
+# content_widget в right_panel.py)
+def get_loading_icon_color():
+    return "#1c1e21" if is_light_theme() else "#c8ccd2"
 
 # ============================================================
 # ДИНАМИЧЕСКИЕ КОНСТАНТЫ СТИЛЕЙ (масштабирование под UI_SCALE)
