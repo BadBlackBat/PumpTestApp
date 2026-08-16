@@ -1097,7 +1097,15 @@ class LeftPanel(QWidget):
         chip_layout.setContentsMargins(styles.scaled(8), 0, styles.scaled(8), 0)
         chip_layout.setSpacing(styles.scaled(6))
         label = QLabel(label_text)
-        label.setStyleSheet(styles.LEFT_PANEL_FILTER_LABEL_STYLE)
+        label.setStyleSheet(
+            styles.LEFT_PANEL_FILTER_LABEL_STYLE
+            + f"padding: 0px {styles.scaled(4)}px;"
+        )
+        # Высота метки заголовка - точно такая же, как естественная высота
+        # соседнего выпадающего списка/поля (а не только чипа целиком) -
+        # чтобы визуально не была ни выше, ни ниже, и корректно
+        # центрировалась по вертикали в общей строке
+        label.setFixedHeight(control_widget.sizeHint().height())
         chip_layout.addWidget(label)
         chip_layout.addWidget(control_widget)
         return chip

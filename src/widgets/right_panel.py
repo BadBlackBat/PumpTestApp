@@ -6,8 +6,8 @@ from PyQt5.QtWidgets import (
     QFileDialog, QMessageBox, QFrame, QApplication, QHeaderView,
     QScrollBar, QStyle, QStyleOptionSlider, QGraphicsDropShadowEffect
 )
-from PyQt5.QtCore import Qt, pyqtSignal, pyqtProperty, QSize, QTimer, QPropertyAnimation, QRectF
-from PyQt5.QtGui import QColor, QFont, QPainter, QPixmap, QTransform, QLinearGradient, QBrush
+from PyQt5.QtCore import Qt, pyqtSignal, pyqtProperty, QSize, QTimer, QPropertyAnimation, QRectF, QPoint
+from PyQt5.QtGui import QColor, QFont, QPainter, QPixmap, QTransform, QLinearGradient, QBrush, QRegion
 from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintPreviewWidget
 
 import matplotlib
@@ -244,6 +244,7 @@ class RightPanel(QWidget):
         self.logo_text_label.setStyleSheet(styles.get_right_panel_logo_text_style())
         self.stats_widget.setStyleSheet(styles.get_right_panel_stats_bg_style())
         self.overview_bg.setStyleSheet(styles.get_right_panel_stats_bg_style())
+        self.content_widget.setStyleSheet(styles.get_right_panel_stats_bg_style())
         self.scroll_area.setStyleSheet(styles.get_right_panel_scroll_style())
         self._apply_scroll_area_shadow()
 
@@ -288,6 +289,9 @@ class RightPanel(QWidget):
 
         content = QWidget()
         self.content_widget = content  # нужен целиком для экспорта в PDF
+        self.content_widget.setObjectName("statsBackground")
+        self.content_widget.setAttribute(Qt.WA_StyledBackground, True)
+        self.content_widget.setStyleSheet(styles.get_right_panel_stats_bg_style())
         self.content_layout = QVBoxLayout(content)
         # Отступ справа увеличен - наша полоса прокрутки в раскрытом виде
         # занимает до ~13px у правого края (см. _GlowScrollBar), без
@@ -315,12 +319,37 @@ class RightPanel(QWidget):
         self.export_pdf_btn.hide()
         self._fit_mode = False
 
-        # Жирный заголовок "Характеристики образца насоса ГУР" - во всю
-        # ширину, отдельно от остальных деталей протокола
+        # Единый внутренний столбец для ВСЕГО содержимого протокола -
+        # заголовок, таблицы+графики, герметичность, легенда, примечания -
+        # оборачивается в ограничение ширины и центрирование ОДИН раз, в
+        # самом конце setup_ui (см. self.protocol_column_layout ниже),
+        # вместо того чтобы оборачивать каждый элемент по отдельности
+        # (что уже привело к нескольким последовательным ошибкам - часть
+        # элементов забывалась, часть вела себя непоследовательно между
+        # обычным и расширенным режимом просмотра).
+        self.protocol_column_widget = QWidget()
+        self.protocol_column_widget.setObjectName("protocolColumnBg")
+        self.protocol_column_widget.setAttribute(Qt.WA_StyledBackground, True)
+        self.protocol_column_widget.setStyleSheet(styles.get_right_panel_protocol_column_style())
+        self.protocol_column_layout = QVBoxLayout(self.protocol_column_widget)
+        self.protocol_column_layout.setContentsMargins(
+            styles.scaled(16), styles.scaled(10), styles.scaled(16), styles.scaled(10)
+        )
+        self.protocol_column_layout.setSpacing(styles.scaled(10))
+
+        # Жирный заголовок "Характеристики образца насоса ГУР" - теперь
+        # ВНУТРИ общего столбца протокола (тот же всегда-светлый фон, что
+        # и у остального содержимого), а не отдельно, снаружи, на фоне
+        # content_widget - тот менял цвет в зависимости от темы (тёмный/
+        # светлый), из-за чего светлый текст (нужный для видимости на
+        # тёмной теме на экране) становился невидим на белой странице при
+        # печати/экспорте в PDF. Постоянный тёмный цвет текста здесь
+        # корректен всегда - фон под ним не меняется.
         self.header_title_label = QLabel("")
+        self.header_title_label.setStyleSheet("color: #2b2d31;")
         self.header_title_label.setAlignment(Qt.AlignCenter)
         self.header_title_label.setFont(QFont("Arial", styles.scaled_pt(12), QFont.Bold))
-        self.content_layout.addWidget(self.header_title_label)
+        self.protocol_column_layout.addWidget(self.header_title_label)
 
         self.header_label = QLabel("Выберите насос для просмотра протокола")
         self.header_label.setAlignment(Qt.AlignLeft)
@@ -348,7 +377,10 @@ class RightPanel(QWidget):
         header_row = QHBoxLayout()
         header_row.addWidget(self.header_label, 1)
         header_row.addWidget(self.test_conditions_box)
-        self.content_layout.addLayout(header_row)
+        header_row_widget = QWidget()
+        header_row_widget.setLayout(header_row)
+        self.header_row_widget = header_row_widget
+        self.protocol_column_layout.addWidget(header_row_widget)
 
         # Логотип: картинка-водяной знак (рисуется в paintEvent самого
         # _LogoContainer, не как дочерний виджет) + заголовок сверху +
@@ -476,7 +508,7 @@ class RightPanel(QWidget):
         self.legend_label = QLabel()
         self.legend_label.setWordWrap(True)
         self.legend_label.setStyleSheet(styles.RIGHT_PANEL_LEGEND_STYLE)
-        self.content_layout.addWidget(self.legend_label)
+        self.protocol_column_layout.addWidget(self.legend_label)
 
         # Динамический контейнер: слева таблицы (на общей панели-подложке),
         # справа графики. Сами колонки создаются один раз и больше не
@@ -499,7 +531,7 @@ class RightPanel(QWidget):
 
         self.dynamic_layout.addWidget(self.tables_panel, 0)
         self.dynamic_layout.addLayout(self.graphs_column, 1)
-        self.content_layout.addWidget(self.dynamic_widget)
+        self.protocol_column_layout.addWidget(self.dynamic_widget)
 
         # Отдельная полноширинная панель для таблицы герметичности (тот же
         # фон, чтобы визуально выглядело продолжением общей панели)
@@ -507,13 +539,19 @@ class RightPanel(QWidget):
         self.seal_panel.setStyleSheet(styles.RIGHT_PANEL_CARD_STYLE)
         self.seal_layout = QVBoxLayout(self.seal_panel)
         self.seal_layout.setContentsMargins(8, 8, 8, 8)
-        self.content_layout.addWidget(self.seal_panel)
+        self.protocol_column_layout.addWidget(self.seal_panel)
 
         # Примечание и история редактирования - в самом конце, после
         # герметичности
         self.notes_widget = QWidget()
         self.notes_layout = QVBoxLayout(self.notes_widget)
-        self.content_layout.addWidget(self.notes_widget)
+        self.protocol_column_layout.addWidget(self.notes_widget)
+
+        # Сам единый столбец - оборачивается в ограничение ширины и
+        # центрирование ОДИН раз, здесь, а не по частям выше. Ширина
+        # обновляется позже, в create_graphs(), когда становится известна
+        # фактическая ширина панели таблиц и предел ширины графиков.
+        self.content_layout.addWidget(self.protocol_column_widget, 0, Qt.AlignHCenter)
 
         scroll.setWidget(content)
         # Оборачиваем область прокрутки в такую же панель со свечением,
@@ -562,6 +600,15 @@ class RightPanel(QWidget):
         self.seal_panel.hide()
         self.notes_widget.hide()
         self.dynamic_widget.hide()
+        # Переприменяем фон content_widget прямо сейчас, а не полагаемся
+        # только на разовое обновление при переключении темы - та же
+        # защита от рассинхронизации между темой и уже показанным
+        # виджетом, что уже применяется чуть ниже для logo_label/
+        # title_label. Важно сделать это ДО hide() - именно в момент,
+        # когда protocol_column_widget скрывается, фон content_widget
+        # становится видимым "наизнанку" под ним.
+        self.content_widget.setStyleSheet(styles.get_right_panel_stats_bg_style())
+        self.protocol_column_widget.hide()
         self.stats_widget.hide()
         self.logo_label.show()
 
@@ -831,7 +878,7 @@ class RightPanel(QWidget):
         # графика 1 были на уровне заголовка "Тест 1"
         self.graphs_column.setContentsMargins(0, 9, 0, 0)
 
-        self.create_graphs(data, graph1_height, graph2_height)
+        self.create_graphs(data, graph1_height, graph2_height, uniform_width)
         self._set_loading_progress(90)
         show_notes = self.create_notes_section(data)
         self._set_loading_progress(100)
@@ -846,6 +893,7 @@ class RightPanel(QWidget):
         # Всё построено - теперь показываем готовый протокол разом и
         # прячем индикатор загрузки
         self.loading_label.hide()
+        self.protocol_column_widget.show()
         self.dynamic_widget.show()
         self.seal_panel.show()
         self.header_label.show()
@@ -1055,7 +1103,7 @@ class RightPanel(QWidget):
 
         title_html = (
             "<b>Тест 4: Давление настройки предохранительного клапана</b><br>"
-            "<i>Условие: Обороты привода насоса: 1000...1300 мин<sup>-1</sup><br>"
+            "<i>Условие: Обороты привода насоса: 1500 ±100 мин<sup>-1</sup><br>"
             "Клапан ЕСО открыт (I = 1 А)<br>"
             "Объемная подача (при срабатывании клапана) &lt; 0.1 л/мин</i>"
         )
@@ -1208,7 +1256,7 @@ class RightPanel(QWidget):
         setattr(self, marker_attr, marker)
         canvas.draw_idle()
 
-    def _make_graph_widget(self, fig, height=None, min_width=None):
+    def _make_graph_widget(self, fig, height=None, min_width=None, max_width=None):
         """Оборачивает Figure в canvas + тулбар matplotlib (зум/панорама/
         сброс масштаба кнопкой 'Home') и возвращает готовый контейнер-виджет
         и сам canvas (нужен отдельно, чтобы перерисовать график после клика
@@ -1222,7 +1270,16 @@ class RightPanel(QWidget):
         панель уже. Если панель окажется у́же min_width - появится
         горизонтальная прокрутка (уже включена и стилизована - через
         такой же оверлей-виджет _GlowScrollBar, что и у вертикальной
-        полосы, см. _OverlayScrollArea)."""
+        полосы, см. _OverlayScrollArea).
+
+        max_width - явный верхний предел ширины. Если не передан, а
+        задана height - вычисляется по соотношению 16:9 от ЭТОЙ height.
+        ВАЖНО: график 1 и график 2 имеют РАЗНУЮ высоту (вычисляется от
+        разных таблиц - см. вызов create_graphs) - если предоставить
+        каждому вычислять предел самостоятельно от собственной высоты,
+        верхний и нижний график получат РАЗНУЮ ширину. Чтобы оба графика
+        были одинаковой ширины - вызывающий код должен вычислить единое
+        значение max_width один раз и передать явно в оба вызова."""
         canvas = FigureCanvas(fig)
         canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         toolbar = _FixedAspectToolbar(canvas, self)
@@ -1240,9 +1297,30 @@ class RightPanel(QWidget):
             container.setFixedHeight(height)
         if min_width:
             container.setMinimumWidth(min_width)
+        if max_width or height:
+            # Верхний предел ширины (явный max_width, если передан, иначе
+            # по соотношению 16:9 от высоты) - без этого график с
+            # политикой размера Expanding растягивался бы на всю
+            # доступную ширину панели без ограничений (например, при
+            # скрытой левой панели на широком мониторе), искажая
+            # пропорции графика всё сильнее по мере роста ширины экрана.
+            # Не может быть меньше min_width - иначе Qt получил бы
+            # противоречивое ограничение (максимум меньше минимума).
+            effective_max = max_width if max_width else round(height * 16 / 9)
+            container.setMaximumWidth(max(min_width or 0, effective_max))
         return container, canvas
 
-    def create_graphs(self, data, graph1_height=None, graph2_height=None):
+    def create_graphs(self, data, graph1_height=None, graph2_height=None, tables_width=None):
+        # Единый предел ширины для ОБОИХ графиков сразу - от МЕНЬШЕЙ из
+        # двух высот (у графика 1 и графика 2 высоты разные, вычисляются
+        # от разных таблиц - см. вызов ниже по коду). Если предоставить
+        # каждому графику считать свой предел самостоятельно от
+        # собственной высоты - верхний и нижний график получили бы
+        # РАЗНУЮ ширину, что и требовалось исправить.
+        shared_max_width = None
+        if graph1_height and graph2_height:
+            shared_max_width = round(min(graph1_height, graph2_height) * 16 / 9)
+
         mod = None
         if data.get('mod_name'):
             mod = db.get_modification_by_name(data['mod_name'])
@@ -1305,7 +1383,7 @@ class RightPanel(QWidget):
         # стабильный, предсказуемый результат.
         fig1.subplots_adjust(left=0.14, right=0.97, top=0.90, bottom=0.24)
 
-        graph1_widget, graph1_canvas = self._make_graph_widget(fig1, graph1_height, min_width=646)
+        graph1_widget, graph1_canvas = self._make_graph_widget(fig1, graph1_height, min_width=560, max_width=shared_max_width)
         self.graphs_column.addWidget(graph1_widget)
         self._graph1_ax = ax1
         self._graph1_canvas = graph1_canvas
@@ -1341,11 +1419,16 @@ class RightPanel(QWidget):
         ax2.set_yticks(np.arange(4, 18, 1))
         fig2.subplots_adjust(left=0.14, right=0.97, top=0.90, bottom=0.20)
 
-        graph2_widget, graph2_canvas = self._make_graph_widget(fig2, graph2_height, min_width=646)
+        graph2_widget, graph2_canvas = self._make_graph_widget(fig2, graph2_height, min_width=560, max_width=shared_max_width)
         self.graphs_column.addWidget(graph2_widget)
         self._graph2_ax = ax2
         self._graph2_canvas = graph2_canvas
         self._graph2_marker = None
+
+        # Отдельного расчёта максимальной ширины столбца больше не нужно -
+        # protocol_column_widget сам принимает верный размер по
+        # содержимому, раз графики уже сами по себе корректно ограничены
+        # по ширине (см. max_width выше).
 
     def display_comparison(self, items):
         """items - список полных данных (с results_json) насосов-дублей:
@@ -1356,6 +1439,10 @@ class RightPanel(QWidget):
         self.current_data = None  # это не единичный протокол
         self.current_comparison_items = items  # для экспорта/печати сравнения
         self._clear_dynamic_content()
+
+        # Отдельного сброса/расчёта максимальной ширины больше не нужно -
+        # protocol_column_widget сам принимает верный размер по
+        # содержимому в любом режиме, без ручного вмешательства.
 
         self.logo_label.hide()
         self.loading_label.show()
@@ -1437,7 +1524,7 @@ class RightPanel(QWidget):
             lbl.setFixedWidth(uniform_width)
 
         self._create_comparison_seal_table(items)
-        self._create_comparison_graphs(items, mod)
+        self._create_comparison_graphs(items, mod, uniform_width)
         self._set_loading_progress(100)
 
         self.legend_label.setText(
@@ -1450,6 +1537,7 @@ class RightPanel(QWidget):
         # Всё построено - теперь показываем готовое сравнение разом и
         # прячем индикатор загрузки
         self.loading_label.hide()
+        self.protocol_column_widget.show()
         self.dynamic_widget.show()
         self.seal_panel.show()
         self.header_label.show()
@@ -1627,7 +1715,7 @@ class RightPanel(QWidget):
         self.seal_layout.addWidget(title_label)
         self.seal_layout.addWidget(table)
 
-    def _create_comparison_graphs(self, items, mod):
+    def _create_comparison_graphs(self, items, mod, uniform_width):
         if not mod:
             label = QLabel("Нормативы не найдены для этой модификации")
             self.graphs_column.addWidget(label)
@@ -1682,7 +1770,7 @@ class RightPanel(QWidget):
         ax1.set_title('Сравнение дублей: расход от оборотов', fontsize=_GRAPH_LEGEND_FONT_SIZE + 2)
         ax1.format_coord = lambda x, y: f"RPM={x:.1f}   Q={y:.2f}"
         fig1.subplots_adjust(left=0.14, right=0.97, top=0.90, bottom=0.26)
-        graph1_widget, graph1_canvas = self._make_graph_widget(fig1, min_width=620)
+        graph1_widget, graph1_canvas = self._make_graph_widget(fig1, min_width=620, max_width=650)
         self._graph1_ax = ax1
         self._graph1_canvas = graph1_canvas
         self._graph1_marker = None
@@ -1722,11 +1810,16 @@ class RightPanel(QWidget):
         ax2.set_ylim(4, 17)
         ax2.set_yticks(np.arange(4, 18, 1))
         fig2.subplots_adjust(left=0.14, right=0.97, top=0.90, bottom=0.22)
-        graph2_widget, graph2_canvas = self._make_graph_widget(fig2, min_width=620)
+        graph2_widget, graph2_canvas = self._make_graph_widget(fig2, min_width=620, max_width=650)
         self._graph2_ax = ax2
         self._graph2_canvas = graph2_canvas
         self._graph2_marker = None
         self.graphs_column.addWidget(graph2_widget)
+
+        # Отдельного расчёта максимальной ширины столбца больше не нужно -
+        # protocol_column_widget сам принимает верный размер по
+        # содержимому, раз оба графика сравнения уже сами по себе
+        # корректно ограничены по ширине (min_width/max_width выше).
 
     def print_protocol(self):
         """Открывает предпросмотр печати текущего протокола (или сравнения дублей)."""
@@ -1781,6 +1874,15 @@ class RightPanel(QWidget):
         widget_to_print = self.content_widget
         REFERENCE_WIDTH = 1400  # эталонная ширина "как при полном развороте"
 
+        # Временно убираем цветной фон content_widget И protocol_column_widget
+        # на время рендера - у обоих есть собственный непрозрачный фон
+        # (см. setup_ui), который иначе перекрыл бы белую заливку страницы
+        # цветным пятном. Восстанавливается в finally этой же функции.
+        original_bg_style = widget_to_print.styleSheet()
+        original_protocol_bg_style = self.protocol_column_widget.styleSheet()
+        widget_to_print.setStyleSheet("")
+        self.protocol_column_widget.setStyleSheet("")
+
         # Временно отключаем авто-растяжение scroll area и фиксируем ширину
         self.scroll_area.setWidgetResizable(False)
         original_min_w = widget_to_print.minimumWidth()
@@ -1790,8 +1892,23 @@ class RightPanel(QWidget):
         QApplication.processEvents()
 
         try:
-            w = max(widget_to_print.width(), 1)
-            h = max(widget_to_print.height(), 1)
+            # Точная область СОДЕРЖИМОГО (заголовок + блок протокола), а не
+            # весь content_widget целиком - после недавнего центрирования
+            # обоих этот виджет уже НЕ занимает всю ширину REFERENCE_WIDTH,
+            # вокруг него остаются пустые поля. Без этой поправки они
+            # попадали бы в расчёт масштаба наравне с самим содержимым,
+            # из-за чего протокол выглядел бы заметно мельче, чем должен
+            # (особенно заметно в режиме сравнения дублей - там графики
+            # ограничены более узким пределом ширины).
+            # Заголовок теперь физически внутри protocol_column_widget -
+            # его геометрия уже включена в границы самого блока, отдельно
+            # вычислять объединение прямоугольников больше не нужно
+            capture_rect = self.protocol_column_widget.geometry()
+            if capture_rect.width() <= 0 or capture_rect.height() <= 0:
+                capture_rect = widget_to_print.rect()
+
+            w = max(capture_rect.width(), 1)
+            h = max(capture_rect.height(), 1)
             page_rect = printer.pageRect()
 
             # Рендерим в изображение повышенной плотности пикселей - иначе
@@ -1810,21 +1927,29 @@ class RightPanel(QWidget):
             # перерисовки - здесь это безопасно, т.к. рендер разовый.
             widget_to_print.setAttribute(Qt.WA_NoSystemBackground, True)
             try:
-                widget_to_print.render(hr_painter)
+                # sourceRegion + targetOffset - рендерим только вычисленную
+                # выше точную область содержимого, сдвинутую в начало
+                # координат, а не весь widget_to_print от нуля
+                widget_to_print.render(
+                    hr_painter,
+                    QPoint(0, 0),
+                    QRegion(capture_rect),
+                )
             finally:
                 widget_to_print.setAttribute(Qt.WA_NoSystemBackground, False)
             hr_painter.end()
 
-            # Масштабируем по ширине - протокол должен заполнять всю ширину
-            # листа; высота при необходимости просто продолжается за
-            # пределы одной "видимой" страницы (постраничная разбивка не
-            # реализована)
+            # Масштабируем по МЕНЬШЕЙ из сторон - протокол должен
+            # полностью вписываться в лист, а не только по ширине. Раньше
+            # масштаб считался только от ширины, и высокий протокол
+            # (много тестов/герметичность/примечания) просто обрезался за
+            # пределами одной страницы - постраничная разбивка не
+            # реализована, поэтому единственный надёжный способ не терять
+            # часть протокола - гарантировать, что он весь помещается.
             scale_x = (page_rect.width() / w) * 0.98
-            # Небольшое вертикальное растяжение (визуально привлекательнее,
-            # заполняет лист по высоте лучше, чем строго пропорциональный
-            # масштаб от ширины)
-            scale_y = scale_x * 1.12
-            target_rect = QRectF(0, 0, w * scale_x, h * scale_y)
+            scale_y = (page_rect.height() / h) * 0.98
+            scale = min(scale_x, scale_y)
+            target_rect = QRectF(0, 0, w * scale, h * scale)
 
             painter = QPainter()
             painter.begin(printer)
@@ -1839,6 +1964,8 @@ class RightPanel(QWidget):
             widget_to_print.setMinimumWidth(original_min_w)
             widget_to_print.setMaximumWidth(original_max_w)
             self.scroll_area.setWidgetResizable(True)
+            widget_to_print.setStyleSheet(original_bg_style)
+            self.protocol_column_widget.setStyleSheet(original_protocol_bg_style)
 
             for toolbar in self._graph_toolbars:
                 toolbar.show()
@@ -1863,7 +1990,14 @@ class RightPanel(QWidget):
         if not self._fit_mode:
             if self.history_btn is not None:
                 self.history_btn.hide()
-            self._overview_base_pixmap = self.content_widget.grab()
+            # Заголовок теперь физически внутри protocol_column_widget -
+            # его геометрия уже включена в границы самого блока, отдельно
+            # вычислять объединение прямоугольников больше не нужно
+            capture_rect = self.protocol_column_widget.geometry()
+            if capture_rect.width() > 0 and capture_rect.height() > 0:
+                self._overview_base_pixmap = self.content_widget.grab(capture_rect)
+            else:
+                self._overview_base_pixmap = self.content_widget.grab()
             self._render_overview()
             self.scroll_area.hide()
             self.overview_bg.show()
@@ -1876,15 +2010,24 @@ class RightPanel(QWidget):
             self._fit_mode = False
 
     def _render_overview(self):
-        """Строит картинку обзорного снимка ровно "по высоте панели" -
-        без возможности масштабирования (см. пояснение в toggle_fit_view)."""
+        """Строит картинку обзорного снимка, помещающуюся в видимую
+        область целиком - и по высоте, и по ширине (без масштабирования
+        колесом мыши, см. пояснение в toggle_fit_view)."""
         base = self._overview_base_pixmap
-        if base is None or base.height() == 0:
+        if base is None or base.height() == 0 or base.width() == 0:
             return
-        viewport_height = self.scroll_area.viewport().height()
-        if viewport_height <= 0:
+        viewport = self.scroll_area.viewport()
+        viewport_height = viewport.height()
+        viewport_width = viewport.width()
+        if viewport_height <= 0 or viewport_width <= 0:
             return
-        fit_scale = viewport_height / base.height()
+        # МЕНЬШИЙ из двух коэффициентов - в расширенном режиме (левая
+        # панель скрыта) исходный снимок захватывается очень широким
+        # (много пустого фона по бокам от центрированного протокола), и
+        # масштабирование ТОЛЬКО по высоте раздувало бы итоговую ширину
+        # непропорционально. Ограничение по обеим сторонам сразу не даёт
+        # снимку выйти за пределы видимой области ни в одном измерении.
+        fit_scale = min(viewport_height / base.height(), viewport_width / base.width())
         scaled = base.scaled(
             max(1, int(base.width() * fit_scale)), max(1, int(base.height() * fit_scale)),
             Qt.KeepAspectRatio, Qt.SmoothTransformation
@@ -1978,6 +2121,12 @@ class RightPanel(QWidget):
         progress.show()
         progress.set_progress(10)
 
+        widget_to_print = None
+        original_bg_style = None
+        original_protocol_bg_style = None
+        original_min_w = None
+        original_max_w = None
+
         try:
             printer = QPrinter(QPrinter.HighResolution)
             printer.setOutputFormat(QPrinter.PdfFormat)
@@ -1990,31 +2139,74 @@ class RightPanel(QWidget):
             progress.set_progress(25)
 
             widget_to_print = self.content_widget
-            w = max(widget_to_print.width(), 1)
-            h = max(widget_to_print.height(), 1)
+            REFERENCE_WIDTH = 1400  # та же эталонная ширина, что и в предпросмотре печати
+
+            # Убираем цветной фон обоих виджетов - у content_widget и у
+            # protocol_column_widget есть собственный непрозрачный фон
+            # (см. setup_ui), который иначе попал бы в PDF цветным пятном
+            original_bg_style = widget_to_print.styleSheet()
+            original_protocol_bg_style = self.protocol_column_widget.styleSheet()
+            widget_to_print.setStyleSheet("")
+            self.protocol_column_widget.setStyleSheet("")
+
+            # Фиксируем эталонную ширину и заставляем content_widget
+            # пересчитать свою ПОЛНУЮ высоту по содержимому - раньше этот
+            # метод использовал текущий, видимый на экране размер, который
+            # ограничен видимой областью прокрутки (widgetResizable=True
+            # растягивает под видимую область, а не под полную высоту
+            # содержимого) - отсюда и обрезание протокола снизу.
+            self.scroll_area.setWidgetResizable(False)
+            original_min_w = widget_to_print.minimumWidth()
+            original_max_w = widget_to_print.maximumWidth()
+            widget_to_print.setFixedWidth(REFERENCE_WIDTH)
+            widget_to_print.adjustSize()
+            QApplication.processEvents()
+
+            # Точная область содержимого (заголовок + блок протокола), а не
+            # весь content_widget целиком - после центрирования обоих этот
+            # виджет уже не занимает всю ширину REFERENCE_WIDTH, вокруг
+            # него остаются пустые поля. Без этой поправки протокол в
+            # расширенном режиме/режиме сравнения выглядел бы заметно
+            # мельче, чем должен (примерно половина листа А4).
+            # Заголовок теперь физически внутри protocol_column_widget -
+            # его геометрия уже включена в границы самого блока, отдельно
+            # вычислять объединение прямоугольников больше не нужно
+            capture_rect = self.protocol_column_widget.geometry()
+            if capture_rect.width() <= 0 or capture_rect.height() <= 0:
+                capture_rect = widget_to_print.rect()
+
+            w = max(capture_rect.width(), 1)
+            h = max(capture_rect.height(), 1)
             page_rect = printer.pageRect()
             # Масштабируем по ширине листа (как и в предпросмотре печати -
             # см. _render_protocol_to_printer) - протокол должен занимать
             # всю ширину страницы; высота при необходимости просто
-            # продолжается за пределы одной "видимой" страницы. Раньше
-            # здесь использовался масштаб "по меньшей из сторон", из-за
-            # чего высокий протокол ужимался по ширине, оставляя пустые
-            # поля по бокам, а графики выглядели сплющенными.
+            # Масштабируем по МЕНЬШЕЙ из сторон - протокол должен
+            # полностью вписываться в лист, а не только по ширине (без
+            # этого высокий протокол просто обрезался бы за пределами
+            # одной страницы - постраничная разбивка не реализована)
             scale_x = (page_rect.width() / w) * 0.98
-            scale_y = scale_x * 1.12
+            scale_y = (page_rect.height() / h) * 0.98
+            scale = min(scale_x, scale_y)
             progress.set_progress(40)
 
             painter = QPainter()
             painter.begin(printer)
             painter.fillRect(printer.pageRect(), Qt.white)
-            painter.scale(scale_x, scale_y)
+            painter.scale(scale, scale)
             # Отключаем системную заливку фона только на время этого
             # разового рендера (см. подробное пояснение в аналогичном
             # месте _render_protocol_to_printer)
             widget_to_print.setAttribute(Qt.WA_NoSystemBackground, True)
             progress.set_progress(65)
             try:
-                widget_to_print.render(painter)
+                # sourceRegion + targetOffset - рендерим только вычисленную
+                # выше точную область содержимого, а не весь widget_to_print
+                widget_to_print.render(
+                    painter,
+                    QPoint(0, 0),
+                    QRegion(capture_rect),
+                )
             finally:
                 widget_to_print.setAttribute(Qt.WA_NoSystemBackground, False)
             progress.set_progress(90)
@@ -2027,6 +2219,13 @@ class RightPanel(QWidget):
             progress.accept()
             QMessageBox.critical(self, "Ошибка экспорта", f"Не удалось сохранить PDF:\n{e}")
         finally:
+            if widget_to_print is not None:
+                widget_to_print.setStyleSheet(original_bg_style)
+                self.protocol_column_widget.setStyleSheet(original_protocol_bg_style)
+                if original_min_w is not None:
+                    widget_to_print.setMinimumWidth(original_min_w)
+                    widget_to_print.setMaximumWidth(original_max_w)
+                self.scroll_area.setWidgetResizable(True)
             for toolbar in self._graph_toolbars:
                 toolbar.show()
             if self.history_btn is not None:
@@ -2175,6 +2374,10 @@ class RightPanel(QWidget):
         self.seal_panel.hide()
         self.notes_widget.hide()
         self.dynamic_widget.hide()  # иначе видна пустая панель-подложка без содержимого
+        # Переприменяем фон content_widget прямо сейчас - см. подробное
+        # пояснение в аналогичном месте ниже по файлу
+        self.content_widget.setStyleSheet(styles.get_right_panel_stats_bg_style())
+        self.protocol_column_widget.hide()
         self.stats_widget.hide()
         self.loading_label.hide()
         # Переприменяем стиль заглушки прямо сейчас, а не полагаемся
@@ -2202,6 +2405,15 @@ class RightPanel(QWidget):
         self.seal_panel.hide()
         self.notes_widget.hide()
         self.dynamic_widget.hide()
+        # Переприменяем фон content_widget прямо сейчас, а не полагаемся
+        # только на разовое обновление при переключении темы - та же
+        # защита от рассинхронизации между темой и уже показанным
+        # виджетом, что уже применяется чуть ниже для logo_label/
+        # title_label. Важно сделать это ДО hide() - именно в момент,
+        # когда protocol_column_widget скрывается, фон content_widget
+        # становится видимым "наизнанку" под ним.
+        self.content_widget.setStyleSheet(styles.get_right_panel_stats_bg_style())
+        self.protocol_column_widget.hide()
         self.stats_widget.hide()
         self.logo_label.hide()
         self.loading_text_label.setText(message)

@@ -1146,6 +1146,20 @@ class AddModificationDialog(_GlowDialog):
         )
         super().__init__(parent, title=title, glow_color=self._GREEN)
 
+        # Этот диалог - один из самых высоких по содержимому (3 таблицы
+        # испытаний + герметичность + пароль) - на маленьких экранах не
+        # помещается по высоте даже с учётом clamp_to_screen. Оборачиваем
+        # всё содержимое в прокручиваемую область с фирменной полосой
+        # прокрутки (тот же приём, что уже используется в
+        # ViewModificationsDialog) - остальной код этого метода добавляет
+        # виджеты в body_layout (локальная переменная ниже), которая
+        # указывает на layout ВНУТРИ прокручиваемой области, а не на
+        # self.body_layout самого диалога напрямую.
+        scroll_content = QWidget()
+        body_layout = QVBoxLayout(scroll_content)
+        body_layout.setSpacing(styles.scaled(10))
+        body_layout.setContentsMargins(0, 0, styles.scaled(13), 0)
+
         INPUT_STYLE = (
             "QLineEdit, QComboBox { "
             "background-color: #f0f0f0; color: #1c1e21; "
@@ -1169,13 +1183,13 @@ class AddModificationDialog(_GlowDialog):
         if existing_mod:
             self.name_input.setText(existing_mod['name'])
         name_row.addWidget(self.name_input)
-        self.body_layout.addLayout(name_row)
+        body_layout.addLayout(name_row)
 
         norm_title = self._section_title("Установленные нормативные требования")
         norm_title.setStyleSheet(
             f"color: #e8eaed; font-weight: bold; font-size: {styles.scaled_pt(12)}pt; background: transparent;"
         )
-        self.body_layout.addWidget(norm_title)
+        body_layout.addWidget(norm_title)
 
         # Три испытания - в один горизонтальный ряд, чтобы диалог оставался
         # компактным по высоте и не требовал прокрутки
@@ -1241,7 +1255,7 @@ class AddModificationDialog(_GlowDialog):
         centered_tests_row.addStretch(1)
         centered_tests_row.addLayout(tests_layout)
         centered_tests_row.addStretch(1)
-        self.body_layout.addLayout(centered_tests_row)
+        body_layout.addLayout(centered_tests_row)
 
         pressure_box = QVBoxLayout()
         pressure_box.addWidget(self._section_title("Испытание 4: давление предохранительного клапана"))
@@ -1264,7 +1278,7 @@ class AddModificationDialog(_GlowDialog):
         pressure_row.addWidget(self.pressure_max_input)
         pressure_row.addStretch()
         pressure_box.addLayout(pressure_row)
-        self.body_layout.addLayout(pressure_box)
+        body_layout.addLayout(pressure_box)
 
         seal_box = QVBoxLayout()
         seal_box.addWidget(self._section_title("Проверка на герметичность"))
@@ -1341,9 +1355,9 @@ class AddModificationDialog(_GlowDialog):
                 row_layout.addStretch(1)
                 self.seal_inputs[key] = edit
                 seal_box.addLayout(row_layout)
-        self.body_layout.addLayout(seal_box)
+        body_layout.addLayout(seal_box)
 
-        self.body_layout.addSpacing(16)
+        body_layout.addSpacing(16)
 
         password_row = QHBoxLayout()
         password_row.addStretch(1)
@@ -1364,7 +1378,7 @@ class AddModificationDialog(_GlowDialog):
         setup_password_field(self.password_input, icon_color="#1c1e21")
         password_row.addWidget(self.password_input)
         password_row.addStretch(1)
-        self.body_layout.addLayout(password_row)
+        body_layout.addLayout(password_row)
 
         btn_layout = QHBoxLayout()
         ok_btn = QPushButton("Сохранить")
@@ -1381,7 +1395,17 @@ class AddModificationDialog(_GlowDialog):
         cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(ok_btn)
         btn_layout.addWidget(cancel_btn)
-        self.body_layout.addLayout(btn_layout)
+        body_layout.addLayout(btn_layout)
+
+        # Оборачиваем всё собранное содержимое в прокручиваемую область -
+        # тот же приём, что и в ViewModificationsDialog
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        scroll.setVerticalScrollBar(_GlowScrollBar())
+        scroll.setWidget(scroll_content)
+        self.body_layout.addWidget(scroll)
 
         # У этого диалога обычно самое высокое содержимое из всех (3
         # таблицы испытаний + герметичность + пароль) - стандартные 92%
@@ -2631,6 +2655,20 @@ class AddPumpDialog(_GlowDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent, title="Добавление насоса вручную")
+
+        # Оборачиваем содержимое в прокручиваемую область с фирменной
+        # полосой прокрутки - у этого диалога много полей (4 теста +
+        # герметичность), на маленьких экранах не помещается по высоте
+        # даже с учётом clamp_to_screen. Тот же приём, что уже
+        # используется в ViewModificationsDialog/AddModificationDialog.
+        # Остальной код метода добавляет виджеты в body_layout (локальная
+        # переменная), которая указывает на layout ВНУТРИ прокручиваемой
+        # области, а не на self.body_layout диалога напрямую.
+        scroll_content = QWidget()
+        body_layout = QVBoxLayout(scroll_content)
+        body_layout.setSpacing(styles.scaled(10))
+        body_layout.setContentsMargins(0, 0, styles.scaled(13), 0)
+
         self.selected_mod = None
         self.value_tables = {}
         self.seal_inputs = {}
@@ -2729,7 +2767,7 @@ class AddPumpDialog(_GlowDialog):
         row1.addSpacing(SPACING)
         row1.addWidget(chip_mod)
         row1.addStretch(1)
-        self.body_layout.addLayout(row1)
+        body_layout.addLayout(row1)
 
         row2 = QHBoxLayout()
         row2.addWidget(chip_order)
@@ -2738,7 +2776,7 @@ class AddPumpDialog(_GlowDialog):
         row2.addSpacing(SPACING)
         row2.addWidget(chip_type)
         row2.addStretch(1)
-        self.body_layout.addLayout(row2)
+        body_layout.addLayout(row2)
 
         # Динамическая область: испытания 1-4 друг под другом (одна
         # колонка, п.1 требований), с заметным отступом между ними
@@ -2753,7 +2791,7 @@ class AddPumpDialog(_GlowDialog):
         self.values_main_layout.addLayout(self.tests_column)
         self.values_main_layout.addSpacing(18)
         self.values_main_layout.addLayout(self.extra_column)
-        self.body_layout.addWidget(self.values_widget)
+        body_layout.addWidget(self.values_widget)
 
         note_row = QHBoxLayout()
         self.note_label = QLabel("Примечание:")
@@ -2767,10 +2805,10 @@ class AddPumpDialog(_GlowDialog):
         )
         note_row.addWidget(self.note_input)
         note_row.addStretch(1)
-        self.body_layout.addLayout(note_row)
+        body_layout.addLayout(note_row)
 
         # Отступ перед паролем, чтобы он визуально не сливался с примечанием
-        self.body_layout.addSpacing(16)
+        body_layout.addSpacing(16)
 
         # Поле пароля здесь не нужно - пароль уже запрашивается и
         # проверяется ДО открытия этого диалога (см. gui.py,
@@ -2791,7 +2829,7 @@ class AddPumpDialog(_GlowDialog):
         cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(ok_btn)
         btn_layout.addWidget(cancel_btn)
-        self.body_layout.addLayout(btn_layout)
+        body_layout.addLayout(btn_layout)
 
         if self.mods:
             self.on_modification_changed(0)
@@ -2803,6 +2841,14 @@ class AddPumpDialog(_GlowDialog):
 
         # Диалог большой и динамический (таблицы испытаний) - сжимаем под
         # экран, если не помещается, и только потом фиксируем размер
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        scroll.setVerticalScrollBar(_GlowScrollBar())
+        scroll.setWidget(scroll_content)
+        self.body_layout.addWidget(scroll)
+
         self._lock_size(clamp_to_screen=True)
 
     def on_modification_changed(self, index):

@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
     QDialog, QPushButton, QLabel, QTableWidget, QTableWidgetItem,
     QApplication, QGraphicsDropShadowEffect, QSizePolicy
 )
-from PyQt5.QtCore import Qt, QTimer, QRectF, QEvent, QSize, pyqtSignal, QEventLoop, QPropertyAnimation, QThread
+from PyQt5.QtCore import Qt, QTimer, QRectF, QEvent, QSize, pyqtSignal, QEventLoop, QPropertyAnimation, QThread, QVariantAnimation, QEasingCurve
 
 from PyQt5.QtGui import QFont, QPainter, QColor, QIcon, QPixmap
 from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintPreviewWidget
@@ -77,6 +77,18 @@ class _IconButton(QPushButton):
     def refresh_theme(self):
         self._build_icons()
         self.setIcon(self._hover_icon if (self._active or self.underMouse()) else self._normal_icon)
+
+    def set_icon_path(self, svg_path, tooltip=None):
+        """Меняет саму картинку (и, опционально, подсказку) кнопки на
+        лету - перестраивает оба варианта (обычный/при наведении) под
+        новый файл. Используется, например, для переключения между
+        "свернуть список"/"развернуть список" на одной и той же кнопке,
+        вместо создания двух отдельных виджетов под каждое состояние."""
+        self._svg_path = svg_path
+        self._build_icons()
+        self.setIcon(self._hover_icon if (self._active or self.underMouse()) else self._normal_icon)
+        if tooltip is not None:
+            self.setToolTip(tooltip)
 
     @classmethod
     def refresh_all(cls):
@@ -314,15 +326,33 @@ class MainWindow(QMainWindow):
         self.btn_hide_protocol.hide()
         top_layout.addWidget(self.btn_hide_protocol)
 
-        self.btn_export_pdf = _IconButton(os.path.join(ICONS_DIR, 'export_pdf.svg'), tooltip="Экспорт в PDF")
-        self.btn_export_pdf.clicked.connect(self.on_export_pdf_clicked)
-        self.btn_export_pdf.hide()
-        top_layout.addWidget(self.btn_export_pdf)
+        # Свернуть/развернуть список насосов - ОДНА кнопка (тот же класс
+        # _IconButton, что и у соседних кнопок в этом ряду), у которой
+        # просто меняется картинка через set_icon_path(). Показывается
+        # только во время просмотра протокола/сравнения (та же логика
+        # видимости, что у btn_hide_protocol).
+        self.btn_list_toggle = _IconButton(os.path.join(ICONS_DIR, 'collapse_list.svg'), tooltip="Скрыть список насосов")
+        self.btn_list_toggle.clicked.connect(self.on_list_toggle_clicked)
+        self.btn_list_toggle.hide()
+        top_layout.addWidget(self.btn_list_toggle)
+
+        # Сохранённая ширина списка ДО сворачивания - чтобы плавно
+        # вернуть ровно тот же размер при разворачивании обратно, а не
+        # какое-то другое, "по умолчанию" значение
+        self._list_width_before_collapse = None
+        self._list_collapse_anim = None
+        self._list_is_collapsed = False
+        self._current_right_panel_mode = ''
 
         self.btn_fit_view = _IconButton(os.path.join(ICONS_DIR, 'fit_view.svg'), tooltip="Уместить протокол по высоте")
         self.btn_fit_view.clicked.connect(self.on_fit_view_clicked)
         self.btn_fit_view.hide()
         top_layout.addWidget(self.btn_fit_view)
+
+        self.btn_export_pdf = _IconButton(os.path.join(ICONS_DIR, 'export_pdf.svg'), tooltip="Экспорт в PDF")
+        self.btn_export_pdf.clicked.connect(self.on_export_pdf_clicked)
+        self.btn_export_pdf.hide()
+        top_layout.addWidget(self.btn_export_pdf)
 
         self.btn_stats_minus = _IconButton(os.path.join(ICONS_DIR, 'zoom_out.svg'), tooltip="Уменьшить масштаб статистики")
         self.btn_stats_minus.clicked.connect(lambda: self.right_panel._zoom_stats(1 / 1.15))
@@ -382,6 +412,7 @@ class MainWindow(QMainWindow):
         self.splitter = QSplitter(Qt.Horizontal)
         main_layout.addWidget(self.splitter)
         self.splitter.setHandleWidth(0)
+        self.splitter.splitterMoved.connect(self.on_splitter_moved)
         
         # Левая панель
         self.left_panel = LeftPanel()
@@ -560,6 +591,15 @@ class MainWindow(QMainWindow):
             # но ниже мы всё равно принудительно зададим правильные пропорции)
             self.left_panel.btn_view_toggle.setChecked(False)
         self.splitter.setSizes([int(self.width() * 0.4), int(self.width() * 0.6)])
+        # Синхронизируем состояние кнопки скрытия списка - явный сброс
+        # раскладки должен считаться "список снова виден", даже если до
+        # этого он был свёрнут нашей отдельной кнопкой
+        self._list_is_collapsed = False
+        self._list_width_before_collapse = None
+        if self._list_collapse_anim is None:
+            show_list_buttons = self._current_right_panel_mode in ('protocol', 'comparison')
+            self.btn_list_toggle.setVisible(show_list_buttons)
+            self._set_list_toggle_button(show_collapse=True, animate=False)
 
     def _setup_window_geometry(self):
         """Считает размер и позицию окна от реальной доступной области
@@ -828,9 +868,6 @@ class MainWindow(QMainWindow):
             painter.begin(printer_obj)
             page_rect = printer_obj.pageRect()
 
-            n_cols = len(headers)
-            n_items = len(print_items)
-
             # Небольшой запас по ширине (таблица уже полной печатной
             # области), чтобы гарантированно не выходить за границы листа
             table_width = page_rect.width() * 0.92
@@ -841,66 +878,95 @@ class MainWindow(QMainWindow):
             total_weight = sum(col_weights)
             col_widths = [table_width * w / total_weight for w in col_weights]
 
-            # Строка с описанием применённых фильтров над таблицей
+            # Строка с описанием применённых фильтров - только на первой
+            # странице (не нужно повторять на каждой)
             summary_height = page_rect.height() * 0.022
             summary_font = painter.font()
             summary_font.setPointSizeF(max(6, summary_height * 0.5))
             summary_font.setItalic(True)
-            painter.setFont(summary_font)
-            summary_rect = QRectF(x0, page_rect.top(), table_width, summary_height)
-            painter.drawText(summary_rect, Qt.AlignVCenter | Qt.AlignLeft, filters_summary)
 
-            header_height = page_rect.height() * 0.03
-            top = page_rect.top() + summary_height
-            # Высота строки - под все строки/заголовки групп на одном листе,
-            # но не крупнее разумного максимума
-            row_height = min((page_rect.height() - summary_height - header_height) / max(n_items, 1),
-                            page_rect.height() * 0.03)
+            header_height = page_rect.height() * 0.028
+            # Высота строки и размер шрифта - ФИКСИРОВАННЫЕ, разумные,
+            # читаемые значения, НЕ зависящие от общего количества
+            # записей. Раньше строка row_height = доступная_высота /
+            # n_items при большом списке (сотни насосов) схлопывала и
+            # высоту строк, и шрифт до нечитаемого минимума - "всё
+            # сливалось". Теперь при необходимости список просто
+            # продолжается на следующих страницах, а не сжимается.
+            row_height = page_rect.height() * 0.028
+            font_size = 9
 
-            font_size = max(5, min(8, row_height * 0.4))
             font = painter.font()
             font.setPointSizeF(font_size)
-            font.setItalic(False)
             font.setBold(True)
-            painter.setFont(font)
 
             pad = min(min(col_widths), row_height) * 0.06
 
-            y = top
-
-            # Заголовки колонок
-            x = x0
-            for label, cw in zip(headers, col_widths):
-                rect = QRectF(x, y, cw, header_height)
-                painter.drawRect(rect)
-                text_rect = rect.adjusted(pad, pad, -pad, -pad)
-                painter.drawText(text_rect, Qt.AlignCenter, label)
-                x += cw
-            y += header_height
-
-            # Строки и заголовки групп дублей
-            for kind, value in print_items:
-                if y > page_rect.bottom():
-                    break  # без постраничной разбивки - лишнее просто не рисуем
-                if kind == 'header':
-                    rect = QRectF(x0, y, table_width, row_height)
-                    painter.fillRect(rect, QColor(220, 230, 240))
+            def draw_column_headers(y):
+                x = x0
+                painter.setFont(font)
+                for label, cw in zip(headers, col_widths):
+                    rect = QRectF(x, y, cw, header_height)
                     painter.drawRect(rect)
-                    font.setBold(True)
-                    painter.setFont(font)
                     text_rect = rect.adjusted(pad, pad, -pad, -pad)
-                    painter.drawText(text_rect, Qt.AlignCenter, value)
-                else:
-                    font.setBold(False)
-                    painter.setFont(font)
-                    x = x0
-                    for val, cw in zip(value, col_widths):
-                        rect = QRectF(x, y, cw, row_height)
+                    painter.drawText(text_rect, Qt.AlignCenter, label)
+                    x += cw
+                return y + header_height
+
+            # Сколько строк помещается на одну страницу при выбранной
+            # читаемой высоте строки - остаток списка продолжается на
+            # следующих страницах
+            available_height = page_rect.height() - summary_height - header_height
+            rows_per_page = max(1, int(available_height // row_height))
+
+            total_pages = max(1, -(-len(print_items) // rows_per_page))  # округление вверх
+            page_num = 0
+
+            for start in range(0, len(print_items), rows_per_page):
+                page_items = print_items[start:start + rows_per_page]
+                if page_num > 0:
+                    printer_obj.newPage()
+                page_num += 1
+
+                y = page_rect.top()
+                if page_num == 1:
+                    painter.setFont(summary_font)
+                    summary_rect = QRectF(x0, y, table_width, summary_height)
+                    painter.drawText(summary_rect, Qt.AlignVCenter | Qt.AlignLeft, filters_summary)
+                    y += summary_height
+
+                y = draw_column_headers(y)
+
+                for kind, value in page_items:
+                    if kind == 'header':
+                        rect = QRectF(x0, y, table_width, row_height)
+                        painter.fillRect(rect, QColor(220, 230, 240))
                         painter.drawRect(rect)
+                        font.setBold(True)
+                        painter.setFont(font)
                         text_rect = rect.adjusted(pad, pad, -pad, -pad)
-                        painter.drawText(text_rect, Qt.AlignCenter, str(val))
-                        x += cw
-                y += row_height
+                        painter.drawText(text_rect, Qt.AlignCenter, value)
+                    else:
+                        font.setBold(False)
+                        painter.setFont(font)
+                        x = x0
+                        for val, cw in zip(value, col_widths):
+                            rect = QRectF(x, y, cw, row_height)
+                            painter.drawRect(rect)
+                            text_rect = rect.adjusted(pad, pad, -pad, -pad)
+                            painter.drawText(text_rect, Qt.AlignCenter, str(val))
+                            x += cw
+                    y += row_height
+
+                # Номер страницы, если страниц больше одной
+                if total_pages > 1:
+                    page_font = painter.font()
+                    page_font.setPointSizeF(7)
+                    page_font.setBold(False)
+                    page_font.setItalic(True)
+                    painter.setFont(page_font)
+                    footer_rect = QRectF(x0, page_rect.bottom() - summary_height, table_width, summary_height)
+                    painter.drawText(footer_rect, Qt.AlignVCenter | Qt.AlignRight, f"Страница {page_num} из {total_pages}")
 
             painter.end()
 
@@ -1443,8 +1509,94 @@ class MainWindow(QMainWindow):
         self.right_panel.toggle_fit_view()
         self.btn_fit_view.set_active(self.right_panel._fit_mode)
 
+    def _set_list_toggle_button(self, show_collapse, animate=True):
+        """Переключает картинку кнопки свернуть/развернуть список -
+        мгновенно, без анимации прозрачности. Раньше здесь была попытка
+        сделать короткое затухание/появление через QGraphicsOpacityEffect
+        на этой кнопке - на практике эта техника оказалась ненадёжной в
+        сочетании с QPushButton в этом окружении (кнопка визуально
+        пропадала, появляясь только при перерисовке от наведения или
+        клика). Параметр animate сохранён в сигнатуре ради совместимости
+        со всеми существующими вызовами, но сейчас не используется -
+        переключение всегда мгновенное."""
+        svg_name = 'collapse_list.svg' if show_collapse else 'expand_list.svg'
+        tooltip = "Скрыть список насосов" if show_collapse else "Показать список насосов"
+        self.btn_list_toggle.set_icon_path(os.path.join(ICONS_DIR, svg_name), tooltip)
+
+    def on_splitter_moved(self, pos, index):
+        """Отслеживает ручное перетаскивание разделителя мышью - если
+        список насосов оказался практически полностью скрыт (или,
+        наоборот, снова показан) не через нашу кнопку, а руками
+        пользователя - синхронизируем состояние кнопки скрытия списка.
+        Без этого кнопка могла бы показывать не ту из двух (свернуть/
+        развернуть), не отражая реальное текущее положение дел."""
+        if self._current_right_panel_mode not in ('protocol', 'comparison'):
+            return
+        if self._list_collapse_anim is not None:
+            return  # идёт наша собственная анимация - не вмешиваемся в неё
+        left_width = self.splitter.sizes()[0]
+        now_collapsed = left_width <= 10
+        if now_collapsed == self._list_is_collapsed:
+            return  # состояние не изменилось - ничего пересчитывать не нужно
+        self._list_is_collapsed = now_collapsed
+        if not now_collapsed:
+            # Запоминаем эту, вручную заданную ширину - если пользователь
+            # потом всё же нажмёт кнопку "скрыть список", разворачивание
+            # обратно вернёт именно её, а не какое-то старое значение
+            self._list_width_before_collapse = left_width
+        self._set_list_toggle_button(show_collapse=not now_collapsed)
+
     def on_hide_protocol_clicked(self):
         self.right_panel.clear_protocol()
+
+    def on_list_toggle_clicked(self):
+        """Единый обработчик клика по кнопке свернуть/развернуть список -
+        поведение зависит от текущего состояния (см. self._list_is_collapsed)."""
+        if self._list_collapse_anim is not None and self._list_collapse_anim.state() == QVariantAnimation.Running:
+            return
+        if not self._list_is_collapsed:
+            # Плавно сворачивает список насосов - протокол растягивается
+            # на всю ширину правой части окна
+            current_width = self.splitter.sizes()[0]
+            if current_width <= 0:
+                return  # уже свёрнут
+            self._list_width_before_collapse = current_width
+            self._animate_list_width(current_width, 0, collapsing=True)
+        else:
+            # Плавно возвращает список насосов обратно - ровно к той
+            # ширине, что была до сворачивания (а не к произвольному
+            # значению по умолчанию)
+            target_width = self._list_width_before_collapse or int(self.width() * 0.35)
+            self._animate_list_width(0, target_width, collapsing=False)
+
+    def _animate_list_width(self, start_width, end_width, collapsing):
+        """Плавно изменяет ширину списка насосов от start_width до
+        end_width, пошагово вызывая splitter.setSizes() - стандартный
+        способ анимировать QSplitter, у которого нет собственного
+        анимируемого свойства "sizes" напрямую."""
+        total = sum(self.splitter.sizes())
+        anim = QVariantAnimation(self)
+        anim.setStartValue(int(start_width))
+        anim.setEndValue(int(end_width))
+        anim.setDuration(280)
+        anim.setEasingCurve(QEasingCurve.InOutCubic)
+
+        def on_value_changed(value):
+            left_w = int(value)
+            right_w = max(0, total - left_w)
+            self.splitter.setSizes([left_w, right_w])
+
+        def on_finished():
+            self._list_is_collapsed = collapsing
+            self._list_collapse_anim = None
+            show_buttons = self._current_right_panel_mode in ('protocol', 'comparison')
+            if show_buttons:
+                self._set_list_toggle_button(show_collapse=not collapsing)
+
+        anim.valueChanged.connect(on_value_changed)
+        anim.finished.connect(on_finished)
+        self._list_collapse_anim = anim
+        anim.start()
 
     def on_export_pdf_clicked(self):
         self.right_panel.export_to_pdf()
@@ -1455,9 +1607,19 @@ class MainWindow(QMainWindow):
         показывают кнопки "скрыть"/"экспорт в PDF"/"уместить по высоте",
         статистика - кнопки масштаба, в остальных случаях (пусто) -
         ничего из этого."""
+        self._current_right_panel_mode = mode
         self.btn_hide_protocol.setVisible(mode in ('protocol', 'comparison'))
         self.btn_export_pdf.setVisible(mode in ('protocol', 'comparison', 'stats'))
         self.btn_fit_view.setVisible(mode in ('protocol', 'comparison'))
+        # Кнопка скрытия/показа списка насосов - сам контейнер показывается
+        # в тех же случаях, что и остальные кнопки этого ряда; какая из
+        # двух кнопок внутри него видна - зависит от текущего состояния
+        # списка (не трогаем это состояние во время самой анимации - см.
+        # флаг _list_collapse_anim)
+        show_list_buttons = mode in ('protocol', 'comparison')
+        self.btn_list_toggle.setVisible(show_list_buttons)
+        if self._list_collapse_anim is None:
+            self._set_list_toggle_button(show_collapse=not self._list_is_collapsed, animate=False)
         # Любая смена режима (новый протокол, сброс и т.п.) сбрасывает и
         # режим снимка внутри right_panel - синхронизируем подсветку
         # кнопки с этим состоянием, а не только по клику на неё саму

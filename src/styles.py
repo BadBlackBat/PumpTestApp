@@ -1175,6 +1175,24 @@ def _right_panel_legend_style():
 # отдельной панели герметичности (seal_panel) - используется ОДНА И ТА
 # ЖЕ строка для обеих панелей, чтобы они визуально читались как единое
 # целое ("одна общая панель", а не два разных блока)
+# Явно светлый фон именно для внутреннего столбца протокола (таблицы +
+# графики + герметичность) - не зависит от темы приложения, той же
+# логикой, что и RIGHT_PANEL_CARD_STYLE выше. Без этого промежутки между
+# элементами столбца показывали бы тёмный градиент внешней обёртки
+# (см. _wrap_centered) насквозь. Тот же фирменный градиент, что и у
+# заглушки-логотипа на светлой теме, но без её большого паддинга.
+def get_right_panel_protocol_column_style():
+    return f"""
+    QWidget#protocolColumnBg {{
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+            stop:0 #fdfefe,
+            stop:0.45 #eef1f5,
+            stop:1 #dbe1e8);
+        border: 1px solid #b7bcc2;
+        border-radius: 12px;
+    }}
+"""
+
 RIGHT_PANEL_CARD_STYLE = (
     "QFrame { background-color: #f2f5f7; "
     "border: 1px solid #d5dbe0; border-radius: 4px; }"
