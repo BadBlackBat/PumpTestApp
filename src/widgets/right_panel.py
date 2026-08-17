@@ -433,6 +433,17 @@ class RightPanel(QWidget):
         # (см. _set_comparison_export_mode) можно было полностью убрать
         # именно эти колонки/строки, а не просто перекрасить их.
         self._comparison_hidden = set()
+        # См. display_comparison/_set_comparison_export_mode - заголовки
+        # таблиц теста синхронизированы отдельной фиксированной шириной,
+        # не напрямую с таблицей под ними.
+        self._comparison_title_labels = None
+        self._comparison_title_tables = None
+        self._comparison_full_uniform_width = None
+        self._comparison_p_table = None
+        self._comparison_col_widths = None
+        self._comparison_p_natural_date = None
+        self._comparison_p_natural_value = None
+        self._comparison_seal_table = None
         # Временное хранилище полного текста шапки на время экспорта/
         # печати - см. _set_comparison_export_mode()
         self._header_full_text = None
@@ -1633,10 +1644,29 @@ class RightPanel(QWidget):
         p_table.setColumnWidth(2, range_width)
         p_table.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
         p_table.setFixedWidth(2 + date_width + value_width + range_width)
+        # Для _set_comparison_export_mode() - таблица давления устроена
+        # иначе, чем t1/t2/t3 (строки-образцы, а не колонки-образцы), и её
+        # собственная ширина никак не пересчитывалась при скрытии
+        # образцов - в результате она оставалась прежней (широкой) и
+        # мешала подложке сжаться следом за t1/t2/t3. Сохраняем всё
+        # нужное, чтобы повторить эту же формулу, но только по видимым
+        # колонкам t1/t2/t3.
+        self._comparison_p_table = p_table
+        self._comparison_col_widths = col_widths
+        self._comparison_p_natural_date = natural_date
+        self._comparison_p_natural_value = natural_value
 
         uniform_width = t1_table.width()
         for lbl in (t1_title, t2_title, t3_title, p_title):
             lbl.setFixedWidth(uniform_width)
+        # См. _set_comparison_export_mode() - при печати/экспорте таблицы
+        # сжимаются под видимые колонки, но эти 4 заголовка синхронизированы
+        # с ОТДЕЛЬНОЙ фиксированной шириной (uniform_width), а не с шириной
+        # своей таблицы напрямую - без этой ссылки они остались бы старой
+        # ширины и подложка вокруг таблиц не сжалась бы вместе с ними.
+        self._comparison_title_labels = (t1_title, t2_title, t3_title, p_title)
+        self._comparison_title_tables = (t1_table, t2_table, t3_table)
+        self._comparison_full_uniform_width = uniform_width
 
         self._create_comparison_seal_table(items)
         self._create_comparison_graphs(items, mod, uniform_width)
@@ -1847,6 +1877,14 @@ class RightPanel(QWidget):
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.horizontalHeader().setStretchLastSection(True)
         self._compact_table(table, fix_width=False)
+        # Для _set_comparison_export_mode() - сама таблица сжимается по
+        # видимым колонкам через общий механизм (affected_tables), но
+        # окружающая её панель-подложка (seal_panel) без явного
+        # ограничения ширины просто растягивается на всю доступную
+        # ширину независимо от таблицы внутри (в отличие от tables_panel,
+        # у которой QSizePolicy.Fixed задан заранее) - нужна ссылка на
+        # саму таблицу, чтобы подогнать под неё ширину панели.
+        self._comparison_seal_table = table
 
         title_label = QLabel("Герметичность")
         title_label.setFont(QFont("Arial", styles.scaled_pt(9), QFont.Bold))
@@ -2035,6 +2073,7 @@ class RightPanel(QWidget):
         заранее."""
         self.comparison_toggle_widget.setVisible(not active and bool(self._comparison_targets))
         affected_tables = set()
+        affected_row_tables = set()
         for idx in self._comparison_hidden:
             for table, mode, index in self._comparison_targets.get(idx, []):
                 if mode == 'col':
@@ -2042,6 +2081,26 @@ class RightPanel(QWidget):
                     affected_tables.add(table)
                 else:
                     table.setRowHidden(index, active)
+                    affected_row_tables.add(table)
+
+        # Та же история с высотой у таблиц по строкам (сейчас это только
+        # таблица давления) - _compact_table() один раз фиксирует высоту
+        # под ВСЕ строки при построении, setRowHidden() эту фиксированную
+        # высоту не трогает - визуально снизу таблицы остаётся пустая
+        # полоса на месте скрытых строк.
+        for table in affected_row_tables:
+            if active:
+                if table.property('_full_fixed_height') is None:
+                    table.setProperty('_full_fixed_height', table.height())
+                visible_height = table.horizontalHeader().height() + 2 + sum(
+                    table.rowHeight(r) for r in range(table.rowCount())
+                    if not table.isRowHidden(r)
+                )
+                table.setFixedHeight(visible_height)
+            else:
+                full_height = table.property('_full_fixed_height')
+                if full_height is not None:
+                    table.setFixedHeight(full_height)
 
         # У таблиц тестов (1-3) и герметичности ширина зафиксирована
         # (setFixedWidth, см. _create_comparison_table/_seal_table и
@@ -2068,7 +2127,64 @@ class RightPanel(QWidget):
                 if full_width is not None:
                     table.setFixedWidth(full_width)
 
-        if affected_tables:
+        # Таблица давления (тест 4) устроена иначе, чем t1/t2/t3 (строки-
+        # образцы, а не колонки) - setColumnHidden её вообще не касается,
+        # поэтому её собственная ширина никак не реагировала на скрытие
+        # образцов и оставалась прежней (широкой) - именно она и держала
+        # подложку от сжатия следом за остальными таблицами. Пересчитываем
+        # ту же формулу, что и при первом построении (display_comparison),
+        # но по видимым столбцам t1/t2/t3.
+        if affected_tables and self._comparison_p_table is not None and self._comparison_col_widths:
+            p_table = self._comparison_p_table
+            col_widths = self._comparison_col_widths
+            n_items = len(col_widths) - 3  # X-столбец + N образцов + Мин + Макс
+            if active:
+                if p_table.property('_full_col_widths') is None:
+                    p_table.setProperty('_full_col_widths', (
+                        p_table.columnWidth(0), p_table.columnWidth(1), p_table.columnWidth(2)
+                    ))
+                    p_table.setProperty('_full_fixed_width', p_table.width())
+                visible_item_widths = [
+                    col_widths[1 + i] for i in range(n_items) if i not in self._comparison_hidden
+                ]
+                remaining_width = col_widths[0] + sum(visible_item_widths)
+                range_width = col_widths[-2] + col_widths[-1]
+                natural_sum = max(1, self._comparison_p_natural_date + self._comparison_p_natural_value)
+                date_width = max(40, int(remaining_width * self._comparison_p_natural_date / natural_sum))
+                value_width = remaining_width - date_width
+                p_table.setColumnWidth(0, date_width)
+                p_table.setColumnWidth(1, value_width)
+                p_table.setColumnWidth(2, range_width)
+                p_table.setFixedWidth(2 + date_width + value_width + range_width)
+            else:
+                full_cols = p_table.property('_full_col_widths')
+                full_width = p_table.property('_full_fixed_width')
+                if full_cols is not None and full_width is not None:
+                    p_table.setColumnWidth(0, full_cols[0])
+                    p_table.setColumnWidth(1, full_cols[1])
+                    p_table.setColumnWidth(2, full_cols[2])
+                    p_table.setFixedWidth(full_width)
+
+        # seal_panel (подложка вокруг таблицы герметичности) - в отличие
+        # от tables_panel, изначально БЕЗ QSizePolicy.Fixed - обычно она и
+        # не нужна, панель просто растягивается на всю доступную ширину.
+        # Но раз сама таблица внутри теперь может сжиматься (см. общий
+        # цикл выше - таблица герметичности зарегистрирована как обычная
+        # 'col'-таблица), без явного ограничения ширины ПОДЛОЖКА эту
+        # таблицу не повторяет - остаётся на всю ширину независимо от неё.
+        seal_table = self._comparison_seal_table
+        if seal_table is not None and seal_table in affected_tables:
+            margins = self.seal_layout.contentsMargins()
+            if active:
+                self.seal_panel.setFixedWidth(seal_table.width() + margins.left() + margins.right())
+            else:
+                self.seal_panel.setMinimumWidth(0)
+                self.seal_panel.setMaximumWidth(16777215)  # QWIDGETSIZE_MAX - снимаем ограничение полностью
+            self.seal_panel.updateGeometry()
+            self.protocol_column_layout.invalidate()
+            self.protocol_column_layout.activate()
+
+        if affected_tables or affected_row_tables:
             # tables_panel (серая карточка-подложка вокруг таблиц теста) -
             # QSizePolicy.Fixed по ширине (см. setup_ui) - её собственный
             # размер должен сам собой пересчитаться вслед за сжатием
@@ -2078,6 +2194,25 @@ class RightPanel(QWidget):
             self.tables_panel.updateGeometry()
             self.dynamic_layout.invalidate()
             self.dynamic_layout.activate()
+
+            # Заголовки над таблицами теста (t1_title/t2_title/t3_title/
+            # p_title) зафиксированы ОТДЕЛЬНОЙ шириной (uniform_width, см.
+            # display_comparison) - не берут ширину напрямую от своей
+            # таблицы, поэтому просто сжать таблицы недостаточно: сами
+            # заголовки остались бы старой ширины, и именно ОНИ (как самые
+            # широкие среди детей tables_column) не давали бы подложке
+            # сжаться, даже после updateGeometry() выше.
+            if self._comparison_title_labels and self._comparison_title_tables:
+                if active:
+                    new_uniform = self._comparison_title_tables[0].width()
+                    for lbl in self._comparison_title_labels:
+                        lbl.setFixedWidth(new_uniform)
+                elif self._comparison_full_uniform_width is not None:
+                    for lbl in self._comparison_title_labels:
+                        lbl.setFixedWidth(self._comparison_full_uniform_width)
+                self.tables_panel.updateGeometry()
+                self.dynamic_layout.invalidate()
+                self.dynamic_layout.activate()
 
         # Шапка ("Найдено протоколов: N", "Проверки от: ...") на экране
         # всегда показывает ВСЕ образцы (данные не удаляются - только
@@ -2666,6 +2801,14 @@ class RightPanel(QWidget):
         self._comparison_targets = {}
         self._comparison_lines = {}
         self._comparison_hidden = set()
+        self._comparison_title_labels = None
+        self._comparison_title_tables = None
+        self._comparison_full_uniform_width = None
+        self._comparison_p_table = None
+        self._comparison_col_widths = None
+        self._comparison_p_natural_date = None
+        self._comparison_p_natural_value = None
+        self._comparison_seal_table = None
         self._header_full_text = None
         self._clear_layout(self.comparison_toggle_layout)
         self.comparison_toggle_widget.hide()
