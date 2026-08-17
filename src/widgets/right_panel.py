@@ -232,20 +232,33 @@ class RightPanel(QWidget):
         поэтому ей отдельно нужен этот метод, а не только showEvent
         диалогов."""
         styles.retheme_widget_tree(self)
-        self.logo_label.setStyleSheet(styles.get_right_panel_logo_style())
+        # ВАЖНО: везде ниже - styles.set_dynamic_style(), а НЕ голый
+        # setStyleSheet(). У этой панели есть ВТОРОЙ вызов
+        # retheme_widget_tree(self) - в конце построения каждого
+        # протокола (см. конец show_pump_data, там же подробный
+        # комментарий) - он перекрашивает ВСЮ панель заново при каждом
+        # выборе насоса. Голый setStyleSheet() не обновляет закэшированный
+        # "исходный" стиль виджета, и тот второй вызов находил устаревший
+        # кэш (со старой темы) и переписывал им уже правильно
+        # установленный здесь цвет - именно поэтому ПЕРВЫЙ протокол после
+        # переключения темы показывался верно, а СЛЕДУЮЩИЙ откатывался
+        # назад к старой теме (см. также _show_loading/show_pump_data,
+        # там та же причина у аналогичного бага "надпись загрузки серая").
+        styles.set_dynamic_style(self.logo_label, styles.get_right_panel_logo_style())
         self.logo_label.set_watermark_color(styles.get_watermark_color())
         title_font_family = getattr(styles, 'TERMINATOR_FONT_FAMILY', None) or "Segoe UI"
-        self.title_label.setStyleSheet(
+        styles.set_dynamic_style(
+            self.title_label,
             styles.get_right_panel_title_style()
             + f'font-family: "{title_font_family}", "Segoe UI", Arial, sans-serif;'
         )
         glow_r, glow_g, glow_b = styles.get_right_panel_title_glow_color()
         self.title_label.graphicsEffect().setColor(QColor(glow_r, glow_g, glow_b, 190))
-        self.logo_text_label.setStyleSheet(styles.get_right_panel_logo_text_style())
-        self.stats_widget.setStyleSheet(styles.get_right_panel_stats_bg_style())
-        self.overview_bg.setStyleSheet(styles.get_right_panel_stats_bg_style())
-        self.content_widget.setStyleSheet(styles.get_right_panel_stats_bg_style())
-        self.loading_text_label.setStyleSheet(styles.get_right_panel_loading_text_style())
+        styles.set_dynamic_style(self.logo_text_label, styles.get_right_panel_logo_text_style())
+        styles.set_dynamic_style(self.stats_widget, styles.get_right_panel_stats_bg_style())
+        styles.set_dynamic_style(self.overview_bg, styles.get_right_panel_stats_bg_style())
+        styles.set_dynamic_style(self.content_widget, styles.get_right_panel_stats_bg_style())
+        styles.set_dynamic_style(self.loading_text_label, styles.get_right_panel_loading_text_style())
         if self._loading_icon_base is not None:
             load_svg_path = os.path.join(ICONS_DIR, 'load.svg')
             if os.path.exists(load_svg_path):
@@ -253,16 +266,11 @@ class RightPanel(QWidget):
                     load_svg_path, styles.get_loading_icon_color(), size=28
                 )
                 self.loading_icon_label.setPixmap(self._loading_icon_base)
-        self.scroll_area.setStyleSheet(styles.get_right_panel_scroll_style())
+        styles.set_dynamic_style(self.scroll_area, styles.get_right_panel_scroll_style())
         self._apply_scroll_area_shadow()
-        # Забытый ранее виджет - фон колонки, где отображается сам
-        # протокол (см. __init__: self.protocol_column_widget, красится
-        # через get_right_panel_protocol_column_style() один раз при
-        # создании). Без явного переприменения здесь общий
-        # retheme_widget_tree() выше не справлялся с этим стилем
-        # корректно - при переключении темы этот фон "застревал" на
-        # предыдущей теме, в отличие от всех остальных элементов панели.
-        self.protocol_column_widget.setStyleSheet(styles.get_right_panel_protocol_column_style())
+        # Фон колонки, где отображается сам протокол (см. __init__:
+        # self.protocol_column_widget).
+        styles.set_dynamic_style(self.protocol_column_widget, styles.get_right_panel_protocol_column_style())
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -623,7 +631,7 @@ class RightPanel(QWidget):
         # title_label. Важно сделать это ДО hide() - именно в момент,
         # когда protocol_column_widget скрывается, фон content_widget
         # становится видимым "наизнанку" под ним.
-        self.content_widget.setStyleSheet(styles.get_right_panel_stats_bg_style())
+        styles.set_dynamic_style(self.content_widget, styles.get_right_panel_stats_bg_style())
         self.protocol_column_widget.hide()
         self.stats_widget.hide()
         self.logo_label.show()
@@ -2391,21 +2399,25 @@ class RightPanel(QWidget):
         self.notes_widget.hide()
         self.dynamic_widget.hide()  # иначе видна пустая панель-подложка без содержимого
         # Переприменяем фон content_widget прямо сейчас - см. подробное
-        # пояснение в аналогичном месте ниже по файлу
-        self.content_widget.setStyleSheet(styles.get_right_panel_stats_bg_style())
+        # пояснение в аналогичном месте ниже по файлу. set_dynamic_style
+        # (не голый setStyleSheet) - иначе следующий вызов
+        # retheme_widget_tree() в конце show_pump_data откатит его назад
+        # к устаревшему кэшу (см. подробности в refresh_theme()).
+        styles.set_dynamic_style(self.content_widget, styles.get_right_panel_stats_bg_style())
         self.protocol_column_widget.hide()
         self.stats_widget.hide()
         self.loading_label.hide()
         # Переприменяем стиль заглушки прямо сейчас, а не полагаемся
         # только на разовое обновление при переключении темы - защита от
         # возможной рассинхронизации между темой и уже показанным виджетом
-        self.logo_label.setStyleSheet(styles.get_right_panel_logo_style())
+        styles.set_dynamic_style(self.logo_label, styles.get_right_panel_logo_style())
         title_font_family = getattr(styles, 'TERMINATOR_FONT_FAMILY', None) or "Segoe UI"
-        self.title_label.setStyleSheet(
+        styles.set_dynamic_style(
+            self.title_label,
             styles.get_right_panel_title_style()
             + f'font-family: "{title_font_family}", "Segoe UI", Arial, sans-serif;'
         )
-        self.logo_text_label.setStyleSheet(styles.get_right_panel_logo_text_style())
+        styles.set_dynamic_style(self.logo_text_label, styles.get_right_panel_logo_text_style())
         self.logo_label.show()
 
     def _show_loading(self, message="Загрузка протокола..."):
@@ -2428,7 +2440,7 @@ class RightPanel(QWidget):
         # title_label. Важно сделать это ДО hide() - именно в момент,
         # когда protocol_column_widget скрывается, фон content_widget
         # становится видимым "наизнанку" под ним.
-        self.content_widget.setStyleSheet(styles.get_right_panel_stats_bg_style())
+        styles.set_dynamic_style(self.content_widget, styles.get_right_panel_stats_bg_style())
         self.protocol_column_widget.hide()
         self.stats_widget.hide()
         self.logo_label.hide()
