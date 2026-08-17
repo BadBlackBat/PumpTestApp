@@ -3,7 +3,7 @@ import os
 import ctypes
 from PyQt5.QtCore import Qt, QPropertyAnimation
 from PyQt5.QtWidgets import QApplication
-from PyQt5.QtGui import QFontDatabase
+from PyQt5.QtGui import QFontDatabase, QFont
 from .gui import MainWindow
 from . import database as db
 from . import styles
@@ -187,6 +187,18 @@ def main():
 
     app = QApplication(sys.argv)
 
+    # PreferFullHinting - НЕ связано с DPI-механизмом (тот, судя по
+    # комментарию у compute_ui_scale(), уже пробовали трогать раньше и
+    # отказались - непредсказуемо ломал интерфейс на конкретных
+    # компьютерах). Это отдельная, гораздо более узкая настройка именно
+    # шрифтового рендеринга - просит Qt использовать максимально точный
+    # хинтинг (подгонку контуров букв под сетку физических пикселей).
+    # Особенно заметно помогает на мелком тексте / при некрупных
+    # физических размерах экрана (как раз наш случай на 1366x768) - без
+    # полного хинтинга мелкий текст на таких экранах может выглядеть
+    # слегка размытым/нечётким даже при технически верном размере шрифта.
+    base_font = app.font()
+    base_font.setHintingPreference(QFont.PreferFullHinting)
     # Масштабируем общий шрифт приложения под UI_SCALE - самый заметный
     # и широкий по охвату эффект (затрагивает практически весь текст, у
     # которого нет собственного, явно заданного размера шрифта). Чисто
@@ -194,9 +206,15 @@ def main():
     # какого-либо DPI-механизма - предсказуемо и не зависит от системных
     # настроек масштабирования конкретного компьютера.
     if styles.UI_SCALE != 1.0:
-        base_font = app.font()
-        base_font.setPointSizeF(base_font.pointSizeF() * styles.UI_SCALE)
-        app.setFont(base_font)
+        # round(...*2)/2 - округляем до ближайших 0.5pt, а не оставляем
+        # "как посчиталось" (например, 8.5pt вместо 10*0.85=8.5 - тут
+        # совпало, но для других базовых размеров дробная часть обычно
+        # менее круглая) - у некоторых движков рендеринга шрифтов
+        # чуть менее аккуратные дробные размеры дают чуть менее чёткий
+        # результат, чем "ровные" половины пункта.
+        scaled_size = round(base_font.pointSizeF() * styles.UI_SCALE * 2) / 2
+        base_font.setPointSizeF(scaled_size)
+    app.setFont(base_font)
 
     load_custom_fonts()
     window = MainWindow()

@@ -1,4 +1,5 @@
 import os
+import io
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
@@ -7,7 +8,7 @@ from PyQt5.QtWidgets import (
     QScrollBar, QStyle, QStyleOptionSlider, QGraphicsDropShadowEffect
 )
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtProperty, QSize, QTimer, QPropertyAnimation, QRectF, QPoint
-from PyQt5.QtGui import QColor, QFont, QPainter, QPixmap, QTransform, QLinearGradient, QBrush, QRegion
+from PyQt5.QtGui import QColor, QFont, QPainter, QPixmap, QImage, QTransform, QLinearGradient, QBrush, QRegion
 from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintPreviewWidget
 
 import matplotlib
@@ -730,19 +731,65 @@ class RightPanel(QWidget):
 
         preview.exec_()
 
+    def _overlay_high_res_graphs(self, painter, widget_to_print, capture_rect):
+        """Дорисовывает поверх уже отрендеренного снимка панели каждый
+        встроенный график matplotlib отдельно, в высоком разрешении -
+        вызывать СРАЗУ ПОСЛЕ widget_to_print.render(painter, ...) на тот
+        же painter (координаты те же, трансформацию/scale трогать не
+        нужно).
+
+        Зачем это нужно: widget_to_print.render(...) "фотографирует" всю
+        панель разом, включая графики - но график встроен как отдельный
+        виджет (FigureCanvasQTAgg), который сам себя рисует уже готовой
+        растровой картинкой в ЭКРАННОМ разрешении (_SCREEN_DPI = 130,
+        см. начало файла) - render() всей панели просто копирует эту
+        готовую картинку как есть, независимо от того, что остальной
+        документ печатается чётче. Из-за этого именно графики выглядели
+        заметно пиксельнее текста и таблиц (которые Qt рисует как
+        настоящий текст/линии, а не картинку).
+
+        fig.savefig(dpi=...) - это ОТДЕЛЬНЫЙ разовый рендер прямо в
+        буфер в памяти, использующий тот же dpi, что и ручное сохранение
+        одного графика (см. _FixedAspectToolbar.SAVE_DPI) - живого
+        виджета графика на экране он не касается и не меняет (в отличие
+        от прямого fig.set_dpi(), который заодно изменил бы физический
+        размер виджета на экране - как раз то, чего мы хотим избежать)."""
+        HIGH_DPI = _FixedAspectToolbar.SAVE_DPI
+        for toolbar in self._graph_toolbars:
+            canvas = getattr(toolbar, 'canvas', None)
+            if canvas is None or not canvas.isVisible():
+                continue
+            w, h = canvas.width(), canvas.height()
+            if w <= 0 or h <= 0:
+                continue
+            try:
+                top_left = canvas.mapTo(widget_to_print, QPoint(0, 0))
+                target_x = top_left.x() - capture_rect.x()
+                target_y = top_left.y() - capture_rect.y()
+                buf = io.BytesIO()
+                canvas.figure.savefig(buf, format='png', dpi=HIGH_DPI, facecolor='white')
+                img = QImage.fromData(buf.getvalue(), 'PNG')
+                if img.isNull():
+                    continue
+                painter.drawImage(QRectF(target_x, target_y, w, h), img, QRectF(img.rect()))
+            except Exception:
+                # Если с конкретным графиком что-то пошло не так - лучше
+                # оставить как есть уже скопированную (пусть и менее
+                # чёткую) версию из общего render() панели, чем сорвать
+                # экспорт/печать всего протокола целиком из-за одного графика
+                continue
+
     def _render_widget_to_printer(self, widget, printer):
         try:
             w = max(widget.width(), 1)
             h = max(widget.height(), 1)
             page_rect = printer.pageRect()
 
-            # Рендерим виджет в изображение с повышенной плотностью
-            # пикселей (не полагаясь на QPrinter.HighResolution напрямую в
-            # связке с painter.scale()+render() - на некоторых системах
-            # это давало неверные пропорции страницы). Чёткость печати
-            # контролируем сами, независимо от того, как QPrinter
-            # трактует разрешение.
-            density = 3
+            # Промежуточный QPixmap - см. подробное объяснение отката в
+            # _render_protocol_to_printer: прямая отрисовка в painter
+            # (без снимка) была опробована и оказалась хуже.
+            MAX_DIMENSION = 30000
+            density = min(9, MAX_DIMENSION / max(w, h))
             high_res = QPixmap(int(w * density), int(h * density))
             high_res.fill(Qt.white)
             hr_painter = QPainter(high_res)
@@ -1935,10 +1982,27 @@ class RightPanel(QWidget):
             h = max(capture_rect.height(), 1)
             page_rect = printer.pageRect()
 
-            # Рендерим в изображение повышенной плотности пикселей - иначе
-            # печать/предпросмотр выглядят заметно хуже экрана (см. тот же
-            # приём в _render_widget_to_printer)
-            density = 3
+            # ВОЗВРАТ к промежуточному QPixmap - прямая отрисовка в painter
+            # (без снимка) была опробована и оказалась ХУЖЕ: и качество
+            # заметно просело, и протокол стал обрезаться по высоте вместо
+            # того, чтобы полностью вписываться в лист А4. Похоже, дело
+            # было не только (или не столько) в самом QPrintPreviewWidget -
+            # его внутреннее поведение на разных проходах (предпросмотр
+            # при разном зуме и реальная печать) оказалось не идентичным
+            # для прямой отрисовки, из-за чего расчёт масштаба "уезжал".
+            # Снимок в памяти надёжнее - весь протокол посчитан и
+            # смасштабирован ЗАРАНЕЕ, как единое целое, до передачи в
+            # printer, поэтому не зависит от того, как именно
+            # QPrintPreviewWidget обрабатывает рисование в реальном времени.
+            #
+            # MAX_DIMENSION - предохранитель по памяти: для обычного
+            # протокола плотность будет полной (9), но если у конкретного
+            # протокола необычно много данных и высота получится намного
+            # больше ширины - плотность автоматически чуть снижается,
+            # чтобы одна сторона снимка не улетела за разумный предел в
+            # пикселях.
+            MAX_DIMENSION = 30000
+            density = min(9, MAX_DIMENSION / max(w, h))
             high_res = QPixmap(int(w * density), int(h * density))
             high_res.fill(Qt.white)
             hr_painter = QPainter(high_res)
@@ -1959,6 +2023,9 @@ class RightPanel(QWidget):
                     QPoint(0, 0),
                     QRegion(capture_rect),
                 )
+                # Графики поверх - см. подробное объяснение в
+                # _overlay_high_res_graphs()
+                self._overlay_high_res_graphs(hr_painter, widget_to_print, capture_rect)
             finally:
                 widget_to_print.setAttribute(Qt.WA_NoSystemBackground, False)
             hr_painter.end()
@@ -2231,6 +2298,11 @@ class RightPanel(QWidget):
                     QPoint(0, 0),
                     QRegion(capture_rect),
                 )
+                # Графики поверх, в высоком разрешении - см. подробное
+                # объяснение в _overlay_high_res_graphs(). Без этого
+                # именно графики выглядели заметно пиксельнее текста и
+                # таблиц в готовом PDF.
+                self._overlay_high_res_graphs(painter, widget_to_print, capture_rect)
             finally:
                 widget_to_print.setAttribute(Qt.WA_NoSystemBackground, False)
             progress.set_progress(90)

@@ -2927,7 +2927,9 @@ class AddPumpDialog(_GlowDialog):
         # ему сжаться на маленьком (тот же баг уже разобран подробно в
         # AddModificationDialog/EditPumpDialog).
         _size_scroll_dialog(self, scroll, scroll_content)
-        self._lock_size(clamp_to_screen=True, pre_sized=True)
+        # height_fraction=0.88 (а не дефолтные 0.92) - без этого окно на
+        # маленьком экране вплотную упиралось в панель задач
+        self._lock_size(clamp_to_screen=True, height_fraction=0.88, pre_sized=True)
 
     def on_modification_changed(self, index):
         # Очищаем предыдущее содержимое
