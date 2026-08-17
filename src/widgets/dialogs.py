@@ -49,6 +49,37 @@ def _clamp_to_screen(widget, width_fraction=0.95, height_fraction=0.92):
     widget.move(x, y)
 
 
+def _size_scroll_dialog(dialog, scroll, scroll_content, width_margin=20):
+    """Готовит корректный размер для диалогов, чьё содержимое обёрнуто в
+    QScrollArea (EditPumpDialog, AddModificationDialog, AddPumpDialog) -
+    вызывать ПОСЛЕ scroll.setWidget(scroll_content), ПЕРЕД
+    self._lock_size(clamp_to_screen=True, pre_sized=True).
+
+    Раньше это делалось в 2 шага (задать scroll.setMinimumWidth() под
+    контент, оставить высоту как есть) - решало "окно обрезано" на
+    большом экране, но на маленьком тогда же (если задать ещё и
+    setMinimumHeight() под контент - см. историю правок) окно переставало
+    сжиматься совсем: QScrollArea, в отличие от обычных виджетов, не
+    сообщает наружу sizeHint() по реальному содержимому - только маленький
+    дефолтный - поэтому adjustSize() БЕЗ явного minimumHeight занижает
+    высоту диалога и на большом экране тоже (проверено эмпирически).
+
+    Решение - на мгновение поставить minimumHeight = высоте контента,
+    ТОЛЬКО чтобы adjustSize() посчитал правильный "естественный" размер,
+    и сразу же его снять (+ invalidate/activate layout'а, иначе Qt не
+    заметит снятия ограничения) - тогда следующий clamp_to_screen() в
+    _lock_size() уже спокойно сжимает диалог меньше исходного контента
+    на маленьком экране, никакого "запертого" минимума больше нет."""
+    content_size = scroll_content.sizeHint()
+    scroll.setMinimumWidth(content_size.width() + styles.scaled(width_margin))
+    scroll.setMinimumHeight(content_size.height())
+    dialog.adjustSize()
+    QApplication.processEvents()
+    scroll.setMinimumHeight(0)
+    dialog.layout().invalidate()
+    dialog.layout().activate()
+
+
 class _DialogCloseButton(QPushButton):
     """Крестик закрытия - своя кнопка вместо системной (т.к. у безрамочного
     окна нет системного заголовка). Серая по умолчанию, бирюзовая при
@@ -328,13 +359,26 @@ class _GlowDialog(QDialog):
         self.close_btn.setDefault(False)
         self.close_btn.clicked.connect(self.reject)
 
-    def _lock_size(self, clamp_to_screen=False, width_fraction=0.95, height_fraction=0.92):
+    def _lock_size(self, clamp_to_screen=False, width_fraction=0.95, height_fraction=0.92, pre_sized=False):
         """Фиксирует размер окна по текущему содержимому - вызывать в
         конце __init__ наследника, после того как весь контент добавлен.
         clamp_to_screen=True - для больших/динамических диалогов (много
         полей, таблицы) - сначала аккуратно уменьшает окно, если оно не
-        помещается на маленьком экране."""
-        self.adjustSize()
+        помещается на маленьком экране.
+
+        pre_sized=True - НЕ вызывает self.adjustSize() здесь (обычно
+        первый шаг) - используется диалогами, которые оборачивают
+        содержимое в QScrollArea (EditPumpDialog, AddModificationDialog,
+        AddPumpDialog) и уже сами явно выставили себе правильный
+        "естественный" размер ДО вызова _lock_size(). Без этого флага
+        adjustSize() здесь пересчитал бы размер заново по sizeHint()
+        самой QScrollArea - а у неё, в отличие от обычных виджетов, свой
+        маленький sizeHint по умолчанию, никак не учитывающий реальное
+        содержимое внутри (см. комментарии у создания scroll в этих
+        диалогах) - окно снова "схлопнулось" бы к маленькому размеру,
+        стирая уже сделанный вручную расчёт."""
+        if not pre_sized:
+            self.adjustSize()
         # Принудительно "прогоняем" отложенные события layout'а - без
         # этого geometry() дочерних виджетов (в частности, glow_frame)
         # не всегда успевает обновиться синхронно сразу после adjustSize(),
@@ -1412,31 +1456,26 @@ class AddModificationDialog(_GlowDialog):
 
         # Оборачиваем всё собранное содержимое в прокручиваемую область -
         # тот же приём, что и в ViewModificationsDialog
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-        scroll.setVerticalScrollBar(_GlowScrollBar())
-        scroll.setWidget(scroll_content)
-        self.body_layout.addWidget(scroll)
-
-        # QScrollArea сама по себе не "прокидывает" наружу фактическую
-        # ширину/высоту своего содержимого - без этого self.adjustSize()
-        # (см. _lock_size) ориентируется на маленький sizeHint ПУСТОЙ
-        # QScrollArea, а не на реальные 3 таблицы испытаний внутри неё,
-        # из-за чего всё окно фиксировалось примерно в 2 раза уже и ниже
-        # настоящего содержимого - оно visually выглядело "обрезанным".
-        # Тот же приём, что и в ViewModificationsDialog (см. там же).
-        content_size = scroll_content.sizeHint()
-        scroll.setMinimumWidth(content_size.width() + styles.scaled(20))
-        scroll.setMinimumHeight(content_size.height())
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        self._scroll.setVerticalScrollBar(_GlowScrollBar())
+        self._scroll.setWidget(scroll_content)
+        self._scroll_content = scroll_content
+        self.body_layout.addWidget(self._scroll)
 
         # У этого диалога обычно самое высокое содержимое из всех (3
         # таблицы испытаний + герметичность + пароль) - стандартные 92%
         # высоты экрана оставляют слишком мало отступов сверху/снизу,
         # из-за чего окно визуально выглядело смещённым вниз. Даём
         # заметно больше запаса специально для этого диалога.
-        self._lock_size(clamp_to_screen=True, height_fraction=0.8)
+        # См. _size_scroll_dialog() - готовит правильный размер под
+        # реальное содержимое ДО _lock_size(..., pre_sized=True), иначе
+        # QScrollArea занизила бы размер и на большом экране, и не дала
+        # бы сжаться на маленьком (см. подробности там же).
+        _size_scroll_dialog(self, self._scroll, self._scroll_content)
+        self._lock_size(clamp_to_screen=True, height_fraction=0.8, pre_sized=True)
 
     def _add_seal_field(self, initial_text="", relock=True):
         """Добавляет ещё одно поле ввода для последнего пункта проверки на
@@ -1479,7 +1518,8 @@ class AddModificationDialog(_GlowDialog):
         fields.append(edit)
         self._update_seal_add_button()
         if relock:
-            self._lock_size(clamp_to_screen=True)
+            _size_scroll_dialog(self, self._scroll, self._scroll_content)
+            self._lock_size(clamp_to_screen=True, height_fraction=0.8, pre_sized=True)
 
     def _remove_seal_field(self, row_widget, edit):
         """Удаляет одно из добавленных полей (2е или 3е) - базовое (1е)
@@ -1490,7 +1530,8 @@ class AddModificationDialog(_GlowDialog):
         row_widget.setParent(None)
         row_widget.deleteLater()
         self._update_seal_add_button()
-        self._lock_size(clamp_to_screen=True)
+        _size_scroll_dialog(self, self._scroll, self._scroll_content)
+        self._lock_size(clamp_to_screen=True, height_fraction=0.8, pre_sized=True)
 
     def _update_seal_add_button(self):
         """Кнопка "+" видна, только пока полей меньше 3."""
@@ -1566,16 +1607,16 @@ class ViewModificationsDialog(_GlowDialog):
         super().__init__(parent, title="Просмотр модификаций")
 
         main_row = QHBoxLayout()
-        main_row.setSpacing(styles.scaled(10))      # Отступ между списком модификаций слева и панелью деталей справа
+        main_row.setSpacing(styles.scaled(14))
 
         # Левая колонка - список модификаций + кнопки
         left_col = QVBoxLayout()
         self.list_widget = QListWidget()
+        self.list_widget.setFixedWidth(styles.scaled(220))
+        self.list_widget.setMinimumHeight(styles.scaled(500))
         list_font = QFont()
-        list_font.setPointSize(styles.scaled_pt(12))        # Шрифт списка модификаций слева
+        list_font.setPointSize(styles.scaled_pt(12))
         self.list_widget.setFont(list_font)
-        self.list_widget.setFixedWidth(styles.scaled(220))      # Ширина списка модификаций
-        self.list_widget.setMinimumHeight(styles.scaled(300))   
         self.list_widget.setStyleSheet(f"""
             QListWidget {{
                 background-color: #f0f0f0;
@@ -1622,7 +1663,7 @@ class ViewModificationsDialog(_GlowDialog):
         # наша полоса прокрутки (_GlowScrollBar.FULL_WIDTH + MARGIN_RIGHT =
         # 8+5=13px) - иначе визуально казалось бы, что отступ справа
         # меньше, чем слева
-        self.details_layout.setContentsMargins(styles.scaled(4), styles.scaled(4), styles.scaled(15), styles.scaled(4))         # Поля вокруг правой панели
+        self.details_layout.setContentsMargins(styles.scaled(8), styles.scaled(4), styles.scaled(21), styles.scaled(4))
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -1846,10 +1887,10 @@ class ViewModificationsDialog(_GlowDialog):
         current_cols_width = sum(table.columnWidth(c) for c in range(col_count))
         if current_cols_width == 0:
             return
-        available = max(26 * col_count, target_width - 2)
+        available = max(30 * col_count, target_width - 2)
         scale = available / current_cols_width
         for c in range(col_count):
-            table.setColumnWidth(c, max(styles.scaled(26), int(table.columnWidth(c) * scale)))
+            table.setColumnWidth(c, max(styles.scaled(30), int(table.columnWidth(c) * scale)))
         new_total = 2 + sum(table.columnWidth(c) for c in range(col_count))
         table.setFixedWidth(new_total)
 
@@ -1886,9 +1927,9 @@ class ViewModificationsDialog(_GlowDialog):
         small_font.setPointSize(styles.scaled_pt(10))
         table.setFont(small_font)
         table.horizontalHeader().setFont(small_font)
-        # Заголовок X-столбца обычно на 2 строки (например, "Обороты
-        # привода,\nоб/мин") - специально, чтобы сжать ширину этого
-        # столбца. Резервируем под заголовок высоту в 2 строки текста.
+        # Заголовки X-столбца ("Обороты привода,\nоб/мин") и MIN/MAX
+        # ("MIN,\nл/мин") - все на 2 строки, специально, чтобы сжать
+        # ШИРИНУ этих столбцов за счёт высоты заголовка.
         header_line_height = QFontMetrics(small_font).lineSpacing()
         table.horizontalHeader().setFixedHeight(header_line_height * 2 + 8)
 
@@ -2880,7 +2921,13 @@ class AddPumpDialog(_GlowDialog):
         scroll.setWidget(scroll_content)
         self.body_layout.addWidget(scroll)
 
-        self._lock_size(clamp_to_screen=True)
+        # См. _size_scroll_dialog() - без этого QScrollArea занижала бы
+        # размер диалога и на большом экране (маленький sizeHint по
+        # умолчанию, без учёта реального содержимого), и не давала бы
+        # ему сжаться на маленьком (тот же баг уже разобран подробно в
+        # AddModificationDialog/EditPumpDialog).
+        _size_scroll_dialog(self, scroll, scroll_content)
+        self._lock_size(clamp_to_screen=True, pre_sized=True)
 
     def on_modification_changed(self, index):
         # Очищаем предыдущее содержимое
@@ -3296,7 +3343,19 @@ class EditPumpDialog(_GlowDialog):
         # окно выглядело мелким и сжатым при большом запасе свободного
         # места вокруг. На маленьком экране (1366x768) оставляем базовый
         # отступ - там, наоборот, важна компактность.
-        self.body_layout.setSpacing(styles.dialog_extra_spacing(10))
+        #
+        # Всё содержимое собирается в scroll_content (см. ниже, перед
+        # _lock_size) и оборачивается в QScrollArea - на маленьком экране
+        # окно иначе не помещалось по высоте целиком БЕЗ возможности
+        # прокрутки (contentsWidget напрямую в self.body_layout не давал
+        # включиться прокрутке вообще - контент просто обрезался снизу).
+        # Дальше по методу body_layout - ЛОКАЛЬНАЯ переменная (layout
+        # ВНУТРИ прокручиваемой области), а не self.body_layout диалога.
+        scroll_content = QWidget()
+        scroll_content.setStyleSheet("background: transparent;")
+        body_layout = QVBoxLayout(scroll_content)
+        body_layout.setContentsMargins(0, 0, styles.scaled(13), 0)
+        body_layout.setSpacing(styles.dialog_extra_spacing(10))
         self.pump_data = pump_data
         self.selected_mod = None
         self.value_tables = {}
@@ -3312,7 +3371,7 @@ class EditPumpDialog(_GlowDialog):
 
         info_label = QLabel(f"Идентификационный № насоса: {pump_number}")
         info_label.setStyleSheet("color: #e8eaed; background: transparent;")
-        self.body_layout.addWidget(info_label)
+        body_layout.addWidget(info_label)
 
         SPACING = 7
         CHIP_PAD = 8 * 2 + 3
@@ -3399,7 +3458,7 @@ class EditPumpDialog(_GlowDialog):
         row1.addSpacing(SPACING)
         row1.addWidget(chip_mod)
         row1.addStretch(1)
-        self.body_layout.addLayout(row1)
+        body_layout.addLayout(row1)
 
         row2 = QHBoxLayout()
         row2.addWidget(chip_order)
@@ -3408,7 +3467,7 @@ class EditPumpDialog(_GlowDialog):
         row2.addSpacing(ROW2_SPACING)
         row2.addWidget(chip_type)
         row2.addStretch(1)
-        self.body_layout.addLayout(row2)
+        body_layout.addLayout(row2)
 
         self.values_widget = QWidget()
         self.values_main_layout = QVBoxLayout(self.values_widget)
@@ -3424,7 +3483,7 @@ class EditPumpDialog(_GlowDialog):
         self.values_main_layout.addLayout(self.tests_column)
         self.values_main_layout.addSpacing(styles.dialog_extra_spacing(18))
         self.values_main_layout.addLayout(self.extra_column)
-        self.body_layout.addWidget(self.values_widget)
+        body_layout.addWidget(self.values_widget)
 
         note_row = QHBoxLayout()
         self.note_label = QLabel("Примечание:")
@@ -3439,10 +3498,10 @@ class EditPumpDialog(_GlowDialog):
         )
         note_row.addWidget(self.note_input)
         note_row.addStretch(1)
-        self.body_layout.addLayout(note_row)
+        body_layout.addLayout(note_row)
 
         # Отступ перед паролем, чтобы он визуально не сливался с примечанием (п.3)
-        self.body_layout.addSpacing(16)
+        body_layout.addSpacing(16)
 
         password_row = QHBoxLayout()
         password_row.addStretch(1)
@@ -3463,7 +3522,7 @@ class EditPumpDialog(_GlowDialog):
         setup_password_field(self.password_input, icon_color="#1c1e21")
         password_row.addWidget(self.password_input)
         password_row.addStretch(1)
-        self.body_layout.addLayout(password_row)
+        body_layout.addLayout(password_row)
 
         btn_layout = QHBoxLayout()
         ok_btn = QPushButton("Сохранить")
@@ -3480,7 +3539,7 @@ class EditPumpDialog(_GlowDialog):
         cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(ok_btn)
         btn_layout.addWidget(cancel_btn)
-        self.body_layout.addLayout(btn_layout)
+        body_layout.addLayout(btn_layout)
 
         self.mod_combo.setCurrentIndex(current_index)
         self.mod_combo.currentIndexChanged.connect(self.on_modification_changed)
@@ -3492,7 +3551,21 @@ class EditPumpDialog(_GlowDialog):
                 "В базе нет ни одной модификации. Сначала добавьте модификацию через Настройки → Добавить модификацию."
             )
 
-        self._lock_size(clamp_to_screen=True)
+        # Оборачиваем уже полностью построенное содержимое в прокрутку -
+        # ПОСЛЕ on_modification_changed() выше, чтобы sizeHint() ниже
+        # учитывал реально построенные таблицы испытаний, а не пустую
+        # заглушку. Тот же приём, что и в AddModificationDialog/
+        # AddPumpDialog - см. _size_scroll_dialog().
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        scroll.setVerticalScrollBar(_GlowScrollBar())
+        scroll.setWidget(scroll_content)
+        self.body_layout.addWidget(scroll)
+
+        _size_scroll_dialog(self, scroll, scroll_content)
+        self._lock_size(clamp_to_screen=True, pre_sized=True)
 
     def on_modification_changed(self, index):
         self._clear_sub_layout(self.tests_column)
