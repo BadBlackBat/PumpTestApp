@@ -951,7 +951,7 @@ class PointsEditorWidget(QWidget):
                 background-color: #3a3d42;
                 color: #e8eaed;
                 border: 1px solid #6b6f75;
-                padding: {styles.scaled(2)}px {styles.scaled(6)}px;
+                padding: {styles.scaled(1)}px {styles.scaled(4)}px;
             }}
         """)
         rows = len(x_values) if x_values else 1
@@ -1030,12 +1030,12 @@ class PointsEditorWidget(QWidget):
         self.table.setFont(small_font)
         self.table.horizontalHeader().setFont(small_font)
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(styles.scaled(22))
+        self.table.verticalHeader().setDefaultSectionSize(styles.scaled(18))
         self.table.resizeRowsToContents()
         self.table.resizeColumnsToContents()
-        min_section = styles.scaled(40)
+        min_section = styles.scaled(36)
         for col in range(self.table.columnCount()):
-            self.table.setColumnWidth(col, max(min_section, self.table.columnWidth(col) + styles.scaled(4)))
+            self.table.setColumnWidth(col, max(min_section, self.table.columnWidth(col) + styles.scaled(2)))
         self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         total_height = self.table.horizontalHeader().height() + 2
@@ -1156,8 +1156,20 @@ class AddModificationDialog(_GlowDialog):
         # указывает на layout ВНУТРИ прокручиваемой области, а не на
         # self.body_layout самого диалога напрямую.
         scroll_content = QWidget()
+        # Без этого содержимое прокручиваемой области рисуется с
+        # непрозрачным фоном палитры (обычно светлым/белым) поверх
+        # графитовой панели диалога - QSS "background: transparent" на
+        # самой QScrollArea (ниже) НЕ распространяется автоматически на
+        # виджет ВНУТРИ неё. Тот же приём уже применён и работает в
+        # ViewModificationsDialog (details_widget) - здесь этого шага
+        # раньше не было, из-за чего именно в этом диалоге в тёмной теме
+        # был виден светлый фон вместо фирменного графитового.
+        scroll_content.setStyleSheet("background: transparent;")
         body_layout = QVBoxLayout(scroll_content)
-        body_layout.setSpacing(styles.scaled(10))
+        # См. комментарий у dialog_extra_spacing в styles.py - тот же
+        # приём, что и в EditPumpDialog: больше воздуха на большом
+        # экране, без изменений на маленьком.
+        body_layout.setSpacing(styles.dialog_extra_spacing(10))
         body_layout.setContentsMargins(0, 0, styles.scaled(13), 0)
 
         INPUT_STYLE = (
@@ -1194,7 +1206,7 @@ class AddModificationDialog(_GlowDialog):
         # Три испытания - в один горизонтальный ряд, чтобы диалог оставался
         # компактным по высоте и не требовал прокрутки
         tests_layout = QHBoxLayout()
-        tests_layout.setSpacing(styles.scaled(20))
+        tests_layout.setSpacing(styles.dialog_extra_spacing(10))
 
         test1_col = QVBoxLayout()
         test1_col.addWidget(self._section_title("Испытание 1:\nПодача от оборотов\nECO выкл."))
@@ -1281,6 +1293,7 @@ class AddModificationDialog(_GlowDialog):
         body_layout.addLayout(pressure_box)
 
         seal_box = QVBoxLayout()
+        seal_box.setSpacing(styles.scaled(3))
         seal_box.addWidget(self._section_title("Проверка на герметичность"))
         self.seal_inputs = {}
         seal_rules = existing_mod['seal_rules'] if existing_mod else dict(utils.DEFAULT_SEAL_REQUIREMENTS)
@@ -1295,7 +1308,7 @@ class AddModificationDialog(_GlowDialog):
         self._seal_last_key = utils.SEAL_KEYS[-1]
         self._seal_field_width = 260  # единая ширина ВСЕХ полей герметичности - и первого, и добавленных
         self._seal_extra_layout = QVBoxLayout()
-        self._seal_extra_layout.setSpacing(styles.scaled(6))
+        self._seal_extra_layout.setSpacing(styles.scaled(3))
 
         def make_seal_edit(text):
             e = QLineEdit(text)
@@ -1357,7 +1370,7 @@ class AddModificationDialog(_GlowDialog):
                 seal_box.addLayout(row_layout)
         body_layout.addLayout(seal_box)
 
-        body_layout.addSpacing(16)
+        body_layout.addSpacing(styles.scaled(10))
 
         password_row = QHBoxLayout()
         password_row.addStretch(1)
@@ -1406,6 +1419,17 @@ class AddModificationDialog(_GlowDialog):
         scroll.setVerticalScrollBar(_GlowScrollBar())
         scroll.setWidget(scroll_content)
         self.body_layout.addWidget(scroll)
+
+        # QScrollArea сама по себе не "прокидывает" наружу фактическую
+        # ширину/высоту своего содержимого - без этого self.adjustSize()
+        # (см. _lock_size) ориентируется на маленький sizeHint ПУСТОЙ
+        # QScrollArea, а не на реальные 3 таблицы испытаний внутри неё,
+        # из-за чего всё окно фиксировалось примерно в 2 раза уже и ниже
+        # настоящего содержимого - оно visually выглядело "обрезанным".
+        # Тот же приём, что и в ViewModificationsDialog (см. там же).
+        content_size = scroll_content.sizeHint()
+        scroll.setMinimumWidth(content_size.width() + styles.scaled(20))
+        scroll.setMinimumHeight(content_size.height())
 
         # У этого диалога обычно самое высокое содержимое из всех (3
         # таблицы испытаний + герметичность + пароль) - стандартные 92%
@@ -1542,13 +1566,16 @@ class ViewModificationsDialog(_GlowDialog):
         super().__init__(parent, title="Просмотр модификаций")
 
         main_row = QHBoxLayout()
-        main_row.setSpacing(styles.scaled(14))
+        main_row.setSpacing(styles.scaled(10))      # Отступ между списком модификаций слева и панелью деталей справа
 
         # Левая колонка - список модификаций + кнопки
         left_col = QVBoxLayout()
         self.list_widget = QListWidget()
-        self.list_widget.setFixedWidth(styles.scaled(200))
-        self.list_widget.setMinimumHeight(styles.scaled(500))
+        list_font = QFont()
+        list_font.setPointSize(styles.scaled_pt(12))        # Шрифт списка модификаций слева
+        self.list_widget.setFont(list_font)
+        self.list_widget.setFixedWidth(styles.scaled(220))      # Ширина списка модификаций
+        self.list_widget.setMinimumHeight(styles.scaled(300))   
         self.list_widget.setStyleSheet(f"""
             QListWidget {{
                 background-color: #f0f0f0;
@@ -1595,7 +1622,7 @@ class ViewModificationsDialog(_GlowDialog):
         # наша полоса прокрутки (_GlowScrollBar.FULL_WIDTH + MARGIN_RIGHT =
         # 8+5=13px) - иначе визуально казалось бы, что отступ справа
         # меньше, чем слева
-        self.details_layout.setContentsMargins(styles.scaled(8), styles.scaled(4), styles.scaled(21), styles.scaled(4))
+        self.details_layout.setContentsMargins(styles.scaled(4), styles.scaled(4), styles.scaled(15), styles.scaled(4))         # Поля вокруг правой панели
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -1819,10 +1846,10 @@ class ViewModificationsDialog(_GlowDialog):
         current_cols_width = sum(table.columnWidth(c) for c in range(col_count))
         if current_cols_width == 0:
             return
-        available = max(30 * col_count, target_width - 2)
+        available = max(26 * col_count, target_width - 2)
         scale = available / current_cols_width
         for c in range(col_count):
-            table.setColumnWidth(c, max(styles.scaled(30), int(table.columnWidth(c) * scale)))
+            table.setColumnWidth(c, max(styles.scaled(26), int(table.columnWidth(c) * scale)))
         new_total = 2 + sum(table.columnWidth(c) for c in range(col_count))
         table.setFixedWidth(new_total)
 
@@ -1834,7 +1861,7 @@ class ViewModificationsDialog(_GlowDialog):
         пользователем."""
         table = QTableWidget()
         table.setColumnCount(3)
-        table.setHorizontalHeaderLabels([x_label, "MIN, л/мин", "MAX, л/мин"])
+        table.setHorizontalHeaderLabels([x_label, "MIN,\nл/мин", "MAX,\nл/мин"])
         table.setRowCount(len(x_values))
         table.verticalHeader().setVisible(False)
         table.setStyleSheet(f"""
@@ -2665,6 +2692,10 @@ class AddPumpDialog(_GlowDialog):
         # переменная), которая указывает на layout ВНУТРИ прокручиваемой
         # области, а не на self.body_layout диалога напрямую.
         scroll_content = QWidget()
+        # См. точно такой же комментарий и причину в AddModificationDialog
+        # выше - без этого фон содержимого прокрутки в тёмной теме
+        # оказывался светлым вместо графитового.
+        scroll_content.setStyleSheet("background: transparent;")
         body_layout = QVBoxLayout(scroll_content)
         body_layout.setSpacing(styles.scaled(10))
         body_layout.setContentsMargins(0, 0, styles.scaled(13), 0)
@@ -3260,6 +3291,12 @@ class EditPumpDialog(_GlowDialog):
             parent, title=f"Редактирование протокола - образец № {pump_number}",
             glow_color=(255, 140, 0)  # оранжевый вместо стандартного бирюзового (п.1)
         )
+        # На большом экране этому диалогу явно не хватало воздуха между
+        # строками (№ насоса/заказа/дата, таблицы испытаний, примечание) -
+        # окно выглядело мелким и сжатым при большом запасе свободного
+        # места вокруг. На маленьком экране (1366x768) оставляем базовый
+        # отступ - там, наоборот, важна компактность.
+        self.body_layout.setSpacing(styles.dialog_extra_spacing(10))
         self.pump_data = pump_data
         self.selected_mod = None
         self.value_tables = {}
@@ -3377,11 +3414,15 @@ class EditPumpDialog(_GlowDialog):
         self.values_main_layout = QVBoxLayout(self.values_widget)
         self.values_main_layout.setContentsMargins(0, 0, 0, 0)
         self.tests_column = QVBoxLayout()
-        self.tests_column.setSpacing(styles.scaled(22))
+        # dialog_extra_spacing - на большом экране заметно просторнее
+        # (окно раньше выглядело слишком тесным при обилии свободного
+        # места вокруг), на маленьком (1366x768 и подобных) отступ
+        # остаётся прежним - там важнее компактность, см. styles.py
+        self.tests_column.setSpacing(styles.dialog_extra_spacing(22))
         self.extra_column = QVBoxLayout()
-        self.extra_column.setSpacing(styles.scaled(4))
+        self.extra_column.setSpacing(styles.dialog_extra_spacing(4))
         self.values_main_layout.addLayout(self.tests_column)
-        self.values_main_layout.addSpacing(18)
+        self.values_main_layout.addSpacing(styles.dialog_extra_spacing(18))
         self.values_main_layout.addLayout(self.extra_column)
         self.body_layout.addWidget(self.values_widget)
 
@@ -3622,11 +3663,22 @@ class EditPumpDialog(_GlowDialog):
         changed = combo.currentText() != self._seal_originals.get(key, '')
         weight = "bold" if changed else "normal"
         color = "#cc6600" if changed else "#1c1e21"
-        combo.setStyleSheet(combo.styleSheet() + f"\nQComboBox {{ font-weight: {weight}; color: {color}; }}")
+        # set_dynamic_style (не голый setStyleSheet) - иначе следующий
+        # вызов styles.retheme_widget_tree(self) (происходит заново при
+        # каждой смене модификации, см. on_modification_changed) находит
+        # СТАРЫЙ закэшированный "исходный" стиль этого комбобокса (без
+        # подсветки, каким он был до первого редактирования) и молча
+        # перезаписывает им текущий - подсветка "как будто сама" гасла.
+        styles.set_dynamic_style(
+            combo,
+            combo.styleSheet() + f"\nQComboBox {{ font-weight: {weight}; color: {color}; }}"
+        )
 
     def _on_pressure_changed(self, text):
         changed = text.strip() != self._pressure_original
-        self.pressure_input.setStyleSheet(
+        # См. комментарий в _on_seal_changed выше - та же причина.
+        styles.set_dynamic_style(
+            self.pressure_input,
             "QLineEdit { border: 1px solid #6b6f75; border-radius: 6px; "
             f"background-color: #f0f0f0; color: {'#cc6600' if changed else '#1c1e21'}; "
             f"font-weight: {'bold' if changed else 'normal'}; padding: {styles.scaled(2)}px {styles.scaled(6)}px; }}"
@@ -3673,6 +3725,13 @@ class EditPumpDialog(_GlowDialog):
         table.setVerticalHeaderLabels([x_label, "Расход, л/мин"])
         table.horizontalHeader().setVisible(False)
         arrow_path = os.path.join(ICONS_DIR, 'dropdown_arrow.svg').replace('\\', '/')
+        # На маленьком экране (1366x768 и подобных) специально ужимаем
+        # именно вертикальные отступы ячеек/заголовков таблиц испытаний -
+        # это самый плотный по высоте элемент диалога, и здесь экономия
+        # пары пикселей на строку заметно помогает поместиться без
+        # прокрутки. На обычном экране отступы остаются как были.
+        cell_v_pad = 0 if styles.is_small_screen() else styles.scaled(1)
+        header_v_pad = styles.scaled(1) if styles.is_small_screen() else styles.scaled(2)
         table.setStyleSheet(f"""
             QTableWidget {{
                 gridline-color: #b0b4b9;
@@ -3681,7 +3740,7 @@ class EditPumpDialog(_GlowDialog):
                 background-color: #f0f0f0;
             }}
             QTableWidget::item {{
-                padding: {styles.scaled(1)}px;
+                padding: {cell_v_pad}px {styles.scaled(1)}px;
             }}
             QTableWidget::item:hover {{
                 background-color: #ffe0b3;
@@ -3694,7 +3753,7 @@ class EditPumpDialog(_GlowDialog):
                 background-color: #3a3d42;
                 color: #e8eaed;
                 border: 1px solid #6b6f75;
-                padding: {styles.scaled(2)}px {styles.scaled(6)}px;
+                padding: {header_v_pad}px {styles.scaled(6)}px;
             }}
         """)
 

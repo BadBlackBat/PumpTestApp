@@ -32,6 +32,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INSTALLER_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -116,7 +117,7 @@ def prompt_build_config():
         print("Основной пароль не может быть пустым.")
         sys.exit(1)
 
-    publisher = input("Название организации (показывается при установке) [Steering Laboratory]: ").strip() or "Steering Laboratory"
+    publisher = input("Название организации (показывается при установке) [NAMI]: ").strip() or "NAMI"
 
     current_network_path = get_current_network_path()
     if current_network_path:
@@ -187,6 +188,57 @@ def run_pyinstaller():
         sys.exit(1)
 
 
+def find_output_exe():
+    """Находит только что собранный exe-файл установщика в installer/output -
+    самый свежий по времени изменения (обычно там только один файл
+    текущей версии, но на случай, если остались файлы от старых версий,
+    берём именно последний изменённый)."""
+    output_dir = os.path.join(INSTALLER_DIR, 'output')
+    if not os.path.isdir(output_dir):
+        return None
+    exe_files = [
+        os.path.join(output_dir, f) for f in os.listdir(output_dir)
+        if f.lower().endswith('.exe')
+    ]
+    if not exe_files:
+        return None
+    return max(exe_files, key=os.path.getmtime)
+
+
+def verify_exe_integrity(exe_path):
+    """Проверяет, что итоговый exe-файл не повреждён - на практике
+    antivirus иногда вмешивается в файл ровно в момент его дозаписи
+    Inno Setup'ом (та же природа, что и у более ранней ошибки
+    EndUpdateResource), из-за чего результат может оказаться обрезан
+    или испорчен, хотя сама компиляция отчиталась об успехе. Проверяем
+    минимально необходимое - сигнатуру заголовка PE-файла Windows
+    (MZ в начале, PE в указанном оттуда месте) и разумный размер файла."""
+    try:
+        size = os.path.getsize(exe_path)
+        if size < 1024 * 1024:  # меньше 1 МБ - для этой программы заведомо мало, файл обрезан
+            return False, f"подозрительно маленький размер файла ({size} байт)"
+
+        with open(exe_path, 'rb') as f:
+            mz = f.read(2)
+            if mz != b'MZ':
+                return False, "отсутствует сигнатура MZ в начале файла"
+
+            f.seek(0x3C)
+            pe_offset_bytes = f.read(4)
+            if len(pe_offset_bytes) != 4:
+                return False, "не удалось прочитать смещение PE-заголовка"
+            pe_offset = int.from_bytes(pe_offset_bytes, 'little')
+
+            f.seek(pe_offset)
+            pe_sig = f.read(4)
+            if pe_sig != b'PE\x00\x00':
+                return False, "отсутствует сигнатура PE по ожидаемому смещению"
+    except OSError as e:
+        return False, f"не удалось прочитать файл: {e}"
+
+    return True, None
+
+
 def run_inno_setup():
     print("[3/3] Сборка установщика Inno Setup...")
     iscc_path = find_iscc()
@@ -196,10 +248,44 @@ def run_inno_setup():
         sys.exit(1)
     print(f"      Используется: {iscc_path}")
     iss_path = os.path.join(INSTALLER_DIR, 'installer.iss')
-    result = subprocess.run([iscc_path, iss_path])
-    if result.returncode != 0:
-        print("Сборка установщика завершилась с ошибкой.")
-        sys.exit(1)
+
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        result = subprocess.run([iscc_path, iss_path])
+        if result.returncode != 0:
+            print("Сборка установщика завершилась с ошибкой.")
+            sys.exit(1)
+
+        # Небольшая пауза перед проверкой - даёт антивирусу время закончить
+        # то, что он делает с файлом, прежде чем мы будем его читать
+        time.sleep(1.5)
+
+        exe_path = find_output_exe()
+        if not exe_path:
+            print("ВНИМАНИЕ: не удалось найти собранный exe-файл в installer/output.")
+            sys.exit(1)
+
+        ok, reason = verify_exe_integrity(exe_path)
+        if ok:
+            if attempt > 1:
+                print(f"      Готово со {attempt}-й попытки - итоговый файл целый.")
+            return
+
+        print(f"      Попытка {attempt}/{max_attempts}: итоговый файл повреждён ({reason}).")
+        if attempt < max_attempts:
+            print("      Скорее всего, антивирус вмешался в момент записи файла.")
+            print("      Пробую пересобрать ещё раз...")
+            time.sleep(2)
+        else:
+            print("\nНе удалось получить неповреждённый файл после нескольких попыток.")
+            print("Скорее всего, антивирус (Windows Defender или другой) блокирует/")
+            print("сканирует файл в момент его записи. Без прав администратора добавить")
+            print("папку проекта в исключения антивируса самостоятельно нельзя - лучше")
+            print("всего обратиться к ИТ-отделу, чтобы они настроили исключение через")
+            print("групповую политику. Также можно попробовать выполнить в обычном")
+            print("(не от имени администратора) PowerShell:")
+            print(f'  Add-MpPreference -ExclusionPath "{PROJECT_ROOT}"')
+            sys.exit(1)
 
 
 if __name__ == "__main__":
