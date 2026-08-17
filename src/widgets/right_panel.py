@@ -5,7 +5,8 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
     QTableWidgetItem, QPushButton, QScrollArea, QSizePolicy,
     QFileDialog, QMessageBox, QFrame, QApplication, QHeaderView,
-    QScrollBar, QStyle, QStyleOptionSlider, QGraphicsDropShadowEffect
+    QScrollBar, QStyle, QStyleOptionSlider, QGraphicsDropShadowEffect,
+    QCheckBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtProperty, QSize, QTimer, QPropertyAnimation, QRectF, QPoint
 from PyQt5.QtGui import QColor, QFont, QPainter, QPixmap, QImage, QTransform, QLinearGradient, QBrush, QRegion
@@ -406,6 +407,35 @@ class RightPanel(QWidget):
         header_row_widget.setLayout(header_row)
         self.header_row_widget = header_row_widget
         self.protocol_column_layout.addWidget(header_row_widget)
+
+        # Строка чекбоксов "показывать/скрыть образец" - только для
+        # режима сравнения (display_comparison), в обычном протоколе не
+        # используется и остаётся скрытой. Сам виджет создаётся один раз
+        # (постоянный, как и остальные части этой панели) - при каждом
+        # новом сравнении содержимое чекбоксов пересобирается заново (см.
+        # display_comparison), а не сам виджет.
+        self.comparison_toggle_widget = QWidget()
+        self.comparison_toggle_layout = QHBoxLayout(self.comparison_toggle_widget)
+        self.comparison_toggle_layout.setContentsMargins(0, 0, 0, 4)
+        self.comparison_toggle_layout.setSpacing(styles.scaled(14))
+        self.comparison_toggle_widget.hide()
+        self.protocol_column_layout.addWidget(self.comparison_toggle_widget)
+        # idx (позиция образца в списке items) -> список QTableWidgetItem
+        # ИЛИ (table, 'col'/'row', индекс) - куда именно закрашивать серым
+        # при скрытии этого образца. Заполняется в _create_comparison_*
+        # методах, сбрасывается в _clear_dynamic_content.
+        self._comparison_targets = {}
+        # idx -> список Line2D на графиках сравнения, относящихся к этому
+        # образцу - заполняется в _create_comparison_graphs.
+        self._comparison_lines = {}
+        # Множество idx образцов, СНЯТЫХ галочкой прямо сейчас - нужно
+        # отдельно от серой закраски таблиц, чтобы при печати/экспорте
+        # (см. _set_comparison_export_mode) можно было полностью убрать
+        # именно эти колонки/строки, а не просто перекрасить их.
+        self._comparison_hidden = set()
+        # Временное хранилище полного текста шапки на время экспорта/
+        # печати - см. _set_comparison_export_mode()
+        self._header_full_text = None
 
         # Логотип: картинка-водяной знак (рисуется в paintEvent самого
         # _LogoContainer, не как дочерний виджет) + заголовок сверху +
@@ -1246,8 +1276,13 @@ class RightPanel(QWidget):
 
     def _plot_series(self, ax, x_vals, y_vals, norm_min, norm_max, color, linestyle, label):
         """Рисует линию БЕЗ маркеров на промежуточных точках; точки, не
-        соответствующие нормативам, отмечает красным кружком поверх линии."""
-        ax.plot(x_vals, y_vals, linestyle=linestyle, color=color, linewidth=2, label=label)
+        соответствующие нормативам, отмечает красным кружком поверх линии.
+
+        Возвращает список созданных Line2D (основная линия + маркеры
+        несоответствия, если есть) - нужен вызывающему коду, чтобы потом
+        можно было скрыть/показать ВСЁ, что относится к этой серии,
+        одним махом (см. _on_comparison_toggle)."""
+        lines = ax.plot(x_vals, y_vals, linestyle=linestyle, color=color, linewidth=2, label=label)
         out_of_range_x, out_of_range_y = [], []
         for i, v in enumerate(y_vals):
             if v is None or (isinstance(v, float) and np.isnan(v)):
@@ -1257,7 +1292,8 @@ class RightPanel(QWidget):
                     out_of_range_x.append(x_vals[i])
                     out_of_range_y.append(v)
         if out_of_range_x:
-            ax.plot(out_of_range_x, out_of_range_y, 'o', color='red', markersize=7, zorder=5)
+            lines += ax.plot(out_of_range_x, out_of_range_y, 'o', color='red', markersize=7, zorder=5)
+        return lines
 
     def _on_test_cell_clicked(self, row, col, x_vals, which_graph):
         """Клик по значению расхода ("Расход") или норматива ("Мин.треб"/
@@ -1501,6 +1537,24 @@ class RightPanel(QWidget):
         # содержимому, раз графики уже сами по себе корректно ограничены
         # по ширине (см. max_width выше).
 
+    def _build_comparison_header_html(self, items):
+        """Собирает HTML для header_label в режиме сравнения - используется
+        и при обычном показе (display_comparison, все образцы), и при
+        печати/экспорте (_set_comparison_export_mode, только видимые) -
+        чтобы оба места не могли разойтись в формулировках."""
+        first = items[0]
+        mod_name = first.get('mod_name')
+        dates = [(utils.format_date_display(it['test_date']) if it.get('test_date') else '—') for it in items]
+        return (
+            "<div align='left'>"
+            "Сравнение всех найденных дублей выбранного образца<br>"
+            f"Идентификационный №: <b>{first['pump_number']}</b><br>"
+            f"Модификация: <b>{mod_name or '—'}</b><br>"
+            f"Найдено протоколов: <b>{len(items)}</b><br>"
+            f"Проверки от: <b>{', '.join(dates)}</b>"
+            "</div>"
+        )
+
     def display_comparison(self, items):
         """items - список полных данных (с results_json) насосов-дублей:
         одинаковый номер + модификация. Показывает сравнительные таблицы
@@ -1521,19 +1575,9 @@ class RightPanel(QWidget):
         first = items[0]
         mod_name = first.get('mod_name')
         mod = db.get_modification_by_name(mod_name) if mod_name else None
-        dates = [(utils.format_date_display(it['test_date']) if it.get('test_date') else '—') for it in items]
 
         self.header_title_label.setText("Характеристики образцов насоса ГУР")
-        header_html = (
-            "<div align='left'>"
-            "Сравнение всех найденных дублей выбранного образца<br>"
-            f"Идентификационный №: <b>{first['pump_number']}</b><br>"
-            f"Модификация: <b>{mod_name or '—'}</b><br>"
-            f"Найдено протоколов: <b>{len(items)}</b><br>"
-            f"Проверки от: <b>{', '.join(dates)}</b>"
-            "</div>"
-        )
-        self.header_label.setText(header_html)
+        self.header_label.setText(self._build_comparison_header_html(items))
 
         norm1_min = mod['norm_graph1_min'] if mod else []
         norm1_max = mod['norm_graph1_max'] if mod else []
@@ -1597,6 +1641,22 @@ class RightPanel(QWidget):
         self._create_comparison_seal_table(items)
         self._create_comparison_graphs(items, mod, uniform_width)
         self._set_loading_progress(100)
+
+        # Чекбоксы "показывать в сравнении" - по одному на образец,
+        # отмечены по умолчанию. Снятие галочки скрывает линии этого
+        # образца на графиках (см. _on_comparison_toggle) и закрашивает
+        # серым его данные в таблицах (см. _comparison_targets, собран
+        # выше при построении каждой таблицы) - сами данные при этом
+        # никуда не удаляются, только визуально не участвуют в сравнении.
+        for idx, it in enumerate(items):
+            date_str = utils.format_date_display(it['test_date']) if it.get('test_date') else f'#{idx + 1}'
+            cb = QCheckBox(f"{it['pump_number']} ({date_str})")
+            cb.setChecked(True)
+            cb.setStyleSheet(styles.get_comparison_checkbox_style())
+            cb.toggled.connect(lambda checked, i=idx: self._on_comparison_toggle(i, checked))
+            self.comparison_toggle_layout.addWidget(cb)
+        self.comparison_toggle_layout.addStretch(1)
+        self.comparison_toggle_widget.show()
 
         self.legend_label.setText(
             "<span style='background-color:#ffc8c8; border:1px solid #999;'>"
@@ -1662,6 +1722,9 @@ class RightPanel(QWidget):
             table.setItem(row, 1 + len(items), min_item)
             table.setItem(row, 2 + len(items), max_item)
 
+        for col in range(len(items)):
+            self._comparison_targets.setdefault(col, []).append((table, 'col', 1 + col))
+
         table.verticalHeader().setVisible(False)
         table.resizeColumnsToContents()
         table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -1708,6 +1771,7 @@ class RightPanel(QWidget):
                 f"{min_p} – {max_p}" if min_p is not None and max_p is not None else '')
             range_item.setTextAlignment(Qt.AlignCenter)
             table.setItem(row, 2, range_item)
+            self._comparison_targets.setdefault(row, []).append((table, 'row', row))
 
         table.verticalHeader().setVisible(False)
         table.resizeColumnsToContents()
@@ -1775,6 +1839,9 @@ class RightPanel(QWidget):
             req_item.setTextAlignment(Qt.AlignCenter)
             table.setItem(row, 1 + len(items), req_item)
 
+        for col in range(len(items)):
+            self._comparison_targets.setdefault(col, []).append((table, 'col', 1 + col))
+
         table.verticalHeader().setVisible(False)
         table.resizeColumnsToContents()
         table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -1822,8 +1889,9 @@ class RightPanel(QWidget):
             x_plot = x_vals[:n1]
             y1_plot = [v if v is not None else np.nan for v in y1[:n1]]
             y2_plot = [v if v is not None else np.nan for v in y2[:n1]]
-            self._plot_series(ax1, x_plot, y1_plot, min1, max1, color, '-', f'{date_str}, ECO выкл.')
-            self._plot_series(ax1, x_plot, y2_plot, min2, max2, color, '--', f'{date_str}, ECO вкл.')
+            lines_a = self._plot_series(ax1, x_plot, y1_plot, min1, max1, color, '-', f'{date_str}, ECO выкл.')
+            lines_b = self._plot_series(ax1, x_plot, y2_plot, min2, max2, color, '--', f'{date_str}, ECO вкл.')
+            self._comparison_lines.setdefault(idx, []).extend(lines_a + lines_b)
 
         if len(min1) == len(x_vals):
             ax1.plot(x_vals, min1, ':', color='dimgray', label='Треб. ECO выкл.', alpha=0.7)
@@ -1863,7 +1931,8 @@ class RightPanel(QWidget):
             n3 = min(len(x_tok), len(y3))
             x_plot = x_tok[:n3]
             y3_plot = [v if v is not None else np.nan for v in y3[:n3]]
-            self._plot_series(ax2, x_plot, y3_plot, min3, max3, color, '-', date_str)
+            lines_c = self._plot_series(ax2, x_plot, y3_plot, min3, max3, color, '-', date_str)
+            self._comparison_lines.setdefault(idx, []).extend(lines_c)
 
         if len(min3) == len(x_tok):
             ax2.plot(x_tok, min3, ':', color='gray', label='Мин./макс. треб.', alpha=0.6)
@@ -1891,6 +1960,143 @@ class RightPanel(QWidget):
         # protocol_column_widget сам принимает верный размер по
         # содержимому, раз оба графика сравнения уже сами по себе
         # корректно ограничены по ширине (min_width/max_width выше).
+
+    def _on_comparison_toggle(self, idx, visible):
+        """Показывает/скрывает один образец в текущем сравнении - вызывается
+        чекбоксом рядом с номером насоса (см. display_comparison). Сами
+        данные никуда не удаляются - только визуально: линии прячутся на
+        графиках, а соответствующие ячейки таблиц закрашиваются серым.
+
+        idx - порядковый номер образца в списке items (см.
+        display_comparison), не id насоса - именно так были
+        зарегистрированы цели в _comparison_targets/_comparison_lines при
+        построении таблиц/графиков."""
+        GREY = QColor(150, 150, 150)
+        NORMAL = QColor(28, 30, 33)  # #1c1e21 - обычный цвет текста в таблицах протокола
+        color = NORMAL if visible else GREY
+        if visible:
+            self._comparison_hidden.discard(idx)
+        else:
+            self._comparison_hidden.add(idx)
+        for table, mode, index in self._comparison_targets.get(idx, []):
+            if mode == 'col':
+                cells = [(row, index) for row in range(table.rowCount())]
+            else:  # 'row'
+                cells = [(index, col) for col in range(table.columnCount())]
+            for row, col in cells:
+                item = table.item(row, col)
+                if item is not None:
+                    item.setForeground(color)
+
+        for line in self._comparison_lines.get(idx, []):
+            line.set_visible(visible)
+
+        # Легенду пересобираем заново из ВИДИМЫХ линий - строки нормативов
+        # ("Треб. ECO выкл." и т.п.) без label= вообще не попадают в
+        # get_legend_handles_labels(), поэтому фильтр по видимости трогает
+        # только линии образцов и не задевает их.
+        for ax, canvas in (
+            (self._graph1_ax, self._graph1_canvas),
+            (self._graph2_ax, self._graph2_canvas),
+        ):
+            if ax is None or canvas is None:
+                continue
+            handles, labels = ax.get_legend_handles_labels()
+            visible_pairs = [(h, l) for h, l in zip(handles, labels) if h.get_visible()]
+            if visible_pairs:
+                vh, vl = zip(*visible_pairs)
+                ax.legend(vh, vl, loc='upper center', bbox_to_anchor=(0.5, -0.16), ncol=3,
+                          fontsize=_GRAPH_LEGEND_FONT_SIZE, frameon=False, handlelength=1.4, columnspacing=1.2)
+            else:
+                legend = ax.get_legend()
+                if legend is not None:
+                    legend.remove()
+            canvas.draw_idle()
+
+    def _set_comparison_export_mode(self, active):
+        """Готовит режим сравнения к печати/экспорту (active=True) и
+        возвращает обратно (active=False) - вызывать в начале и в finally
+        печати/экспорта (export_to_pdf, _render_protocol_to_printer).
+
+        Делает 2 вещи:
+        1) Прячет саму строку чекбоксов - она нужна только для управления
+           на экране, в готовом протоколе/PDF её быть не должно.
+        2) Полностью убирает (не просто красит серым) колонки/строки
+           образцов, снятых галочкой - setColumnHidden/setRowHidden, а не
+           перекраска: в печать/PDF эти образцы не должны попадать вообще.
+           Графиков это не касается отдельно - линии скрытых образцов уже
+           скрыты через set_visible(False) в _on_comparison_toggle, а
+           matplotlib сам не рисует невидимые линии при сохранении фигуры
+           (см. _overlay_high_res_graphs) - никакого дополнительного шага
+           для графиков не нужно.
+
+        Если сравнение сейчас не открыто (self._comparison_targets пуст) -
+        ничего не делает, безопасно вызывать всегда, не проверяя режим
+        заранее."""
+        self.comparison_toggle_widget.setVisible(not active and bool(self._comparison_targets))
+        affected_tables = set()
+        for idx in self._comparison_hidden:
+            for table, mode, index in self._comparison_targets.get(idx, []):
+                if mode == 'col':
+                    table.setColumnHidden(index, active)
+                    affected_tables.add(table)
+                else:
+                    table.setRowHidden(index, active)
+
+        # У таблиц тестов (1-3) и герметичности ширина зафиксирована
+        # (setFixedWidth, см. _create_comparison_table/_seal_table и
+        # синхронизацию ширины колонок в display_comparison) - простого
+        # setColumnHidden недостаточно: скрытая колонка перестаёт
+        # рисоваться, но зарезервированное под неё место остаётся пустым.
+        # Пересчитываем фиксированную ширину под ТОЛЬКО видимые колонки
+        # (active=True), и возвращаем как было при выходе (active=False) -
+        # исходную ширину запоминаем один раз через Qt-property таблицы,
+        # чтобы не считать её заново и не накопить погрешность округления
+        # при повторных вызовах (предпросмотр печати вызывает этот метод
+        # много раз за один сеанс - при каждой перерисовке страницы).
+        for table in affected_tables:
+            if active:
+                if table.property('_full_fixed_width') is None:
+                    table.setProperty('_full_fixed_width', table.width())
+                visible_width = 2 + sum(
+                    table.columnWidth(c) for c in range(table.columnCount())
+                    if not table.isColumnHidden(c)
+                )
+                table.setFixedWidth(visible_width)
+            else:
+                full_width = table.property('_full_fixed_width')
+                if full_width is not None:
+                    table.setFixedWidth(full_width)
+
+        if affected_tables:
+            # tables_panel (серая карточка-подложка вокруг таблиц теста) -
+            # QSizePolicy.Fixed по ширине (см. setup_ui) - её собственный
+            # размер должен сам собой пересчитаться вслед за сжатием
+            # таблиц внутри, но Qt не всегда делает это сразу же без явного
+            # "напоминания" - без этого фон карточки оставался прежней,
+            # большей ширины, даже когда сами таблицы внутри уже сжались.
+            self.tables_panel.updateGeometry()
+            self.dynamic_layout.invalidate()
+            self.dynamic_layout.activate()
+
+        # Шапка ("Найдено протоколов: N", "Проверки от: ...") на экране
+        # всегда показывает ВСЕ образцы (данные не удаляются - только
+        # помечаются серым, та же логика, что и у таблиц) - но в
+        # печать/экспорт должны попасть только видимые, иначе получится
+        # нестыковка: например "Найдено протоколов: 4", хотя в самих
+        # таблицах и графиках видно только 3.
+        if self.current_comparison_items and self._comparison_targets:
+            if active:
+                self._header_full_text = self.header_label.text()
+                visible_items = [
+                    it for i, it in enumerate(self.current_comparison_items)
+                    if i not in self._comparison_hidden
+                ]
+                if visible_items:
+                    self.header_label.setText(self._build_comparison_header_html(visible_items))
+            elif self._header_full_text is not None:
+                self.header_label.setText(self._header_full_text)
+                self._header_full_text = None
 
     def print_protocol(self):
         """Открывает предпросмотр печати текущего протокола (или сравнения дублей)."""
@@ -1941,6 +2147,11 @@ class RightPanel(QWidget):
             toolbar.hide()
         if self.history_btn is not None:
             self.history_btn.hide()
+        # Строка чекбоксов не должна попасть в печать/PDF, а образцы,
+        # снятые галочкой - вообще не должны в нём появляться (не просто
+        # серым, а отсутствовать) - см. подробности в
+        # _set_comparison_export_mode(). Восстанавливается в finally.
+        self._set_comparison_export_mode(True)
 
         widget_to_print = self.content_widget
         REFERENCE_WIDTH = 1400  # эталонная ширина "как при полном развороте"
@@ -2062,6 +2273,7 @@ class RightPanel(QWidget):
                 toolbar.show()
             if self.history_btn is not None:
                 self.history_btn.show()
+            self._set_comparison_export_mode(False)
 
     def toggle_fit_view(self):
         """Переключает между обычным (прокручиваемым) видом протокола и
@@ -2207,6 +2419,10 @@ class RightPanel(QWidget):
             toolbar.hide()
         if self.history_btn is not None:
             self.history_btn.hide()
+        # Строка чекбоксов не должна попасть в PDF, а образцы, снятые
+        # галочкой - вообще не должны в нём появляться (см.
+        # _set_comparison_export_mode). Восстанавливается в finally.
+        self._set_comparison_export_mode(True)
 
         progress = ExportProgressDialog(self)
         progress.show()
@@ -2326,6 +2542,7 @@ class RightPanel(QWidget):
                 toolbar.show()
             if self.history_btn is not None:
                 self.history_btn.show()
+            self._set_comparison_export_mode(False)
 
     def create_notes_section(self, data):
         note = data.get('note', '')
@@ -2446,6 +2663,12 @@ class RightPanel(QWidget):
         self._graph2_ax = None
         self._graph2_canvas = None
         self._graph2_marker = None
+        self._comparison_targets = {}
+        self._comparison_lines = {}
+        self._comparison_hidden = set()
+        self._header_full_text = None
+        self._clear_layout(self.comparison_toggle_layout)
+        self.comparison_toggle_widget.hide()
         # Кнопка истории редактирования создаётся заново только если у
         # нового протокола есть история - без этого сброса, если у
         # СЛЕДУЮЩЕГО протокола истории нет, здесь осталась бы ссылка на

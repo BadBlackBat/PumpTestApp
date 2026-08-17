@@ -965,6 +965,50 @@ def _left_panel_checkbox_style():
     }}
 """
 
+# Чекбокс "показывать в сравнении" рядом с номером насоса
+# (display_comparison, правая панель) - тот же фирменный бирюзовый
+# индикатор, что и у "Дубли" в левой панели (см. _left_panel_checkbox_style
+# выше), но текст ТЁМНЫЙ, а не белый - этот чекбокс сидит на
+# protocol_column_widget, а тот всегда светлый ("бумажный" фон, см.
+# get_right_panel_protocol_column_style) НЕЗАВИСИМО от текущей темы
+# приложения - поэтому ветвления по теме здесь не нужно, как и у
+# соседнего header_title_label (тоже фиксированный тёмный цвет).
+#
+# Ховер: подсветка фона + смена цвета текста на бирюзовый, БЕЗ
+# исчезновения border на фоне (тот прозрачный и в обычном состоянии -
+# резервирует место заранее) - при наведении меняются только цвета,
+# геометрия ни у самого чекбокса, ни у соседних в строке не скачет.
+def get_comparison_checkbox_style():
+    return f"""
+    QCheckBox {{
+        color: #2b2d31;
+        font-size: {scaled_pt(9)}pt;
+        spacing: {scaled(6)}px;
+        padding: {scaled(3)}px {scaled(7)}px;
+        border: 1px solid transparent;
+        border-radius: 5px;
+    }}
+    QCheckBox:hover {{
+        background-color: rgba(79, 209, 255, 45);
+        border: 1px solid #4fd1ff;
+        color: #0d6e8c;
+    }}
+    QCheckBox::indicator {{
+        width: {scaled(14)}px;
+        height: {scaled(14)}px;
+        border: 2px solid #6b6f75;
+        border-radius: 4px;
+        background: transparent;
+    }}
+    QCheckBox::indicator:hover {{
+        border: 2px solid #4fd1ff;
+    }}
+    QCheckBox::indicator:checked {{
+        background-color: #4fd1ff;
+        border: 2px solid #4fd1ff;
+    }}
+"""
+
 # Основная таблица списка насосов: центрирование текста в ячейках,
 # заголовки колонок оформлены под кнопки (тот же алюминиевый градиент,
 # но горизонтальными полосами и более мягким, размытым переходом), при
