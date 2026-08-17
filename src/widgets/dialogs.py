@@ -2857,11 +2857,11 @@ class AddPumpDialog(_GlowDialog):
         self.values_main_layout = QVBoxLayout(self.values_widget)
         self.values_main_layout.setContentsMargins(0, 0, 0, 0)
         self.tests_column = QVBoxLayout()   # испытания 1, 2, 3, 4 - друг под другом
-        self.tests_column.setSpacing(styles.scaled(22))
+        self.tests_column.setSpacing(styles.scaled(11))
         self.extra_column = QVBoxLayout()   # проверка на герметичность
         self.extra_column.setSpacing(styles.scaled(4))
         self.values_main_layout.addLayout(self.tests_column)
-        self.values_main_layout.addSpacing(18)
+        self.values_main_layout.addSpacing(styles.scaled(9))
         self.values_main_layout.addLayout(self.extra_column)
         body_layout.addWidget(self.values_widget)
 
@@ -2879,8 +2879,8 @@ class AddPumpDialog(_GlowDialog):
         note_row.addStretch(1)
         body_layout.addLayout(note_row)
 
-        # Отступ перед паролем, чтобы он визуально не сливался с примечанием
-        body_layout.addSpacing(16)
+        # Отступ перед кнопками, чтобы они визуально не сливались с примечанием
+        body_layout.addSpacing(styles.scaled(8))
 
         # Поле пароля здесь не нужно - пароль уже запрашивается и
         # проверяется ДО открытия этого диалога (см. gui.py,
