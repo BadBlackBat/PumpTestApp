@@ -255,6 +255,14 @@ class RightPanel(QWidget):
                 self.loading_icon_label.setPixmap(self._loading_icon_base)
         self.scroll_area.setStyleSheet(styles.get_right_panel_scroll_style())
         self._apply_scroll_area_shadow()
+        # Забытый ранее виджет - фон колонки, где отображается сам
+        # протокол (см. __init__: self.protocol_column_widget, красится
+        # через get_right_panel_protocol_column_style() один раз при
+        # создании). Без явного переприменения здесь общий
+        # retheme_widget_tree() выше не справлялся с этим стилем
+        # корректно - при переключении темы этот фон "застревал" на
+        # предыдущей теме, в отличие от всех остальных элементов панели.
+        self.protocol_column_widget.setStyleSheet(styles.get_right_panel_protocol_column_style())
 
     def __init__(self, parent=None):
         super().__init__(parent)
