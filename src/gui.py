@@ -419,6 +419,7 @@ class MainWindow(QMainWindow):
         self.left_panel.pump_selected.connect(self.on_pump_selected)
         self.left_panel.pump_status_selected.connect(self.on_pump_status_selected)
         self.left_panel.group_selected.connect(self.on_group_selected)
+        self.left_panel.compare_selected.connect(self.on_compare_selected)
         self.left_panel.request_import.connect(self.on_import_requested)
         self.left_panel.request_add.connect(self.on_add_requested)
         self.left_panel.request_delete.connect(self.on_delete_requested)
@@ -733,6 +734,26 @@ class MainWindow(QMainWindow):
         full_items = [it for it in full_items if it]
         self.right_panel.display_comparison(full_items)
         self.current_selected_pump = f"{items[0]['pump_number']} (сравнение {len(items)} шт.)"
+        self.update_status()
+
+    def on_compare_selected(self, pump_ids):
+        """Нажата "Сравнить выбранные" (чекбоксы в расширенном режиме
+        списка, см. LeftPanel._on_compare_selected_clicked) - показываем
+        сравнение произвольно отмеченных образцов. В отличие от
+        on_group_selected выше, это не обязательно дубли одного номера -
+        см. _build_comparison_header_html в right_panel.py, она сама
+        различает оба случая по тексту заголовка."""
+        if not self.left_panel.compact_mode:
+            self.left_panel.btn_view_toggle.setChecked(False)
+        if self.showing_stats:
+            self.showing_stats = False
+        full_items = [db.get_pump_by_id(pid) for pid in pump_ids]
+        full_items = [it for it in full_items if it]
+        if len(full_items) < 2:
+            return
+        self.right_panel.display_comparison(full_items)
+        numbers = ', '.join(sorted({it['pump_number'] for it in full_items}))
+        self.current_selected_pump = f"Сравнение выбранных: {numbers}"
         self.update_status()
 
     def on_print_requested(self):

@@ -919,6 +919,35 @@ def _left_panel_reset_btn_style():
     }}
 """
 
+# "Сравнить выбранные" (LeftPanel, расширенный режим) - тот же алюминиевый
+# стиль, что и у остальных кнопок этого ряда, но с явным видом для
+# disabled: пока не отмечено 2-4 образца, кнопка мягко подсвечена
+# красноватым по краям (имитация внутренней тени - в QSS нет
+# полноценного inset-shadow, поэтому имитируем радиальным градиентом,
+# насыщающимся к краям) и текст сереет; как только становится доступна -
+# обычный вид (чёрный текст, без красного).
+def _left_panel_compare_btn_style():
+    return f"""
+    QPushButton#chromeButton {{
+        background: {_ALUMINUM_NORMAL};
+        border: 1px solid #6b6f75;
+        border-radius: 4px;
+        color: #2b2d31;
+        font-weight: bold;
+        padding: {scaled(2)}px {scaled(16)}px;
+    }}
+    QPushButton#chromeButton:hover {{
+        background: {_ALUMINUM_HOVER};
+        border: 2px solid #4fd1ff;
+    }}
+    QPushButton#chromeButton:disabled {{
+        background: qradialgradient(cx:0.5, cy:0.5, radius:0.85, fx:0.5, fy:0.5,
+            stop:0 #c9cdd2, stop:0.6 #c9cdd2, stop:1 #b96060);
+        border: 1px solid #a05050;
+        color: #7d8085;
+    }}
+"""
+
 # Кнопки пагинации (◀ ▶) - тот же алюминиевый стиль, но сама кнопка
 # компактнее, а стрелка внутри - крупнее, для лучшей читаемости
 def _left_panel_pagination_btn_style():
@@ -1545,6 +1574,7 @@ def get_loading_icon_color():
 #    использования по проекту)
 _DYNAMIC_STYLE_ATTRS = {
     'LEFT_PANEL_RESET_BTN_STYLE': _left_panel_reset_btn_style,
+    'LEFT_PANEL_COMPARE_BTN_STYLE': _left_panel_compare_btn_style,
     'LEFT_PANEL_PAGINATION_BTN_STYLE': _left_panel_pagination_btn_style,
     'STATUS_BAR_SELECTED_LABEL_STYLE': _status_bar_selected_label_style,
     'STATUS_BAR_STYLE_LIGHT': _status_bar_style_light,

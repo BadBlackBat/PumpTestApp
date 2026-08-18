@@ -1552,16 +1552,32 @@ class RightPanel(QWidget):
         """Собирает HTML для header_label в режиме сравнения - используется
         и при обычном показе (display_comparison, все образцы), и при
         печати/экспорте (_set_comparison_export_mode, только видимые) -
-        чтобы оба места не могли разойтись в формулировках."""
-        first = items[0]
-        mod_name = first.get('mod_name')
+        чтобы оба места не могли разойтись в формулировках.
+
+        Автоматически различает 2 сценария: сравнение дублей одного
+        насоса (все items с одинаковым pump_number - как раньше) и
+        сравнение произвольно отмеченных разных образцов (через список
+        насосов, см. LeftPanel.compare_selected) - во втором случае
+        строка про "дубли" и единственный "Идентификационный №" были бы
+        неверны, раз номера у образцов разные."""
+        mod_name = items[0].get('mod_name')
         dates = [(utils.format_date_display(it['test_date']) if it.get('test_date') else '—') for it in items]
+        pump_numbers = [it['pump_number'] for it in items]
+        is_duplicates = len(set(pump_numbers)) == 1
+        if is_duplicates:
+            intro = "Сравнение всех найденных дублей выбранного образца"
+            id_line = f"Идентификационный №: <b>{pump_numbers[0]}</b><br>"
+            count_line = f"Найдено протоколов: <b>{len(items)}</b><br>"
+        else:
+            intro = "Сравнение выбранных образцов"
+            id_line = f"Образцы: <b>{', '.join(pump_numbers)}</b><br>"
+            count_line = f"Выбрано: <b>{len(items)}</b><br>"
         return (
             "<div align='left'>"
-            "Сравнение всех найденных дублей выбранного образца<br>"
-            f"Идентификационный №: <b>{first['pump_number']}</b><br>"
+            f"{intro}<br>"
+            f"{id_line}"
             f"Модификация: <b>{mod_name or '—'}</b><br>"
-            f"Найдено протоколов: <b>{len(items)}</b><br>"
+            f"{count_line}"
             f"Проверки от: <b>{', '.join(dates)}</b>"
             "</div>"
         )

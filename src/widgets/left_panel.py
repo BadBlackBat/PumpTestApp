@@ -10,7 +10,7 @@ from PyQt5.QtCore import (
     Qt, pyqtSignal, QDate, QPoint, QTimer, QEvent, QEasingCurve,
     QRect, QRectF, pyqtProperty, QPropertyAnimation, QSize, QObject
 )
-from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QPolygon, QLinearGradient, QBrush, QPainterPath, QPen, QIntValidator
+from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QPolygon, QLinearGradient, QBrush, QPainterPath, QPen, QIntValidator, QFontMetrics
 
 from .. import database as db
 from .. import utils
@@ -984,6 +984,9 @@ class LeftPanel(QWidget):
     pump_selected = pyqtSignal(dict)
     pump_status_selected = pyqtSignal(dict)
     group_selected = pyqtSignal(list)
+    # Отмечены чекбоксом 2-4 произвольных образца (только в расширенном
+    # режиме) и нажата "Сравнить выбранные" - список отмеченных id насосов
+    compare_selected = pyqtSignal(list)
     request_import = pyqtSignal()
     request_upload = pyqtSignal()
     request_manual_backup = pyqtSignal()
@@ -1055,6 +1058,14 @@ class LeftPanel(QWidget):
         self.current_page = 0
         self.page_size = 20  # начальное значение, пересчитывается под размер окна
         self.total_records = 0
+        # Чекбоксы "Сравнить" (только расширенный режим) - список
+        # пересобирается заново при каждом populate_table/_grouped (строки
+        # таблицы строятся с нуля), а вот сами отмеченные id насосов
+        # сохраняются в _comparison_selected до явного сброса (снятия
+        # галочек, переключения назад в компактный режим, смены фильтра/
+        # страницы - см. populate_table/_grouped и toggle_view).
+        self._comparison_checkboxes = []  # [(QCheckBox, pump_id, mod_name), ...] - текущие виджеты на экране
+        self._comparison_selected = {}    # {pump_id: mod_name} - что отмечено сейчас
         self.current_filters = {}
         # Текущая сортировка списка - сохраняется отдельно от текущей
         # страницы (не сбрасывается при переходе между страницами) и
@@ -1360,6 +1371,7 @@ class LeftPanel(QWidget):
       self.table.setContextMenuPolicy(Qt.CustomContextMenu)
       self.table.customContextMenuRequested.connect(self.show_context_menu)
       self.table.cellClicked.connect(self.on_cell_clicked)
+      self.table.cellDoubleClicked.connect(self.on_cell_double_clicked)
 
       # Эффект наведения/выделения строки - через два независимых
       # полупрозрачных оверлея поверх таблицы (см. _RowHighlightOverlay),
@@ -1465,9 +1477,34 @@ class LeftPanel(QWidget):
       self.btn_view_toggle.setCheckable(True)
       self.btn_view_toggle.toggled.connect(self.toggle_view)
 
+      # "Сравнить выбранные" - только в расширенном режиме (см.
+      # toggle_view - скрывается/показывается вместе с переключением
+      # вида), неактивна, пока не отмечено 2-4 образца (см.
+      # _refresh_compare_checkbox_states)
+      self.btn_compare_selected = QPushButton("Сравнить выбранные")
+      self.btn_compare_selected.setObjectName("chromeButton")
+      self.btn_compare_selected.setFixedHeight(styles.scaled(26))
+      self.btn_compare_selected.setStyleSheet(styles.LEFT_PANEL_COMPARE_BTN_STYLE)
+      self.btn_compare_selected.setEnabled(False)
+      self.btn_compare_selected.hide()
+      self.btn_compare_selected.clicked.connect(self._on_compare_selected_clicked)
+
+      # "Сбросить выбранные" - снимает только чекбоксы "Сравнить", фильтры
+      # не трогает (в отличие от btn_reset_filters, который сбрасывает и
+      # то, и другое - см. reset_filters)
+      self.btn_reset_selected = QPushButton("Сбросить выбранные")
+      self.btn_reset_selected.setObjectName("chromeButton")
+      self.btn_reset_selected.setFixedHeight(styles.scaled(26))
+      self.btn_reset_selected.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE)
+      self.btn_reset_selected.setEnabled(False)
+      self.btn_reset_selected.hide()
+      self.btn_reset_selected.clicked.connect(self.reset_comparison_selection)
+
       btn_layout.addWidget(self.btn_add)
       btn_layout.addWidget(self.btn_delete)
       btn_layout.addWidget(self.btn_upload)
+      btn_layout.addWidget(self.btn_compare_selected)
+      btn_layout.addWidget(self.btn_reset_selected)
       btn_layout.addWidget(self.btn_manual_backup)
       btn_layout.addWidget(self.btn_import)
       btn_layout.addWidget(self.btn_view_toggle)
@@ -1564,12 +1601,14 @@ class LeftPanel(QWidget):
             # Расширенный режим
             self.compact_mode = False
             self.btn_view_toggle.setText("Свернуть список")
+            self.btn_compare_selected.show()
+            self.btn_reset_selected.show()
             self.btn_upload.setText("Выгрузить")
             self.btn_upload.setFont(QFont("Segoe UI", styles.scaled_pt(9)))
-            self.btn_upload.setFixedWidth(styles.scaled(120))
+            self.btn_upload.setFixedWidth(styles.scaled(130))
             self.btn_manual_backup.setText("Копия БД")
             self.btn_manual_backup.setFont(QFont("Segoe UI", styles.scaled_pt(9)))
-            self.btn_manual_backup.setFixedWidth(styles.scaled(110))
+            self.btn_manual_backup.setFixedWidth(styles.scaled(130))
             self.btn_manual_backup.setToolTip("Создать резервную копию локальной базы прямо сейчас")
             self.btn_manual_backup.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE + f"""
                 QPushButton#chromeButton {{ padding: {styles.scaled(2)}px {styles.scaled(14)}px; }}
@@ -1589,6 +1628,14 @@ class LeftPanel(QWidget):
             # Компактный режим (минимальный)
             self.compact_mode = True
             self.btn_view_toggle.setText("Расширенный вид")
+            self.btn_compare_selected.hide()
+            self.btn_reset_selected.hide()
+            # В компактном режиме чекбоксов "Сравнить" вообще нет -
+            # сбрасываем накопленный выбор, чтобы при возврате в
+            # расширенный режим не остались "призрачные" отметки без
+            # видимых чекбоксов
+            self._comparison_selected = {}
+            self._update_comparison_note()
             self.btn_upload.setText("")
             self.btn_upload.setFixedWidth(styles.scaled(40))
             self.btn_manual_backup.setText("")
@@ -1612,6 +1659,17 @@ class LeftPanel(QWidget):
         font.setBold(True)
         self.table.horizontalHeader().setFont(font)
 
+        # Сбрасываем возможную визуальную перестановку колонок (см. ниже,
+        # чекбокс "Сравнить" визуально показывается первым) к обычному
+        # логическому порядку - настраивать заново компактный/расширенный
+        # набор колонок нужно поверх "чистого" состояния, иначе смена
+        # режима могла унаследовать чужую перестановку от предыдущего вида.
+        header = self.table.horizontalHeader()
+        for logical in range(self.table.columnCount()):
+            visual = header.visualIndex(logical)
+            if visual != logical:
+                header.moveSection(visual, logical)
+
         if compact:
             col_count = 5
             self.table.setColumnCount(col_count)
@@ -1625,10 +1683,10 @@ class LeftPanel(QWidget):
             self.table.setColumnWidth(3, styles.scaled(95))
             self.table.setColumnWidth(4, styles.scaled(85))
         else:
-            col_count = 7
+            col_count = 8
             self.table.setColumnCount(col_count)
             self.table.setHorizontalHeaderLabels(
-                ["Номер насоса", "Дата проверки", "Модификация", "Герметичность", "Тип проверки", "Заказ", "Вердикт"]
+                ["Номер насоса", "Дата проверки", "Модификация", "Герметичность", "Тип проверки", "Заказ", "Вердикт", "Сравнить"]
             )
             for col in range(self.table.columnCount()):
                 self.table.setColumnHidden(col, False)
@@ -1640,6 +1698,30 @@ class LeftPanel(QWidget):
             self.table.setColumnWidth(4, styles.scaled(85))
             self.table.setColumnWidth(5, styles.scaled(85))
             self.table.setColumnWidth(6, styles.scaled(110))
+            # Ширина этой колонки - не жёсткое число "на глаз", а реально
+            # измеренная ширина заголовка "Сравнить" (тем же жирным
+            # шрифтом, что и у остальных заголовков) + небольшие поля -
+            # ровно под заголовок, а не под сам чекбокс (тот меньше).
+            # setSectionResizeMode именно ДЛЯ ЭТОЙ колонки - Fixed, а не
+            # общий для всей таблицы Stretch (см. setup_ui) - иначе
+            # Stretch перетягивает её обратно вровень с остальными,
+            # игнорируя setColumnWidth.
+            header_metrics = QFontMetrics(self.table.horizontalHeader().font())
+            checkbox_col_width = header_metrics.horizontalAdvance("Сравнить") + styles.scaled(32)
+            # ВАЖНО: setSectionResizeMode(Fixed) - ДО setColumnWidth, не
+            # после (проверила эмпирически - в обратном порядке общий
+            # Stretch для всей таблицы всё равно перетягивал колонку
+            # обратно вровень с остальными, несмотря на Fixed).
+            header.setSectionResizeMode(7, QHeaderView.Fixed)
+            self.table.setColumnWidth(7, checkbox_col_width)
+            # Чекбокс "Сравнить" (логическая колонка 7) визуально показываем
+            # первым, перед "Номер насоса" - удобнее сразу видеть, что можно
+            # отметить, не прокручивая до последней колонки. Логический
+            # индекс 7 при этом НЕ меняется - все места в коде, где
+            # используется table.item(row, 0) для id/данных насоса,
+            # продолжают работать как прежде (см. moveSection выше в этом
+            # же методе - переставляет только ВИД, не структуру данных).
+            header.moveSection(header.visualIndex(7), 0)
         return col_count
 
     def _fill_pump_row(self, row, p, compact=True):
@@ -1707,6 +1789,41 @@ class LeftPanel(QWidget):
             item_verdict.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(row, 6, item_verdict)
 
+            # ---- Чекбокс "Сравнить" - только в расширенном режиме, для
+            # выбора произвольных образцов (не обязательно дублей) под
+            # сравнение через кнопку "Сравнить выбранные" ----
+            cb = QCheckBox()
+            cb.setStyleSheet(styles.LEFT_PANEL_CHECKBOX_STYLE + """
+                QCheckBox:disabled { color: #6a6d72; }
+                QCheckBox::indicator:disabled { border: 2px solid #4a4d52; background: transparent; }
+            """)
+            cb_container = QWidget()
+            cb_layout = QHBoxLayout(cb_container)
+            cb_layout.setContentsMargins(0, 0, 0, 0)
+            cb_layout.addWidget(cb, 0, Qt.AlignCenter)
+            self.table.setCellWidget(row, 7, cb_container)
+            # См. eventFilter() - наведение мыши на этот виджет обычным
+            # механизмом таблицы не отслеживается (это отдельный дочерний
+            # виджет поверх ячейки), из-за чего подсветка строки заметно
+            # запаздывала именно в этой колонке. row_hint - заранее
+            # известный номер строки, чтобы eventFilter мог напрямую
+            # применить подсветку, не полагаясь на индекс под курсором.
+            cb_container.setProperty('_hover_row', row)
+            cb_container.setMouseTracking(True)
+            cb_container.installEventFilter(self)
+            cb.setProperty('_hover_row', row)
+            cb.setMouseTracking(True)
+            cb.installEventFilter(self)
+            pump_id = p['id']
+            mod_name = p.get('mod_name')
+            cb.setProperty('pump_number', p.get('pump_number'))
+            self._comparison_checkboxes.append((cb, pump_id, mod_name))
+            cb.toggled.connect(
+                lambda checked, c=cb, pid=pump_id, mn=mod_name: self._on_compare_checkbox_toggled(c, pid, mn, checked)
+            )
+            if pump_id in self._comparison_selected:
+                cb.setChecked(True)
+
         # ---- Подсветка всей строки по вердикту ----
         if p['verdict'] == 'годен':
             bg_color = QColor(232, 253, 232)
@@ -1727,16 +1844,27 @@ class LeftPanel(QWidget):
     def populate_table(self, pumps, compact=True):
         self.table.setSortingEnabled(False)
         self.table.clearSpans()  # сбрасываем объединения ячеек, оставшиеся от группового режима (дубли)
+        # Явно убираем и старые виджеты ячеек (чекбоксы "Сравнить") -
+        # setRowCount/новые setItem() их сами по себе не убирают, и при
+        # переключении между обычным/групповым (дубли) режимом на той же
+        # строке мог остаться "призрачный" чекбокс от предыдущего
+        # построения, наползающий на объединённую ячейку заголовка группы
+        self.table.clearContents()
         self.table.setRowCount(len(pumps))
         self._hovered_row = -1
         self._selected_row = -1
         self._hover_overlay.hide()
         self._selection_overlay.hide()
+        # Сами виджеты чекбоксов пересоздаются с нуля вместе со строками -
+        # отмеченные id (self._comparison_selected) сохраняются отдельно
+        # и переприменяются на новые виджеты в _fill_pump_row
+        self._comparison_checkboxes = []
 
         col_count = self._setup_table_columns(compact)
 
         for row, p in enumerate(pumps):
             self._fill_pump_row(row, p, compact)
+        self._refresh_compare_checkbox_states()
 
     def _group_duplicates(self, pumps):
         """Группирует насосы по (номер, модификация) - общая логика,
@@ -1773,10 +1901,15 @@ class LeftPanel(QWidget):
         а не решает, какие группы показывать."""
         self.table.setSortingEnabled(False)
         self.table.clearSpans()
+        # См. тот же комментарий в populate_table() - без этого старые
+        # чекбоксы "Сравнить" могли остаться "призраками" поверх
+        # объединённой ячейки заголовка группы дублей
+        self.table.clearContents()
         self._hovered_row = -1
         self._selected_row = -1
         self._hover_overlay.hide()
         self._selection_overlay.hide()
+        self._comparison_checkboxes = []
 
         sorted_groups = self._group_duplicates(pumps)
 
@@ -1811,6 +1944,7 @@ class LeftPanel(QWidget):
         # Сортировка кликом по заголовку в режиме дублей отключена,
         # т.к. порядок строк задан группировкой
         self.table.setSortingEnabled(False)
+        self._refresh_compare_checkbox_states()
 
 
     def display_pumps(self, pumps, group_by_number=False):
@@ -1891,6 +2025,83 @@ class LeftPanel(QWidget):
             self.current_page = 0
             self.apply_filters()
 
+    def _on_compare_checkbox_toggled(self, checkbox, pump_id, mod_name, checked):
+        """Чекбокс "Сравнить" в одной из строк списка (только расширенный
+        режим) - копит id отмеченных образцов в self._comparison_selected
+        (не более 4 одновременно) и запрещает смешивать разные
+        модификации (у них разные нормативы - сравнение было бы
+        некорректным, см. обсуждение)."""
+        if checked:
+            if len(self._comparison_selected) >= 4:
+                # Уже отмечено 4 - откатываем эту отметку молча, без
+                # диалогов с ошибкой (проще и понятнее просто не дать
+                # отметить 5-ю, чем потом ругаться)
+                checkbox.blockSignals(True)
+                checkbox.setChecked(False)
+                checkbox.blockSignals(False)
+                return
+            self._comparison_selected[pump_id] = mod_name
+        else:
+            self._comparison_selected.pop(pump_id, None)
+        self._refresh_compare_checkbox_states()
+
+    def _refresh_compare_checkbox_states(self):
+        """Серым/неактивным делает чекбоксы образцов ДРУГОЙ модификации,
+        если что-то уже отмечено - сравнивать разные модификации нельзя
+        (разные нормативы). При 4 отметках (максимум) неактивными
+        становятся вообще ВСЕ оставшиеся чекбоксы, независимо от
+        модификации - выбор явно больше не даётся (неактивный чекбокс в
+        Qt заодно и не реагирует на наведение, отдельно ничего отключать
+        не нужно). Обновляет доступность кнопок "Сравнить"/"Сбросить
+        выбранные" и подпись между пагинацией и счётчиком записей.
+        Вызывается и при каждом переключении чекбокса, и один раз в конце
+        populate_table/_grouped, чтобы свежепостроенные (ещё не тронутые)
+        чекбоксы тоже сразу учли уже имеющийся выбор."""
+        selected_mods = set(self._comparison_selected.values())
+        at_limit = len(self._comparison_selected) >= 4
+        for cb, pid, mn in self._comparison_checkboxes:
+            if pid in self._comparison_selected:
+                continue  # свои же отмеченные не трогаем
+            cb.setEnabled(not at_limit and (not selected_mods or mn in selected_mods))
+        if hasattr(self, 'btn_compare_selected'):
+            self.btn_compare_selected.setEnabled(2 <= len(self._comparison_selected) <= 4)
+        if hasattr(self, 'btn_reset_selected'):
+            self.btn_reset_selected.setEnabled(bool(self._comparison_selected))
+        self._update_comparison_note()
+
+    def _update_comparison_note(self):
+        """Подпись между пагинацией и счётчиком записей (duplicates_note_label) -
+        показывает номера отмеченных для сравнения образцов, если что-то
+        отмечено, иначе пустая (прежний текст "Группировка по дублям" для
+        фильтра "Дубли" убран - не нужен, см. обсуждение)."""
+        if not hasattr(self, 'duplicates_note_label'):
+            return
+        if self._comparison_selected:
+            numbers = []
+            seen = set()
+            for cb, pid, mn in self._comparison_checkboxes:
+                if pid in self._comparison_selected and pid not in seen:
+                    seen.add(pid)
+                    numbers.append(cb.property('pump_number') or str(pid))
+            self.duplicates_note_label.setText(f"Сравнить образцы: {', '.join(numbers)}")
+        else:
+            self.duplicates_note_label.setText("")
+
+    def reset_comparison_selection(self):
+        """Снимает все отметки "Сравнить" - кнопка "Сбросить выбранные",
+        а также вызывается из reset_filters() при полном сбросе (см. там)."""
+        self._comparison_selected = {}
+        for cb, pid, mn in self._comparison_checkboxes:
+            if cb.isChecked():
+                cb.blockSignals(True)
+                cb.setChecked(False)
+                cb.blockSignals(False)
+        self._refresh_compare_checkbox_states()
+
+    def _on_compare_selected_clicked(self):
+        if 2 <= len(self._comparison_selected) <= 4:
+            self.compare_selected.emit(list(self._comparison_selected.keys()))
+
     def on_cell_clicked(self, row, col):
         """Клик по заголовку группы дублей открывает сравнение в правой панели.
         Для обычных строк отдельного эффекта не нужно - выделение само по
@@ -1903,6 +2114,25 @@ class LeftPanel(QWidget):
         group_items = item.data(Qt.UserRole + 1)
         if group_items:
             self.group_selected.emit(group_items)
+
+    def on_cell_double_clicked(self, row, col):
+        """Двойной клик по обычной строке (не по заголовку группы дублей) -
+        сразу открывает протокол, тем же способом, что и пункт меню
+        "Показать протокол" (см. show_context_menu) - в расширенном
+        режиме удобнее, чем каждый раз вызывать контекстное меню."""
+        if self._row_is_group_header(row):
+            return
+        item = self.table.item(row, 0)
+        if item is None:
+            return
+        pump_id = item.data(Qt.UserRole)
+        if not pump_id:
+            return
+        # Сворачиваем расширенный вид, если он включён
+        if not self.compact_mode:
+            self.btn_view_toggle.setChecked(False)
+        self.table.selectRow(row)
+        self.on_selection_changed()
 
     def _row_is_group_header(self, row):
         item0 = self.table.item(row, 0)
@@ -1997,7 +2227,13 @@ class LeftPanel(QWidget):
         """Наведение мыши на строку - полупрозрачный белый оверлей плавно
         проявляется поверх строки (осветление на ~50% за счёт alpha),
         текст мгновенно становится жирным и чуть крупнее."""
-        row = index.row()
+        self._apply_hover_row(index.row())
+
+    def _apply_hover_row(self, row):
+        """Общая часть on_row_hover() - вынесена отдельно, чтобы её же мог
+        вызывать eventFilter() для чекбоксов "Сравнить" (см. там же) - у
+        них, в отличие от обычных ячеек, нет валидного QModelIndex под
+        курсором, только известный заранее номер строки."""
         if self._row_is_group_header(row):
             row = -1
         if row == self._hovered_row:
@@ -2038,6 +2274,17 @@ class LeftPanel(QWidget):
                     self._start_overlay_animation(self._hover_overlay, '_hover_anim',
                                                   QColor(255, 255, 255, 0), 350)
                     self._refresh_row_font(old_hover)
+        elif event.type() in (QEvent.Enter, QEvent.MouseMove):
+            # Контейнер чекбокса "Сравнить" (см. _fill_pump_row) - это
+            # отдельный дочерний виджет ПОВЕРХ ячейки таблицы, и события
+            # движения мыши над ним таблице вообще не достаются (обычный
+            # механизм наведения выше, через entered()/MouseMove вьюпорта,
+            # их не видит) - без этой ветки наведение на строку заметно
+            # "залипало"/запаздывало именно в этой колонке. row_hint
+            # проставлен заранее, при создании чекбокса (см. setProperty).
+            row_hint = obj.property('_hover_row')
+            if row_hint is not None:
+                self._apply_hover_row(int(row_hint))
         return super().eventFilter(obj, event)
 
     def on_selection_changed(self):
@@ -2149,6 +2396,12 @@ class LeftPanel(QWidget):
         """Клик по заголовку столбца - сортирует ВСЮ базу (не только
         текущую страницу) по этому столбцу. Повторный клик по тому же
         столбцу переключает направление (по возрастанию/по убыванию)."""
+        # Колонка чекбоксов "Сравнить" (только расширенный режим,
+        # логический индекс 7) - сортировка по ней не имеет смысла,
+        # алгоритм пришлось бы придумывать искусственно (по id насоса? по
+        # порядку отметки?) - никакой пользы, только путаница.
+        if not self.compact_mode and logical_index == 7:
+            return
         if logical_index == self.sort_column_index:
             self.sort_ascending = not self.sort_ascending
         else:
@@ -2352,6 +2605,10 @@ class LeftPanel(QWidget):
         self.date_from.setDate(QDate(2000, 1, 1))
         self.date_to.setDate(QDate.currentDate())
         self.only_duplicates.setChecked(False)
+        # Полный сброс - в отличие от кнопки "Сбросить выбранные" (только
+        # чекбоксы), здесь сбрасываются и фильтры, и отметки "Сравнить"
+        # разом
+        self.reset_comparison_selection()
         self.current_page = 0
         # Сортировка тоже возвращается к значению по умолчанию - по дате,
         # от новых к старым
@@ -2407,11 +2664,11 @@ class LeftPanel(QWidget):
             self.page_label.setText(f"Страница {self.current_page + 1} из {self.total_group_pages}")
             self.btn_prev.setEnabled(self.current_page > 0)
             self.btn_next.setEnabled(self.current_page + 1 < self.total_group_pages)
-            self.duplicates_note_label.setText("Группировка по дублям")
+            self._update_comparison_note()
             self.count_number_label.setText(str(self.total_records))
             return
 
-        self.duplicates_note_label.setText("")
+        self._update_comparison_note()
         total_pages = max(1, (self.total_records + self.page_size - 1) // self.page_size)
         self.page_label.setText(f"Страница {self.current_page + 1} из {total_pages}")
         self.btn_prev.setEnabled(self.current_page > 0)
