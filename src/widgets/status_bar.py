@@ -81,7 +81,13 @@ class StatusBar(QStatusBar):
 
         # Левая часть: выбранный насос
         self.selected_label = QLabel()
-        self.selected_label.setFixedWidth(220)
+        # setMinimumWidth (не setFixedWidth, как было) - 220px по-прежнему
+        # всегда зарезервированы (короткий текст, вроде одного номера
+        # насоса, не двигает соседние элементы влево-вправо - см.
+        # комментарий ниже), но теперь ширина может РАСТИ, если текст не
+        # помещается - нужно для списка из нескольких номеров при
+        # сравнении образцов (иначе он обрезался бы многоточием).
+        self.selected_label.setMinimumWidth(220)
         self.selected_label.setStyleSheet(styles.STATUS_BAR_SELECTED_LABEL_STYLE)
         self.addWidget(self.selected_label)
         
@@ -129,9 +135,30 @@ class StatusBar(QStatusBar):
         if selected_pump:
             full_text = f"Выбран образец: {selected_pump}"
             metrics = self.selected_label.fontMetrics()
-            elided = metrics.elidedText(full_text, Qt.ElideRight, self.selected_label.width() - 8)
-            self.selected_label.setText(elided)
+            # Раньше текст всегда обрезался под фиксированные 220px - для
+            # одного номера насоса хватало, но при сравнении нескольких
+            # образцов (номера через запятую) обрезалось многоточием на
+            # середине списка. Теперь сначала пробуем растянуть саму
+            # метку под весь текст (см. setMinimumWidth выше) - обрезаем
+            # многоточием только если текст всё равно не помещается в
+            # разумный предел (иначе статус-бар мог бы растянуться до
+            # неприличия при выборе сразу 4 длинных номеров).
+            # 780 - с запасом покрывает реальный максимум: сравнение
+            # ограничено 4 образцами (см. LeftPanel._on_compare_checkbox_toggled),
+            # то есть длина текста здесь структурно ограничена сверху -
+            # обрезка многоточием ниже остаётся просто подстраховкой на
+            # неожиданный случай, а не рабочим сценарием.
+            MAX_SELECTED_WIDTH = 780
+            text_width = metrics.horizontalAdvance(full_text)
+            if text_width + 16 <= MAX_SELECTED_WIDTH:
+                self.selected_label.setFixedWidth(max(220, text_width + 16))
+                self.selected_label.setText(full_text)
+            else:
+                self.selected_label.setFixedWidth(MAX_SELECTED_WIDTH)
+                elided = metrics.elidedText(full_text, Qt.ElideRight, MAX_SELECTED_WIDTH - 8)
+                self.selected_label.setText(elided)
         else:
+            self.selected_label.setFixedWidth(220)
             self.selected_label.setText("")
         # Метка остаётся видимой всегда (даже с пустым текстом) - её
         # фиксированная ширина (220px, не минимальная - минимальная всё

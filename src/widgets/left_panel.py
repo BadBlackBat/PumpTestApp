@@ -1269,6 +1269,15 @@ class LeftPanel(QWidget):
       self.only_duplicates.setStyleSheet(styles.LEFT_PANEL_CHECKBOX_STYLE)
       self.only_duplicates.stateChanged.connect(self.on_duplicates_toggled)
 
+      # Стиль чекбокса "Сравнить" (см. _fill_pump_row) - считаем один раз
+      # здесь, а не заново конкатенацией строк на КАЖДОЙ строке таблицы
+      # (при странице в несколько десятков записей в расширенном режиме
+      # это заметно лишняя работа на ровном месте)
+      self._compare_checkbox_style = styles.LEFT_PANEL_CHECKBOX_STYLE + """
+          QCheckBox:disabled { color: #6a6d72; }
+          QCheckBox::indicator:disabled { border: 2px solid #4a4d52; background: transparent; }
+      """
+
       # Принудительное скачивание сетевой базы поверх локальной - "N->L"
       # текстом (второй вариант из тех, что обсуждали) - без иконки,
       # компактно, не растягивает общий блок фильтров
@@ -1605,10 +1614,10 @@ class LeftPanel(QWidget):
             self.btn_reset_selected.show()
             self.btn_upload.setText("Выгрузить")
             self.btn_upload.setFont(QFont("Segoe UI", styles.scaled_pt(9)))
-            self.btn_upload.setFixedWidth(styles.scaled(130))
+            self.btn_upload.setFixedWidth(styles.scaled(120))
             self.btn_manual_backup.setText("Копия БД")
             self.btn_manual_backup.setFont(QFont("Segoe UI", styles.scaled_pt(9)))
-            self.btn_manual_backup.setFixedWidth(styles.scaled(130))
+            self.btn_manual_backup.setFixedWidth(styles.scaled(110))
             self.btn_manual_backup.setToolTip("Создать резервную копию локальной базы прямо сейчас")
             self.btn_manual_backup.setStyleSheet(styles.LEFT_PANEL_RESET_BTN_STYLE + f"""
                 QPushButton#chromeButton {{ padding: {styles.scaled(2)}px {styles.scaled(14)}px; }}
@@ -1707,7 +1716,7 @@ class LeftPanel(QWidget):
             # Stretch перетягивает её обратно вровень с остальными,
             # игнорируя setColumnWidth.
             header_metrics = QFontMetrics(self.table.horizontalHeader().font())
-            checkbox_col_width = header_metrics.horizontalAdvance("Сравнить") + styles.scaled(32)
+            checkbox_col_width = header_metrics.horizontalAdvance("Сравнить") + styles.scaled(16)
             # ВАЖНО: setSectionResizeMode(Fixed) - ДО setColumnWidth, не
             # после (проверила эмпирически - в обратном порядке общий
             # Stretch для всей таблицы всё равно перетягивал колонку
@@ -1793,10 +1802,7 @@ class LeftPanel(QWidget):
             # выбора произвольных образцов (не обязательно дублей) под
             # сравнение через кнопку "Сравнить выбранные" ----
             cb = QCheckBox()
-            cb.setStyleSheet(styles.LEFT_PANEL_CHECKBOX_STYLE + """
-                QCheckBox:disabled { color: #6a6d72; }
-                QCheckBox::indicator:disabled { border: 2px solid #4a4d52; background: transparent; }
-            """)
+            cb.setStyleSheet(self._compare_checkbox_style)
             cb_container = QWidget()
             cb_layout = QHBoxLayout(cb_container)
             cb_layout.setContentsMargins(0, 0, 0, 0)
@@ -1816,13 +1822,22 @@ class LeftPanel(QWidget):
             cb.installEventFilter(self)
             pump_id = p['id']
             mod_name = p.get('mod_name')
-            cb.setProperty('pump_number', p.get('pump_number'))
             self._comparison_checkboxes.append((cb, pump_id, mod_name))
             cb.toggled.connect(
-                lambda checked, c=cb, pid=pump_id, mn=mod_name: self._on_compare_checkbox_toggled(c, pid, mn, checked)
+                lambda checked, c=cb, pid=pump_id, mn=mod_name, pn=p.get('pump_number'):
+                    self._on_compare_checkbox_toggled(c, pid, mn, pn, checked)
             )
             if pump_id in self._comparison_selected:
+                # blockSignals - иначе setChecked(True) сразу же запускает
+                # _on_compare_checkbox_toggled() -> _refresh_compare_checkbox_states()
+                # (полный проход по ВСЕМ чекбоксам, построенным на этот
+                # момент) на КАЖДЫЙ уже отмеченный образец при построении
+                # страницы - а в конце populate_table/_grouped и так есть
+                # один финальный вызов _refresh_compare_checkbox_states(),
+                # который приведёт состояние в порядок сразу для всех.
+                cb.blockSignals(True)
                 cb.setChecked(True)
+                cb.blockSignals(False)
 
         # ---- Подсветка всей строки по вердикту ----
         if p['verdict'] == 'годен':
@@ -2025,7 +2040,7 @@ class LeftPanel(QWidget):
             self.current_page = 0
             self.apply_filters()
 
-    def _on_compare_checkbox_toggled(self, checkbox, pump_id, mod_name, checked):
+    def _on_compare_checkbox_toggled(self, checkbox, pump_id, mod_name, pump_number, checked):
         """Чекбокс "Сравнить" в одной из строк списка (только расширенный
         режим) - копит id отмеченных образцов в self._comparison_selected
         (не более 4 одновременно) и запрещает смешивать разные
@@ -2040,7 +2055,14 @@ class LeftPanel(QWidget):
                 checkbox.setChecked(False)
                 checkbox.blockSignals(False)
                 return
-            self._comparison_selected[pump_id] = mod_name
+            # (mod_name, pump_number) - номер нужен отдельно от виджетов
+            # чекбоксов (см. _update_comparison_note): выбор сохраняется
+            # между сменой страницы/фильтра, а виджеты при этом
+            # пересоздаются - на новой странице отмеченного насоса с
+            # прошлой страницы может не быть среди self._comparison_checkboxes
+            # вообще, и подпись "Сравнить образцы: ..." иначе потеряла бы
+            # его номер.
+            self._comparison_selected[pump_id] = (mod_name, pump_number)
         else:
             self._comparison_selected.pop(pump_id, None)
         self._refresh_compare_checkbox_states()
@@ -2057,7 +2079,7 @@ class LeftPanel(QWidget):
         Вызывается и при каждом переключении чекбокса, и один раз в конце
         populate_table/_grouped, чтобы свежепостроенные (ещё не тронутые)
         чекбоксы тоже сразу учли уже имеющийся выбор."""
-        selected_mods = set(self._comparison_selected.values())
+        selected_mods = {mn for mn, pn in self._comparison_selected.values()}
         at_limit = len(self._comparison_selected) >= 4
         for cb, pid, mn in self._comparison_checkboxes:
             if pid in self._comparison_selected:
@@ -2073,16 +2095,17 @@ class LeftPanel(QWidget):
         """Подпись между пагинацией и счётчиком записей (duplicates_note_label) -
         показывает номера отмеченных для сравнения образцов, если что-то
         отмечено, иначе пустая (прежний текст "Группировка по дублям" для
-        фильтра "Дубли" убран - не нужен, см. обсуждение)."""
+        фильтра "Дубли" убран - не нужен, см. обсуждение).
+
+        Номера берутся напрямую из self._comparison_selected (хранит и
+        номер тоже, см. _on_compare_checkbox_toggled), а НЕ из текущих
+        виджетов чекбоксов на экране - выбор сохраняется между сменой
+        страницы/фильтра, и отмеченный на другой странице образец мог бы
+        отсутствовать среди виджетов текущей страницы вообще."""
         if not hasattr(self, 'duplicates_note_label'):
             return
         if self._comparison_selected:
-            numbers = []
-            seen = set()
-            for cb, pid, mn in self._comparison_checkboxes:
-                if pid in self._comparison_selected and pid not in seen:
-                    seen.add(pid)
-                    numbers.append(cb.property('pump_number') or str(pid))
+            numbers = [pn or str(pid) for pid, (mn, pn) in self._comparison_selected.items()]
             self.duplicates_note_label.setText(f"Сравнить образцы: {', '.join(numbers)}")
         else:
             self.duplicates_note_label.setText("")
@@ -2604,7 +2627,15 @@ class LeftPanel(QWidget):
         self.filter_order.setCurrentIndex(0)
         self.date_from.setDate(QDate(2000, 1, 1))
         self.date_to.setDate(QDate.currentDate())
+        # blockSignals - без этого setChecked(False) сам по себе уже
+        # запускает on_duplicates_toggled() -> apply_filters() (полную
+        # перестройку таблицы), а строкой ниже apply_filters() всё равно
+        # вызывается ЕЩЁ РАЗ явно - без блокировки получалось 2 полные
+        # перестройки таблицы подряд вместо одной, когда фильтр "Дубли"
+        # был включён.
+        self.only_duplicates.blockSignals(True)
         self.only_duplicates.setChecked(False)
+        self.only_duplicates.blockSignals(False)
         # Полный сброс - в отличие от кнопки "Сбросить выбранные" (только
         # чекбоксы), здесь сбрасываются и фильтры, и отметки "Сравнить"
         # разом

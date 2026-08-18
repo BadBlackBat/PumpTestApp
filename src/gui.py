@@ -753,7 +753,11 @@ class MainWindow(QMainWindow):
             return
         self.right_panel.display_comparison(full_items)
         numbers = ', '.join(sorted({it['pump_number'] for it in full_items}))
-        self.current_selected_pump = f"Сравнение выбранных: {numbers}"
+        # Без слова "выбранных" - в статус-баре и так уже есть свой
+        # префикс "Выбран образец: " (см. status_bar.py), вместе выходило
+        # избыточно ("Выбран образец: Сравнение выбранных: ...") и
+        # съедало лишнее место, которое нужнее самим номерам насосов.
+        self.current_selected_pump = f"{numbers}"
         self.update_status()
 
     def on_print_requested(self):
